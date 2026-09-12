@@ -1,6 +1,6 @@
 # Design: Telegram Agent
 
-Status: Draft
+Status: Approved
 
 Approval note: The previous approval was invalidated because the design simultaneously deferred the exact Asian Function region to deployment and required that unknown value in source-controlled `vercel.json`. The corrected design uses Vercel project settings or the deployment CLI for the operator-selected region.
 

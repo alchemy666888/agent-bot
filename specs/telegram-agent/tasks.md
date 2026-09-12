@@ -1,6 +1,6 @@
 # Tasks: Telegram Agent
 
-Status: Draft
+Status: Approved
 
 ## Execution rules
 

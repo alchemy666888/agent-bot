@@ -1,6 +1,6 @@
 # Requirements: Telegram Agent
 
-Status: Draft
+Status: Approved
 
 ## Objective
 
