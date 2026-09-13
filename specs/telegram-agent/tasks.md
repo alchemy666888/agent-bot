@@ -155,6 +155,17 @@ Implementation notes:
   PostgreSQL-related environment-variable name is present, and neither
   `/run/secrets` nor `/workspace/.secrets` provides an injected secret file. No
   credential value was read or emitted during these checks.
+- Resumed implementation on 2026-09-13 to prepare the schema and explicit
+  migration without accessing an external database; database-dependent
+  verification remains contingent on the secret reaching the shell process.
+- Implemented all six Drizzle tables, approved checks/foreign keys/indexes,
+  additive SQL migration metadata, and an explicit sanitized migration CLI.
+  `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, and
+  `DATABASE_URL=<test-only-unreachable-url> pnpm db:generate:check` pass. The
+  migration CLI also fails safely without leaking its test connection value.
+  Completion remains blocked because `DATABASE_URL` is still absent from this
+  process, so the authorized real-PostgreSQL migration and schema integration
+  tests cannot be executed.
 
 ### TASK-004 — Implement database access, repositories, checkpoints, and advisory locking
 
