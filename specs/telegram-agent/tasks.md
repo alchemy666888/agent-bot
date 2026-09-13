@@ -166,6 +166,11 @@ Implementation notes:
   Completion remains blocked because `DATABASE_URL` is still absent from this
   process, so the authorized real-PostgreSQL migration and schema integration
   tests cannot be executed.
+- The environment-settings screenshot confirms the secret is saved in the
+  workspace definition, but a 2026-09-13 runtime recheck found it in neither the
+  shell environment nor PID 1's environment. Workspace-definition changes are
+  therefore not applied to this already-running container; it must be recreated
+  before external-database verification can proceed.
 
 ### TASK-004 — Implement database access, repositories, checkpoints, and advisory locking
 
