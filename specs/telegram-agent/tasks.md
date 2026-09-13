@@ -150,6 +150,11 @@ Implementation notes:
   files under the approved secret-handling rules. TASK-003 requires applying the
   actual migration twice and verifying it against PostgreSQL, so it cannot be
   completed until a rotated connection string is injected server-side.
+- Rechecked after the operator reported adding the environment secret on
+  2026-09-13: `DATABASE_URL` is still unset in the execution process, no
+  PostgreSQL-related environment-variable name is present, and neither
+  `/run/secrets` nor `/workspace/.secrets` provides an injected secret file. No
+  credential value was read or emitted during these checks.
 
 ### TASK-004 — Implement database access, repositories, checkpoints, and advisory locking
 
