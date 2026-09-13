@@ -15,7 +15,7 @@ Status: Approved
 
 ### TASK-001 — Scaffold the strict Next.js project baseline
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-NF-001, REQ-NF-008, REQ-NF-009, REQ-NF-010
 
@@ -52,11 +52,19 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Resumed on 2026-09-13 after registry access was enabled. Preflight confirmed
+  Node.js `v24.15.0`, pnpm `10.28.1`, and successful npm metadata access. No
+  credential value was copied into source, commands, logs, or tracked files.
+- Implemented the strict Next.js 16.3.5 App Router baseline with exact dependency
+  resolution, Node 24/pnpm conventions, strict TypeScript, ESLint, Prettier,
+  Tailwind CSS, accessible light-theme primitives, and the root landing shell.
+- Verification passed on 2026-09-13: `pnpm install --frozen-lockfile` (pnpm
+  10.28.1), `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, and `pnpm build`
+  (Next.js 16.3.5; static `/` and `/_not-found` routes).
 
 ### TASK-002 — Implement typed configuration, retries, redaction, and structured logging
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-008, REQ-F-009, REQ-F-013, REQ-F-021, REQ-F-025, REQ-F-026, REQ-NF-003, REQ-NF-005, REQ-NF-006, REQ-NF-007, REQ-NF-011
 
@@ -91,11 +99,17 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Completed on 2026-09-13. Added independent lazy configuration parsers,
+  approved DeepSeek/system/database defaults, safe error classification and
+  redaction, structured JSON logging, and deadline-aware full-jitter retries
+  capped at two retries. `.env.example` contains names/defaults only.
+- Verification passed: `pnpm test:unit -- config observability` (5 tests),
+  `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, and `pnpm build`. A seeded
+  value scan of `.next/static` and `.next/server/app` returned no matches.
 
 ### TASK-003 — Create the PostgreSQL schema and initial migration
 
-Status: Pending
+Status: Blocked
 
 Requirements: REQ-F-004, REQ-F-014, REQ-F-015, REQ-F-016, REQ-F-017, REQ-F-018, REQ-F-025, REQ-NF-005, REQ-NF-007
 
@@ -129,7 +143,18 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Blocked before implementation on 2026-09-13. TASK-001 and TASK-002 are
+  completed, and the operator authorized the external PostgreSQL database, but
+  `DATABASE_URL` is not present in the process environment. The supplied
+  credential cannot be copied from chat into source, commands, logs, or tracked
+  files under the approved secret-handling rules. TASK-003 requires applying the
+  actual migration twice and verifying it against PostgreSQL, so it cannot be
+  completed until a rotated connection string is injected server-side.
+- Rechecked after the operator reported adding the environment secret on
+  2026-09-13: `DATABASE_URL` is still unset in the execution process, no
+  PostgreSQL-related environment-variable name is present, and neither
+  `/run/secrets` nor `/workspace/.secrets` provides an injected secret file. No
+  credential value was read or emitted during these checks.
 
 ### TASK-004 — Implement database access, repositories, checkpoints, and advisory locking
 
