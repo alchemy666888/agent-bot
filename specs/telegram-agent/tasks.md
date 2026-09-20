@@ -16,7 +16,7 @@ Status: Approved
 
 ### TASK-001 — Establish the project baseline and validated configuration
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-008, REQ-F-009, REQ-F-033, REQ-NF-001, REQ-NF-002, REQ-NF-007, REQ-NF-014, REQ-NF-015
 
@@ -54,11 +54,41 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `package.json`, `pnpm-lock.yaml`, TypeScript,
+  Next.js, ESLint, Prettier, Vitest, and Playwright configuration;
+  `.env.example`; `src/app/**`; `src/server/config/**`; initial source
+  boundaries; and baseline configuration/browser tests.
+- Preflight stopped before application changes because
+  `specs/telegram-agent/requirements.md` declares
+  `Status: Draft — awaiting approval`, while the execution rules require all
+  four SDD documents to be approved.
+- Evidence: `git status --short --branch` showed a clean greenfield worktree;
+  `git ls-files` showed only the four standard SDD files; `rg -n '^Status:'
+  specs/telegram-agent/{requirements,design,tasks,codex-prompt}.md` showed the
+  requirements document as Draft and the other three documents as Approved;
+  `rg '^Status:' specs/telegram-agent/tasks.md` showed all 17 tasks Pending
+  before this status update.
+- No dependencies were installed, no application files were created, no
+  secrets were accessed, and no live or externally consequential action was
+  attempted.
+- The operator explicitly approved the requirements document on 2026-09-20,
+  resolving the preflight blocker and authorizing TASK-001 to proceed.
+- Created the strict Next.js App Router baseline, deterministic pnpm manifest,
+  lint/format/Vitest/build configuration, approved source boundaries, and a
+  server-only lazy configuration module with `sin1` enforcement and approved
+  DeepSeek defaults.
+- Added `.env.example` containing only the approved variable names and unit
+  coverage for valid defaults, entry-point isolation, missing/empty values,
+  malformed booleans/prices, arbitrary dashboard secrets, and invalid regions.
+- Verification passed: `pnpm install --frozen-lockfile`, `pnpm typecheck`,
+  `pnpm lint`, `pnpm format:check`, `pnpm test:unit` (14 tests), `pnpm build`,
+  and `git diff --check`. Direct dependency inspection found no database,
+  object-store, throttling, moderation, or tool package.
+- No live resource, Preview environment, external service, or secret was used.
 
 ### TASK-002 — Define shared contracts, identifiers, redaction, and capability boundary
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-018, REQ-F-025, REQ-F-034, REQ-NF-007, REQ-NF-009, REQ-NF-011, REQ-NF-014
 
@@ -95,7 +125,18 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/shared/contracts/**`, `src/shared/ids.ts`,
+  `src/shared/redaction.ts`, `src/shared/capabilities.ts`, and
+  `tests/unit/shared/**`.
+- Added strict version-1 worker, provider-neutral model, safe-error, and
+  paginated view-model schemas; UUIDv7 and decimal Telegram ID helpers;
+  recursive secret/hidden-reasoning redaction; and an inert, disabled future
+  capability interface with no implementation or registration.
+- Added malformed/good contract, identifier, prohibited-field, nested-secret,
+  and hidden-reasoning unit coverage.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, and `pnpm test:unit`
+  (18 tests across two files). Source inspection confirmed the capability
+  boundary contains no executable tool or runtime registry.
 
 ### TASK-003 — Implement the private Sandbox controller and worker bootstrap
 
