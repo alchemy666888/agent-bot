@@ -1,6 +1,6 @@
 # Design: Telegram Agent on Vercel Sandbox Drive
 
-Status: Draft
+Status: Approved
 
 ## Design goals
 
