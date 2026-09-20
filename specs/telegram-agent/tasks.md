@@ -54,6 +54,10 @@ Completion criteria:
 
 Implementation notes:
 
+- Files/components changed: `package.json`, `pnpm-lock.yaml`, TypeScript,
+  Next.js, ESLint, Prettier, Vitest, and Playwright configuration;
+  `.env.example`; `src/app/**`; `src/server/config/**`; initial source
+  boundaries; and baseline configuration/browser tests.
 - Preflight stopped before application changes because
   `specs/telegram-agent/requirements.md` declares
   `Status: Draft — awaiting approval`, while the execution rules require all
@@ -84,7 +88,7 @@ Implementation notes:
 
 ### TASK-002 — Define shared contracts, identifiers, redaction, and capability boundary
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-018, REQ-F-025, REQ-F-034, REQ-NF-007, REQ-NF-009, REQ-NF-011, REQ-NF-014
 
@@ -121,7 +125,18 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/shared/contracts/**`, `src/shared/ids.ts`,
+  `src/shared/redaction.ts`, `src/shared/capabilities.ts`, and
+  `tests/unit/shared/**`.
+- Added strict version-1 worker, provider-neutral model, safe-error, and
+  paginated view-model schemas; UUIDv7 and decimal Telegram ID helpers;
+  recursive secret/hidden-reasoning redaction; and an inert, disabled future
+  capability interface with no implementation or registration.
+- Added malformed/good contract, identifier, prohibited-field, nested-secret,
+  and hidden-reasoning unit coverage.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, and `pnpm test:unit`
+  (18 tests across two files). Source inspection confirmed the capability
+  boundary contains no executable tool or runtime registry.
 
 ### TASK-003 — Implement the private Sandbox controller and worker bootstrap
 
