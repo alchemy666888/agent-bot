@@ -1,9 +1,0 @@
-.next
-coverage
-node_modules
-next-env.d.ts
-pnpm-lock.yaml
-playwright-report
-specs
-test-results
-tsconfig.json
