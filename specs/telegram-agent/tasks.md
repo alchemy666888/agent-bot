@@ -16,7 +16,7 @@ Status: Approved
 
 ### TASK-001 — Establish the project baseline and validated configuration
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-008, REQ-F-009, REQ-F-033, REQ-NF-001, REQ-NF-002, REQ-NF-007, REQ-NF-014, REQ-NF-015
 
@@ -54,11 +54,41 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `package.json`, `pnpm-lock.yaml`, TypeScript,
+  Next.js, ESLint, Prettier, Vitest, and Playwright configuration;
+  `.env.example`; `src/app/**`; `src/server/config/**`; initial source
+  boundaries; and baseline configuration/browser tests.
+- Preflight stopped before application changes because
+  `specs/telegram-agent/requirements.md` declares
+  `Status: Draft — awaiting approval`, while the execution rules require all
+  four SDD documents to be approved.
+- Evidence: `git status --short --branch` showed a clean greenfield worktree;
+  `git ls-files` showed only the four standard SDD files; `rg -n '^Status:'
+  specs/telegram-agent/{requirements,design,tasks,codex-prompt}.md` showed the
+  requirements document as Draft and the other three documents as Approved;
+  `rg '^Status:' specs/telegram-agent/tasks.md` showed all 17 tasks Pending
+  before this status update.
+- No dependencies were installed, no application files were created, no
+  secrets were accessed, and no live or externally consequential action was
+  attempted.
+- The operator explicitly approved the requirements document on 2026-09-20,
+  resolving the preflight blocker and authorizing TASK-001 to proceed.
+- Created the strict Next.js App Router baseline, deterministic pnpm manifest,
+  lint/format/Vitest/build configuration, approved source boundaries, and a
+  server-only lazy configuration module with `sin1` enforcement and approved
+  DeepSeek defaults.
+- Added `.env.example` containing only the approved variable names and unit
+  coverage for valid defaults, entry-point isolation, missing/empty values,
+  malformed booleans/prices, arbitrary dashboard secrets, and invalid regions.
+- Verification passed: `pnpm install --frozen-lockfile`, `pnpm typecheck`,
+  `pnpm lint`, `pnpm format:check`, `pnpm test:unit` (14 tests), `pnpm build`,
+  and `git diff --check`. Direct dependency inspection found no database,
+  object-store, throttling, moderation, or tool package.
+- No live resource, Preview environment, external service, or secret was used.
 
 ### TASK-002 — Define shared contracts, identifiers, redaction, and capability boundary
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-018, REQ-F-025, REQ-F-034, REQ-NF-007, REQ-NF-009, REQ-NF-011, REQ-NF-014
 
@@ -95,11 +125,22 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/shared/contracts/**`, `src/shared/ids.ts`,
+  `src/shared/redaction.ts`, `src/shared/capabilities.ts`, and
+  `tests/unit/shared/**`.
+- Added strict version-1 worker, provider-neutral model, safe-error, and
+  paginated view-model schemas; UUIDv7 and decimal Telegram ID helpers;
+  recursive secret/hidden-reasoning redaction; and an inert, disabled future
+  capability interface with no implementation or registration.
+- Added malformed/good contract, identifier, prohibited-field, nested-secret,
+  and hidden-reasoning unit coverage.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, and `pnpm test:unit`
+  (18 tests across two files). Source inspection confirmed the capability
+  boundary contains no executable tool or runtime registry.
 
 ### TASK-003 — Implement the private Sandbox controller and worker bootstrap
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-012, REQ-F-014, REQ-F-025, REQ-F-033, REQ-NF-001, REQ-NF-002, REQ-NF-007, REQ-NF-014, REQ-NF-015
 
@@ -137,11 +178,22 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/server/sandbox/controller.ts`,
+  `src/server/sandbox/sdk-adapter.ts`, `src/server/sandbox/transport.ts`,
+  `src/worker/cli.ts`, the worker build script, and Sandbox unit tests.
+- Implemented explicit `sin1` named Drive/Sandbox creation, occupied-Drive and
+  returned-configuration validation, one `/workspace` mount, persistent resume,
+  one retained snapshot, no port/failover configuration, hashed worker bundles
+  under `/tmp`, unique request/response files, least-privilege command env,
+  schema validation, streaming reads, and cleanup in `finally`.
+- Verification passed: `pnpm worker:build`, `pnpm typecheck`, `pnpm lint`, and
+  `pnpm test:unit` (25 tests). Mocks cover lifecycle arguments, wrong region,
+  competing attachment, command failure, malformed response, and cleanup.
+- No live Sandbox, Drive, OIDC credential, secret, or external service was used.
 
 ### TASK-004 — Implement Drive files, append-only events, projections, and recovery
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-016, REQ-F-017, REQ-F-018, REQ-F-019, REQ-F-020, REQ-F-021, REQ-F-022, REQ-NF-003, REQ-NF-005, REQ-NF-006, REQ-NF-009
 
@@ -181,11 +233,24 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed:
+  `src/worker/persistence/{layout,schemas,event-store,atomic-json,projector,recovery}.ts`
+  and `tests/integration/persistence/event-store.test.ts`.
+- Implemented UTC monthly record paths, strict durable-event validation,
+  append-plus-fsync, atomic projection replacement plus directory sync,
+  source-event/revision projection metadata, and partial-tail quarantine.
+- Current verification passed: `pnpm typecheck`, `pnpm lint`,
+  `pnpm test:unit` (25 tests), and `pnpm test:integration` (2 tests).
+- Completed the remaining scope with schema-versioned tree/manifest
+  initialization and deterministic multi-partition replay that reconstructs
+  only latest-revision projections while preserving all canonical events.
+- Final TASK-004 verification passed: `pnpm typecheck` and
+  `pnpm test:integration` (3 tests), including initialization, month rotation,
+  prohibited-field rejection, incomplete-tail isolation, and exact rebuild.
 
 ### TASK-005 — Implement locks, serialized mutation, and update checkpoints
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-011, REQ-F-012, REQ-F-015, REQ-F-021, REQ-F-030, REQ-F-033, REQ-NF-004, REQ-NF-010, REQ-NF-016
 
@@ -222,11 +287,24 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed:
+  `src/worker/locks/coordinator.ts`, `src/worker/updates/{repository,state-machine}.ts`,
+  and `tests/integration/concurrency/locks.test.ts`.
+- Implemented filesystem-backed per-user/global locks, per-user-before-global
+  order enforcement, export-only global acquisition, bounded wait, stale-owner
+  recovery, ownership cleanup, strict checkpoint schemas, monotonic transitions,
+  and terminal-state idempotency.
+- Current verification passed: `pnpm typecheck`, `pnpm lint`, and
+  `pnpm test:integration` (5 tests), including 10 concurrent users with two
+  same-user turns each and lock-order rejection.
+- Completed heartbeat ownership, live-owner stale protection, terminal duplicate
+  handling, durable atomic checkpoint state, and concurrent-redelivery tests.
+- Final TASK-005 verification passed: `pnpm typecheck`, `pnpm lint`, and
+  `pnpm test:integration` (7 tests across persistence, locks, and checkpoints).
 
 ### TASK-006 — Implement user, conversation, message, and command services
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-003, REQ-F-004, REQ-F-005, REQ-F-006, REQ-F-010, REQ-F-016, REQ-F-017, REQ-F-018, REQ-F-022, REQ-NF-009, REQ-NF-014
 
@@ -264,11 +342,18 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/worker/conversations/service.ts`,
+  `src/worker/commands/index.ts`, and `tests/unit/worker/domain/**`.
+- Implemented approved-field-only user upserts with immutable first-seen,
+  exactly one active conversation, atomic context boundary behavior for `/new`,
+  latest 20 complete message pairs, and deterministic `/start`, `/help`, `/new`
+  replies without a privacy/retention notice or model invocation.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
+  (28 tests), and `pnpm test:integration` (7 tests).
 
 ### TASK-007 — Implement DeepSeek, retry policy, and usage accounting
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-007, REQ-F-008, REQ-F-009, REQ-F-010, REQ-F-014, REQ-F-018, REQ-F-032, REQ-F-034, REQ-NF-010, REQ-NF-011, REQ-NF-014
 
@@ -305,11 +390,20 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/worker/model/{deepseek,retry,usage}.ts` and
+  `tests/unit/worker/model/**`.
+- Implemented the provider-neutral adapter using exactly `deepseek-v4-pro`,
+  non-streamed requests, configurable thinking, medium effort, abort signals,
+  final-content-only parsing, optional usage, bounded transient retry, and
+  integer decimal-micro cost calculations with applied price snapshots.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
+  (31 tests), and `pnpm test:integration` (7 tests). Tests prove hidden
+  reasoning is discarded, exact request settings, three attempts maximum, and
+  exact decimal cost arithmetic.
 
 ### TASK-008 — Implement Telegram webhook, transport, and turn orchestration
 
-Status: Pending
+Status: In Progress
 
 Requirements: REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-010, REQ-F-011, REQ-F-013, REQ-F-014, REQ-F-015, REQ-F-017, REQ-F-018, REQ-F-033, REQ-NF-007, REQ-NF-009, REQ-NF-010, REQ-NF-014
 
@@ -349,11 +443,27 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- In progress. Files/components changed so far:
+  `src/server/telegram/input.ts`, `src/app/api/telegram/webhook/route.ts`,
+  `src/worker/telegram/client.ts`, `src/worker/orchestration/telegram-turn.ts`,
+  and `tests/contracts/telegram/**`.
+- Implemented secret-before-body webhook validation, minimal private-text
+  extraction that drops names/raw fields, ignored edited/group updates,
+  unsupported private-input guidance, typing, lossless 4096-character chunks,
+  Markdown-to-plain fallback, and checkpoint-aware turn orchestration.
+- Current verification covers raw-field exclusion, group/edit rejection, and
+  exact long-text reconstruction. Remaining before completion: connect the
+  route to the private worker dispatcher, add every checkpoint interruption
+  resume scenario, formatting/retry failure integration, and duplicate-turn
+  proof with mocked Telegram and DeepSeek.
+- Added duplicate terminal handling, command/model separation, and
+  model-complete response reuse so redelivery does not regenerate or redeliver;
+  mocked turn integration passes, while the private-worker route connection and
+  remaining interruption/failure cases above are still required.
 
 ### TASK-009 — Implement dashboard and download authentication
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-023, REQ-F-024, REQ-F-025, REQ-F-029, REQ-NF-007, REQ-NF-008
 
@@ -390,11 +500,19 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/server/auth/{secret,session,guards}.ts`,
+  `src/app/login/**`, `src/app/logout/route.ts`, and auth unit tests.
+- Implemented keyed fixed-length timing-safe comparisons for arbitrary nonempty
+  Unicode secrets, signed 24-hour `__Host-telegram-agent-session` cookies,
+  signature/expiry validation, same-origin POST logout, and exact single bearer
+  or session-cookie download authorization with fail-closed parsing.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
+  (35 tests), `pnpm test:integration` (9 tests), and source inspection for URL,
+  browser-storage, HTML, log, worker-file, and Drive-data secret exclusion.
 
 ### TASK-010 — Implement read-only dashboard queries
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-026, REQ-F-027, REQ-F-028, REQ-F-032, REQ-F-033, REQ-NF-011, REQ-NF-014
 
@@ -430,7 +548,14 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/worker/queries/service.ts`,
+  `src/server/dashboard/view-models.ts`, and `tests/integration/queries/**`.
+- Implemented typed, read-only overview and category queries over projections,
+  deterministic whole-result sorting, fixed 50-row pages, case-insensitive
+  applicable search, empty/beyond-range results, and strict input validation.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
+  (35 tests), `pnpm test:integration` (11 tests), and file-list comparison
+  before/after queries demonstrating no mutation.
 
 ### TASK-011 — Build the accessible responsive dashboard
 
