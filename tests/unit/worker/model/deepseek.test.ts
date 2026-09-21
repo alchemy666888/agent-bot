@@ -25,7 +25,9 @@ describe("model adapter", () => {
       requestId: "r",
       usage: { inputTokens: 2, outputTokens: 3 },
     });
-    expect(await fetcher.mock.calls[0]?.[1]?.body).toContain('"stream":false');
+    expect(
+      (fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body,
+    ).toContain('"stream":false');
   });
   it("retries transient errors only twice", async () => {
     const fn = vi.fn(async () => {

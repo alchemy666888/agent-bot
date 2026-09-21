@@ -403,7 +403,7 @@ Implementation notes:
 
 ### TASK-008 — Implement Telegram webhook, transport, and turn orchestration
 
-Status: Pending
+Status: In Progress
 
 Requirements: REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-010, REQ-F-011, REQ-F-013, REQ-F-014, REQ-F-015, REQ-F-017, REQ-F-018, REQ-F-033, REQ-NF-007, REQ-NF-009, REQ-NF-010, REQ-NF-014
 
@@ -443,7 +443,19 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- In progress. Files/components changed so far:
+  `src/server/telegram/input.ts`, `src/app/api/telegram/webhook/route.ts`,
+  `src/worker/telegram/client.ts`, `src/worker/orchestration/telegram-turn.ts`,
+  and `tests/contracts/telegram/**`.
+- Implemented secret-before-body webhook validation, minimal private-text
+  extraction that drops names/raw fields, ignored edited/group updates,
+  unsupported private-input guidance, typing, lossless 4096-character chunks,
+  Markdown-to-plain fallback, and checkpoint-aware turn orchestration.
+- Current verification covers raw-field exclusion, group/edit rejection, and
+  exact long-text reconstruction. Remaining before completion: connect the
+  route to the private worker dispatcher, add every checkpoint interruption
+  resume scenario, formatting/retry failure integration, and duplicate-turn
+  proof with mocked Telegram and DeepSeek.
 
 ### TASK-009 — Implement dashboard and download authentication
 
