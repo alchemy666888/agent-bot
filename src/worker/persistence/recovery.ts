@@ -1,6 +1,15 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { eventSchema, type DurableEvent } from "./schemas";
+import { projectEvent } from "./projector";
+import { recordKinds } from "./layout";
 
 export async function recoverJsonl(
   path: string,
@@ -36,4 +45,26 @@ export async function quarantineInvalidProjection(
     path,
     join(recoveryRoot, `${Date.now()}-${path.split("/").at(-1)}`),
   );
+}
+
+export async function rebuildProjections(root: string): Promise<number> {
+  await rm(join(root, "data", "state"), { recursive: true, force: true });
+  const latest = new Map<string, DurableEvent>();
+  for (const kind of recordKinds) {
+    const directory = join(root, "data", "records", kind);
+    for (const file of (await readdir(directory).catch(() => [] as string[]))
+      .filter((name) => name.endsWith(".jsonl"))
+      .sort()) {
+      for (const event of await recoverJsonl(
+        join(directory, file),
+        join(root, "data", "recovery", "quarantine"),
+      )) {
+        const key = `${event.kind}:${event.entityId}`;
+        if (!latest.has(key) || latest.get(key)!.revision < event.revision)
+          latest.set(key, event);
+      }
+    }
+  }
+  for (const event of latest.values()) await projectEvent(root, event);
+  return latest.size;
 }

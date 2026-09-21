@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { uuidV7 } from "../../../src/shared/ids";
 import { EventStore } from "../../../src/worker/persistence/event-store";
-import { recoverJsonl } from "../../../src/worker/persistence/recovery";
+import {
+  rebuildProjections,
+  recoverJsonl,
+} from "../../../src/worker/persistence/recovery";
+import {
+  initializeLayout,
+  statePath,
+} from "../../../src/worker/persistence/layout";
 
 let root = "";
 afterEach(async () => {
@@ -47,5 +54,29 @@ describe("append-only persistence", () => {
         payload: { first_name: "private" },
       }),
     ).rejects.toThrow();
+  });
+  it("initializes and rebuilds the latest projection across months", async () => {
+    root = await mkdtemp(join(tmpdir(), "agent-"));
+    await initializeLayout(root);
+    const store = new EventStore(root);
+    for (const [revision, occurredAt] of [
+      [1, "2026-08-20T00:00:00.000Z"],
+      [2, "2026-09-20T00:00:00.000Z"],
+    ] as const) {
+      await store.append({
+        schemaVersion: 1,
+        eventId: uuidV7(),
+        entityId: "user-1",
+        kind: "users",
+        type: "user.seen",
+        occurredAt,
+        revision,
+        payload: { telegramUserId: "1", lastSeenAt: occurredAt },
+      });
+    }
+    expect(await rebuildProjections(root)).toBe(1);
+    expect(
+      JSON.parse(await readFile(statePath(root, "users", "user-1"), "utf8")),
+    ).toMatchObject({ revision: 2, telegramUserId: "1" });
   });
 });

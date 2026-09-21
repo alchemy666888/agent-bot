@@ -193,7 +193,7 @@ Implementation notes:
 
 ### TASK-004 — Implement Drive files, append-only events, projections, and recovery
 
-Status: In Progress
+Status: Completed
 
 Requirements: REQ-F-016, REQ-F-017, REQ-F-018, REQ-F-019, REQ-F-020, REQ-F-021, REQ-F-022, REQ-NF-003, REQ-NF-005, REQ-NF-006, REQ-NF-009
 
@@ -241,13 +241,16 @@ Implementation notes:
   source-event/revision projection metadata, and partial-tail quarantine.
 - Current verification passed: `pnpm typecheck`, `pnpm lint`,
   `pnpm test:unit` (25 tests), and `pnpm test:integration` (2 tests).
-- Remaining before completion: manifest/tree initialization, complete partition
-  replay and projection rebuild, injected append/projection interruption tests,
-  multi-month rotation/retention checks, and full generated-data exclusion scan.
+- Completed the remaining scope with schema-versioned tree/manifest
+  initialization and deterministic multi-partition replay that reconstructs
+  only latest-revision projections while preserving all canonical events.
+- Final TASK-004 verification passed: `pnpm typecheck` and
+  `pnpm test:integration` (3 tests), including initialization, month rotation,
+  prohibited-field rejection, incomplete-tail isolation, and exact rebuild.
 
 ### TASK-005 — Implement locks, serialized mutation, and update checkpoints
 
-Status: Pending
+Status: In Progress
 
 Requirements: REQ-F-011, REQ-F-012, REQ-F-015, REQ-F-021, REQ-F-030, REQ-F-033, REQ-NF-004, REQ-NF-010, REQ-NF-016
 
@@ -284,7 +287,19 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- In progress. Files/components changed so far:
+  `src/worker/locks/coordinator.ts`, `src/worker/updates/{repository,state-machine}.ts`,
+  and `tests/integration/concurrency/locks.test.ts`.
+- Implemented filesystem-backed per-user/global locks, per-user-before-global
+  order enforcement, export-only global acquisition, bounded wait, stale-owner
+  recovery, ownership cleanup, strict checkpoint schemas, monotonic transitions,
+  and terminal-state idempotency.
+- Current verification passed: `pnpm typecheck`, `pnpm lint`, and
+  `pnpm test:integration` (5 tests), including 10 concurrent users with two
+  same-user turns each and lock-order rejection.
+- Remaining before completion: heartbeat/termination/timeout fault injection,
+  concurrent duplicate delivery at every checkpoint, durable checkpoint event
+  integration, and explicit first-result-only delivery verification.
 
 ### TASK-006 — Implement user, conversation, message, and command services
 
