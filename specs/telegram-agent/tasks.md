@@ -140,7 +140,7 @@ Implementation notes:
 
 ### TASK-003 — Implement the private Sandbox controller and worker bootstrap
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-012, REQ-F-014, REQ-F-025, REQ-F-033, REQ-NF-001, REQ-NF-002, REQ-NF-007, REQ-NF-014, REQ-NF-015
 
@@ -178,11 +178,22 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/server/sandbox/controller.ts`,
+  `src/server/sandbox/sdk-adapter.ts`, `src/server/sandbox/transport.ts`,
+  `src/worker/cli.ts`, the worker build script, and Sandbox unit tests.
+- Implemented explicit `sin1` named Drive/Sandbox creation, occupied-Drive and
+  returned-configuration validation, one `/workspace` mount, persistent resume,
+  one retained snapshot, no port/failover configuration, hashed worker bundles
+  under `/tmp`, unique request/response files, least-privilege command env,
+  schema validation, streaming reads, and cleanup in `finally`.
+- Verification passed: `pnpm worker:build`, `pnpm typecheck`, `pnpm lint`, and
+  `pnpm test:unit` (25 tests). Mocks cover lifecycle arguments, wrong region,
+  competing attachment, command failure, malformed response, and cleanup.
+- No live Sandbox, Drive, OIDC credential, secret, or external service was used.
 
 ### TASK-004 — Implement Drive files, append-only events, projections, and recovery
 
-Status: Pending
+Status: In Progress
 
 Requirements: REQ-F-016, REQ-F-017, REQ-F-018, REQ-F-019, REQ-F-020, REQ-F-021, REQ-F-022, REQ-NF-003, REQ-NF-005, REQ-NF-006, REQ-NF-009
 
@@ -222,7 +233,17 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- In progress. Files/components changed so far:
+  `src/worker/persistence/{layout,schemas,event-store,atomic-json,projector,recovery}.ts`
+  and `tests/integration/persistence/event-store.test.ts`.
+- Implemented UTC monthly record paths, strict durable-event validation,
+  append-plus-fsync, atomic projection replacement plus directory sync,
+  source-event/revision projection metadata, and partial-tail quarantine.
+- Current verification passed: `pnpm typecheck`, `pnpm lint`,
+  `pnpm test:unit` (25 tests), and `pnpm test:integration` (2 tests).
+- Remaining before completion: manifest/tree initialization, complete partition
+  replay and projection rebuild, injected append/projection interruption tests,
+  multi-month rotation/retention checks, and full generated-data exclusion scan.
 
 ### TASK-005 — Implement locks, serialized mutation, and update checkpoints
 
