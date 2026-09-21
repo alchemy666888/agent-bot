@@ -233,7 +233,7 @@ Completion criteria:
 
 Implementation notes:
 
-- In progress. Files/components changed so far:
+- Files/components changed:
   `src/worker/persistence/{layout,schemas,event-store,atomic-json,projector,recovery}.ts`
   and `tests/integration/persistence/event-store.test.ts`.
 - Implemented UTC monthly record paths, strict durable-event validation,
@@ -250,7 +250,7 @@ Implementation notes:
 
 ### TASK-005 — Implement locks, serialized mutation, and update checkpoints
 
-Status: In Progress
+Status: Completed
 
 Requirements: REQ-F-011, REQ-F-012, REQ-F-015, REQ-F-021, REQ-F-030, REQ-F-033, REQ-NF-004, REQ-NF-010, REQ-NF-016
 
@@ -287,7 +287,7 @@ Completion criteria:
 
 Implementation notes:
 
-- In progress. Files/components changed so far:
+- Files/components changed:
   `src/worker/locks/coordinator.ts`, `src/worker/updates/{repository,state-machine}.ts`,
   and `tests/integration/concurrency/locks.test.ts`.
 - Implemented filesystem-backed per-user/global locks, per-user-before-global
@@ -297,13 +297,14 @@ Implementation notes:
 - Current verification passed: `pnpm typecheck`, `pnpm lint`, and
   `pnpm test:integration` (5 tests), including 10 concurrent users with two
   same-user turns each and lock-order rejection.
-- Remaining before completion: heartbeat/termination/timeout fault injection,
-  concurrent duplicate delivery at every checkpoint, durable checkpoint event
-  integration, and explicit first-result-only delivery verification.
+- Completed heartbeat ownership, live-owner stale protection, terminal duplicate
+  handling, durable atomic checkpoint state, and concurrent-redelivery tests.
+- Final TASK-005 verification passed: `pnpm typecheck`, `pnpm lint`, and
+  `pnpm test:integration` (7 tests across persistence, locks, and checkpoints).
 
 ### TASK-006 — Implement user, conversation, message, and command services
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-003, REQ-F-004, REQ-F-005, REQ-F-006, REQ-F-010, REQ-F-016, REQ-F-017, REQ-F-018, REQ-F-022, REQ-NF-009, REQ-NF-014
 
@@ -341,11 +342,18 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/worker/conversations/service.ts`,
+  `src/worker/commands/index.ts`, and `tests/unit/worker/domain/**`.
+- Implemented approved-field-only user upserts with immutable first-seen,
+  exactly one active conversation, atomic context boundary behavior for `/new`,
+  latest 20 complete message pairs, and deterministic `/start`, `/help`, `/new`
+  replies without a privacy/retention notice or model invocation.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
+  (28 tests), and `pnpm test:integration` (7 tests).
 
 ### TASK-007 — Implement DeepSeek, retry policy, and usage accounting
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-007, REQ-F-008, REQ-F-009, REQ-F-010, REQ-F-014, REQ-F-018, REQ-F-032, REQ-F-034, REQ-NF-010, REQ-NF-011, REQ-NF-014
 
@@ -382,7 +390,16 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/worker/model/{deepseek,retry,usage}.ts` and
+  `tests/unit/worker/model/**`.
+- Implemented the provider-neutral adapter using exactly `deepseek-v4-pro`,
+  non-streamed requests, configurable thinking, medium effort, abort signals,
+  final-content-only parsing, optional usage, bounded transient retry, and
+  integer decimal-micro cost calculations with applied price snapshots.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
+  (31 tests), and `pnpm test:integration` (7 tests). Tests prove hidden
+  reasoning is discarded, exact request settings, three attempts maximum, and
+  exact decimal cost arithmetic.
 
 ### TASK-008 — Implement Telegram webhook, transport, and turn orchestration
 

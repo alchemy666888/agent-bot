@@ -21,12 +21,12 @@ export function advanceUpdate(
   current: UpdateState,
   next: UpdateState,
 ): UpdateState {
+  if (current.stage === "delivery_complete" || current.stage === "failed")
+    return current;
   if (
     current.updateId !== next.updateId ||
     (rank.get(next.stage) ?? -1) < (rank.get(current.stage) ?? 0)
   )
     throw new Error("INVALID_UPDATE_TRANSITION");
-  if (current.stage === "delivery_complete" || current.stage === "failed")
-    return current;
   return updateStateSchema.parse(next);
 }

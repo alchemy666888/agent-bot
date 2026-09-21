@@ -8,6 +8,7 @@ export class LockCoordinator {
   constructor(
     private root: string,
     private staleMs = 30_000,
+    private timeoutMs = 5_000,
   ) {}
   async withUser<T>(userId: string, action: () => Promise<T>): Promise<T> {
     return this.acquire(`users/${userId}`, async () => {
@@ -31,18 +32,18 @@ export class LockCoordinator {
     const path = join(this.root, "runtime/locks", `${name}.lock`);
     await mkdir(dirname(path), { recursive: true });
     const owner = randomUUID();
-    const deadline = Date.now() + 5_000;
+    const deadline = Date.now() + this.timeoutMs;
     while (true) {
       try {
         await mkdir(path, { recursive: false });
         await writeFile(
           join(path, "owner.json"),
-          JSON.stringify({ owner, heartbeat: Date.now() }),
+          JSON.stringify({ owner, pid: process.pid, heartbeat: Date.now() }),
         );
         break;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        let prior: { heartbeat: number };
+        let prior: { heartbeat: number; pid?: number };
         try {
           prior = JSON.parse(
             await readFile(join(path, "owner.json"), "utf8"),
@@ -50,7 +51,10 @@ export class LockCoordinator {
         } catch {
           prior = { heartbeat: Date.now() };
         }
-        if (Date.now() - prior.heartbeat > this.staleMs) {
+        if (
+          Date.now() - prior.heartbeat > this.staleMs &&
+          !isAlive(prior.pid)
+        ) {
           await rm(path, { recursive: true, force: true });
           continue;
         }
@@ -58,10 +62,29 @@ export class LockCoordinator {
         await sleep(5);
       }
     }
+    const heartbeat = setInterval(
+      () =>
+        void writeFile(
+          join(path, "owner.json"),
+          JSON.stringify({ owner, pid: process.pid, heartbeat: Date.now() }),
+        ),
+      Math.max(10, this.staleMs / 3),
+    );
     try {
       return await action();
     } finally {
+      clearInterval(heartbeat);
       await rm(path, { recursive: true, force: true });
     }
+  }
+}
+
+function isAlive(pid?: number): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
 }
