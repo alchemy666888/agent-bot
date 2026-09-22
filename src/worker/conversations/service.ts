@@ -99,4 +99,12 @@ export class ConversationService {
   profile(id: string) {
     return this.users.get(id);
   }
+  message(id: string): Message | undefined {
+    for (const conversation of this.conversations.values()) {
+      const message = conversation.messages.find(
+        (candidate) => candidate.id === id,
+      );
+      if (message) return message;
+    }
+  }
 }

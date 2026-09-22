@@ -456,10 +456,14 @@ Implementation notes:
   route to the private worker dispatcher, add every checkpoint interruption
   resume scenario, formatting/retry failure integration, and duplicate-turn
   proof with mocked Telegram and DeepSeek.
+- Added duplicate terminal handling, command/model separation, and
+  model-complete response reuse so redelivery does not regenerate or redeliver;
+  mocked turn integration passes, while the private-worker route connection and
+  remaining interruption/failure cases above are still required.
 
 ### TASK-009 — Implement dashboard and download authentication
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-023, REQ-F-024, REQ-F-025, REQ-F-029, REQ-NF-007, REQ-NF-008
 
@@ -496,11 +500,19 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/server/auth/{secret,session,guards}.ts`,
+  `src/app/login/**`, `src/app/logout/route.ts`, and auth unit tests.
+- Implemented keyed fixed-length timing-safe comparisons for arbitrary nonempty
+  Unicode secrets, signed 24-hour `__Host-telegram-agent-session` cookies,
+  signature/expiry validation, same-origin POST logout, and exact single bearer
+  or session-cookie download authorization with fail-closed parsing.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
+  (35 tests), `pnpm test:integration` (9 tests), and source inspection for URL,
+  browser-storage, HTML, log, worker-file, and Drive-data secret exclusion.
 
 ### TASK-010 — Implement read-only dashboard queries
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-026, REQ-F-027, REQ-F-028, REQ-F-032, REQ-F-033, REQ-NF-011, REQ-NF-014
 
@@ -536,7 +548,14 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/worker/queries/service.ts`,
+  `src/server/dashboard/view-models.ts`, and `tests/integration/queries/**`.
+- Implemented typed, read-only overview and category queries over projections,
+  deterministic whole-result sorting, fixed 50-row pages, case-insensitive
+  applicable search, empty/beyond-range results, and strict input validation.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
+  (35 tests), `pnpm test:integration` (11 tests), and file-list comparison
+  before/after queries demonstrating no mutation.
 
 ### TASK-011 — Build the accessible responsive dashboard
 

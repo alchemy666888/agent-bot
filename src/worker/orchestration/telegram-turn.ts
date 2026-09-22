@@ -28,11 +28,12 @@ export class TelegramTurn {
       )
         return;
       const at = new Date().toISOString();
-      await this.updates.save({
-        updateId: input.updateId,
-        stage: "received",
-        updatedAt: at,
-      });
+      if (!existing)
+        await this.updates.save({
+          updateId: input.updateId,
+          stage: "received",
+          updatedAt: at,
+        });
       this.conversations.contact({
         id: input.userId,
         username: input.username,
@@ -42,26 +43,38 @@ export class TelegramTurn {
       const deterministic = commandReply(input.text);
       if (input.text === "/new")
         this.conversations.newConversation(input.userId);
-      this.conversations.add(input.userId, "user", input.text, at);
-      await this.updates.save({
-        updateId: input.updateId,
-        stage: "prompt_saved",
-        updatedAt: at,
-      });
+      if (!existing || existing.stage === "received") {
+        this.conversations.add(input.userId, "user", input.text, at);
+        await this.updates.save({
+          updateId: input.updateId,
+          stage: "prompt_saved",
+          updatedAt: at,
+        });
+      }
       await this.telegram.typing(input.chatId);
-      const answer =
-        deterministic ??
-        (
-          await this.model.generate(
-            this.conversations.context(input.userId, this.prompt),
-          )
-        ).content;
-      this.conversations.add(input.userId, "assistant", answer);
-      await this.updates.save({
-        updateId: input.updateId,
-        stage: "model_complete",
-        updatedAt: new Date().toISOString(),
-      });
+      let answer = existing?.assistantId
+        ? this.conversations.message(existing.assistantId)?.text
+        : undefined;
+      if (!answer) {
+        answer =
+          deterministic ??
+          (
+            await this.model.generate(
+              this.conversations.context(input.userId, this.prompt),
+            )
+          ).content;
+        const assistant = this.conversations.add(
+          input.userId,
+          "assistant",
+          answer,
+        );
+        await this.updates.save({
+          updateId: input.updateId,
+          stage: "model_complete",
+          assistantId: assistant.id,
+          updatedAt: new Date().toISOString(),
+        });
+      }
       await this.telegram.send(input.chatId, answer);
       await this.updates.save({
         updateId: input.updateId,
