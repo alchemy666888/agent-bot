@@ -559,7 +559,7 @@ Implementation notes:
 
 ### TASK-011 — Build the accessible responsive dashboard
 
-Status: Pending
+Status: Blocked
 
 Requirements: REQ-F-023, REQ-F-024, REQ-F-026, REQ-F-027, REQ-F-028, REQ-NF-008, REQ-NF-012, REQ-NF-013
 
@@ -598,7 +598,23 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed so far: `src/app/dashboard/**`,
+  `src/components/dashboard/**`, `src/app/globals.css`, root layout styling,
+  and dashboard security headers in `next.config.ts`.
+- Implemented authenticated, server-rendered, force-dynamic/no-store dashboard
+  routes; semantic navigation, headings, search labels, empty states,
+  pagination landmarks, manual-refresh guidance, visible focus, responsive
+  320-pixel styles, logout/download navigation, anti-framing, CSP, nosniff, and
+  no-referrer headers. No editing, polling, charts, websocket, push, or client
+  cache was added.
+- Static verification passed: `pnpm typecheck`, `pnpm lint`, and `pnpm build`.
+- Blocked verification: `pnpm exec playwright install chromium` repeatedly
+  received HTTP 403 from the Playwright CDN. Installing Ubuntu's Chromium
+  package produced only a Snap launcher, and Snap is unavailable in this
+  container. Therefore the required Playwright login/view/search/pagination,
+  keyboard/accessibility, current-browser, and 320-pixel checks—and the required
+  screenshot—cannot be executed here. TASK-011 remains Blocked rather than
+  weakening or skipping those completion checks.
 
 ### TASK-012 — Implement consistent authenticated ZIP download
 
