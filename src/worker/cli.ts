@@ -8,6 +8,7 @@ import { DeepSeekProvider } from "./model/deepseek";
 import { TelegramClient } from "./telegram/client";
 import { TelegramTurn } from "./orchestration/telegram-turn";
 import { initializeLayout } from "./persistence/layout";
+import { exportData } from "./export/service";
 
 const ROOT = "/workspace/telegram-agent";
 
@@ -31,6 +32,10 @@ async function telegramTurn(payload: Record<string, unknown>) {
   return { terminal: true };
 }
 
+async function createExport() {
+  return exportData({ root: ROOT });
+}
+
 function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error("WORKER_CONFIGURATION_INVALID");
@@ -48,7 +53,9 @@ async function main() {
   const data =
     request.operation === "telegramTurn"
       ? await telegramTurn(request.payload)
-      : {};
+      : request.operation === "export"
+        ? await createExport()
+        : {};
   const response = workerResponseSchema.parse({
     contractVersion: 1,
     correlationId: request.correlationId,
