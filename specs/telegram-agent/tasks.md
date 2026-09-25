@@ -615,6 +615,12 @@ Implementation notes:
   keyboard/accessibility, current-browser, and 320-pixel checks—and the required
   screenshot—cannot be executed here. TASK-011 remains Blocked rather than
   weakening or skipping those completion checks.
+- Resumed verification attempt on 2026-09-22: the official Google Chrome `.deb`
+  downloaded successfully, but its required desktop libraries are unavailable
+  from the container's configured Ubuntu package sources. Extracting the binary
+  directly confirmed missing ATK, CUPS, XKB, ALSA, GBM, XComposite, XDamage,
+  XFixes, XRandR, and ATSPI shared libraries. A runnable browser is therefore
+  still unavailable, and no required browser assertion was waived.
 
 ### TASK-012 — Implement consistent authenticated ZIP download
 
