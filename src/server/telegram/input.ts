@@ -37,6 +37,35 @@ export type TelegramInput =
     }
   | { kind: "unsupported"; updateId: string; chatId: string }
   | { kind: "ignored"; updateId: string };
+
+export const telegramInputSchema: z.ZodType<TelegramInput> =
+  z.discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("text"),
+        updateId: z.string().regex(/^\d+$/),
+        messageId: z.string().regex(/^\d+$/),
+        chatId: z.string().regex(/^[1-9]\d*$/),
+        userId: z.string().regex(/^[1-9]\d*$/),
+        username: z.string().optional(),
+        languageCode: z.string().optional(),
+        text: z.string().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("unsupported"),
+        updateId: z.string().regex(/^\d+$/),
+        chatId: z.string().regex(/^[1-9]\d*$/),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("ignored"),
+        updateId: z.string().regex(/^\d+$/),
+      })
+      .strict(),
+  ]);
 export function extractTelegramInput(raw: unknown): TelegramInput {
   const update = updateSchema.parse(raw);
   const updateId = String(update.update_id);
