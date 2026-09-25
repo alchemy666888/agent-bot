@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   serverExternalPackages: ["@vercel/sandbox"],
+  outputFileTracingIncludes: {
+    "/api/telegram/webhook": ["./dist/worker.mjs"],
+  },
   async headers() {
     return [
       {

@@ -93,6 +93,9 @@ export class ConversationService {
           .slice(-20)
           .flat()
           .map(({ role, text }) => ({ role, content: text })),
+        ...(messages.at(-1)?.role === "user"
+          ? [{ role: "user" as const, content: messages.at(-1)!.text }]
+          : []),
       ],
     };
   }

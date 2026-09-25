@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { extractTelegramInput } from "../../../src/server/telegram/input";
-import { chunkTelegramText } from "../../../src/worker/telegram/client";
+import {
+  chunkTelegramText,
+  TelegramClient,
+} from "../../../src/worker/telegram/client";
+import { vi } from "vitest";
 describe("Telegram contract", () => {
   it("drops names and raw update fields", () => {
     const value = extractTelegramInput({
@@ -39,5 +43,23 @@ describe("Telegram contract", () => {
     const chunks = chunkTelegramText(text);
     expect(chunks.join("")).toBe(text);
     expect(chunks.every((x) => x.length <= 4096)).toBe(true);
+  });
+  it("falls back to plain text without changing or regenerating content", async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+    const client = new TelegramClient("fixture-token", request);
+    await client.send("3", "*exact* response");
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(request.mock.calls[0]![1]!.body as string)).toEqual({
+      chat_id: "3",
+      text: "*exact* response",
+      parse_mode: "MarkdownV2",
+    });
+    expect(JSON.parse(request.mock.calls[1]![1]!.body as string)).toEqual({
+      chat_id: "3",
+      text: "*exact* response",
+    });
   });
 });

@@ -1,23 +1,67 @@
-import type { ModelProvider } from "../../shared/contracts";
-import { ConversationService } from "../conversations/service";
+import type { ModelProvider, ModelRequest } from "../../shared/contracts";
+import type {
+  ConversationService,
+  Message,
+  UserProfile,
+} from "../conversations/service";
 import { commandReply } from "../commands";
 import { LockCoordinator } from "../locks/coordinator";
 import { UpdateRepository } from "../updates/repository";
 import type { TelegramClient } from "../telegram/client";
 import type { TelegramInput } from "../../server/telegram/input";
+import { retryTransient } from "../model/retry";
+import type { UpdateState } from "../updates/state-machine";
+
+const GENERIC_FAILURE =
+  "Sorry, I couldn't complete that request. Please try again later.";
+
+function isTransient(error: unknown): boolean {
+  const status = (error as { status?: unknown })?.status;
+  return (
+    status === 408 ||
+    status === 409 ||
+    status === 429 ||
+    (typeof status === "number" && status >= 500) ||
+    (error instanceof Error &&
+      ["LOCK_TIMEOUT", "TELEGRAM_DELIVERY_FAILED"].includes(error.message))
+  );
+}
+
+type MaybePromise<T> = T | Promise<T>;
+type ConversationStore = {
+  contact(
+    ...args: Parameters<ConversationService["contact"]>
+  ): MaybePromise<UserProfile>;
+  newConversation(
+    ...args: Parameters<ConversationService["newConversation"]>
+  ): MaybePromise<unknown>;
+  add(...args: Parameters<ConversationService["add"]>): MaybePromise<Message>;
+  context(
+    ...args: Parameters<ConversationService["context"]>
+  ): MaybePromise<ModelRequest>;
+  message(
+    ...args: Parameters<ConversationService["message"]>
+  ): MaybePromise<Message | undefined>;
+};
 export class TelegramTurn {
   constructor(
     private locks: LockCoordinator,
     private updates: UpdateRepository,
-    private conversations: ConversationService,
+    private conversations: ConversationStore,
     private model: ModelProvider,
     private telegram: Pick<TelegramClient, "typing" | "send">,
     private prompt: string,
   ) {}
+  private checkpoint(userId: string, state: UpdateState) {
+    return this.locks.withMutation(() => this.updates.save(state), userId);
+  }
   async handle(input: TelegramInput) {
     if (input.kind === "ignored") return;
     if (input.kind === "unsupported") {
-      await this.telegram.send(input.chatId, "Please send a text message.");
+      await retryTransient(
+        () => this.telegram.send(input.chatId, "Please send a text message."),
+        isTransient,
+      );
       return;
     }
     await this.locks.withUser(input.userId, async () => {
@@ -29,12 +73,12 @@ export class TelegramTurn {
         return;
       const at = new Date().toISOString();
       if (!existing)
-        await this.updates.save({
+        await this.checkpoint(input.userId, {
           updateId: input.updateId,
           stage: "received",
           updatedAt: at,
         });
-      this.conversations.contact({
+      await this.conversations.contact({
         id: input.userId,
         username: input.username,
         languageCode: input.languageCode,
@@ -42,45 +86,78 @@ export class TelegramTurn {
       });
       const deterministic = commandReply(input.text);
       if (input.text === "/new")
-        this.conversations.newConversation(input.userId);
+        await this.conversations.newConversation(input.userId);
       if (!existing || existing.stage === "received") {
-        this.conversations.add(input.userId, "user", input.text, at);
-        await this.updates.save({
+        await this.conversations.add(input.userId, "user", input.text, at);
+        await this.checkpoint(input.userId, {
           updateId: input.updateId,
           stage: "prompt_saved",
           updatedAt: at,
         });
       }
-      await this.telegram.typing(input.chatId);
+      await this.telegram.typing(input.chatId).catch(() => undefined);
+      const typingRefresh = setInterval(
+        () => void this.telegram.typing(input.chatId).catch(() => undefined),
+        4_000,
+      );
       let answer = existing?.assistantId
-        ? this.conversations.message(existing.assistantId)?.text
+        ? (await this.conversations.message(existing.assistantId))?.text
         : undefined;
-      if (!answer) {
-        answer =
-          deterministic ??
-          (
-            await this.model.generate(
-              this.conversations.context(input.userId, this.prompt),
-            )
-          ).content;
-        const assistant = this.conversations.add(
-          input.userId,
-          "assistant",
-          answer,
+      try {
+        if (!answer) {
+          try {
+            answer =
+              deterministic ??
+              (
+                await retryTransient(
+                  async () =>
+                    this.model.generate(
+                      await this.conversations.context(
+                        input.userId,
+                        this.prompt,
+                      ),
+                    ),
+                  isTransient,
+                )
+              ).content;
+          } catch {
+            await retryTransient(
+              () => this.telegram.send(input.chatId, GENERIC_FAILURE),
+              isTransient,
+            );
+            await this.checkpoint(input.userId, {
+              updateId: input.updateId,
+              stage: "failed",
+              updatedAt: new Date().toISOString(),
+            });
+            return;
+          }
+          const assistant = await this.conversations.add(
+            input.userId,
+            "assistant",
+            answer,
+          );
+          await this.checkpoint(input.userId, {
+            updateId: input.updateId,
+            stage: "model_complete",
+            assistantId: assistant.id,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+        const finalAnswer = answer;
+        if (!finalAnswer) throw new Error("ASSISTANT_RESPONSE_MISSING");
+        await retryTransient(
+          () => this.telegram.send(input.chatId, finalAnswer),
+          isTransient,
         );
-        await this.updates.save({
+        await this.checkpoint(input.userId, {
           updateId: input.updateId,
-          stage: "model_complete",
-          assistantId: assistant.id,
+          stage: "delivery_complete",
           updatedAt: new Date().toISOString(),
         });
+      } finally {
+        clearInterval(typingRefresh);
       }
-      await this.telegram.send(input.chatId, answer);
-      await this.updates.save({
-        updateId: input.updateId,
-        stage: "delivery_complete",
-        updatedAt: new Date().toISOString(),
-      });
     });
   }
 }

@@ -403,7 +403,7 @@ Implementation notes:
 
 ### TASK-008 — Implement Telegram webhook, transport, and turn orchestration
 
-Status: In Progress
+Status: Completed
 
 Requirements: REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-010, REQ-F-011, REQ-F-013, REQ-F-014, REQ-F-015, REQ-F-017, REQ-F-018, REQ-F-033, REQ-NF-007, REQ-NF-009, REQ-NF-010, REQ-NF-014
 
@@ -443,7 +443,7 @@ Completion criteria:
 
 Implementation notes:
 
-- In progress. Files/components changed so far:
+- Files/components changed:
   `src/server/telegram/input.ts`, `src/app/api/telegram/webhook/route.ts`,
   `src/worker/telegram/client.ts`, `src/worker/orchestration/telegram-turn.ts`,
   and `tests/contracts/telegram/**`.
@@ -451,15 +451,44 @@ Implementation notes:
   extraction that drops names/raw fields, ignored edited/group updates,
   unsupported private-input guidance, typing, lossless 4096-character chunks,
   Markdown-to-plain fallback, and checkpoint-aware turn orchestration.
-- Current verification covers raw-field exclusion, group/edit rejection, and
-  exact long-text reconstruction. Remaining before completion: connect the
-  route to the private worker dispatcher, add every checkpoint interruption
-  resume scenario, formatting/retry failure integration, and duplicate-turn
-  proof with mocked Telegram and DeepSeek.
+- Initial verification covered raw-field exclusion, group/edit rejection, and
+  exact long-text reconstruction.
 - Added duplicate terminal handling, command/model separation, and
   model-complete response reuse so redelivery does not regenerate or redeliver;
-  mocked turn integration passes, while the private-worker route connection and
-  remaining interruption/failure cases above are still required.
+  mocked turn integration passes.
+- Connected the webhook boundary to the named private Sandbox dispatcher. The
+  controller now sends only the minimized input in a validated worker request,
+  supplies only Telegram/model operation secrets, installs the build-hashed
+  worker outside the Drive, maps safe worker failures to retryable/non-retryable
+  HTTP responses, and applies no-store responses. Production builds now create
+  and trace the standalone worker asset.
+- Added webhook contract coverage for secret-before-body rejection, malformed
+  JSON, prohibited raw/name-field exclusion, minimized dispatch, no-store, and
+  sanitized retryable failure. Verification passed: `pnpm typecheck`,
+  `pnpm test:contracts` (7 tests), `pnpm test:integration` (11 tests),
+  `pnpm lint`, `pnpm format:check`, and `pnpm build`.
+- The bundled worker CLI now validates the minimized Telegram payload,
+  initializes the Drive layout, constructs the lock/update/model/Telegram turn
+  dependencies, and executes `telegramTurn`. Turn orchestration now includes
+  the latest user prompt in model context, retries transient model and Telegram
+  failures at most twice, treats typing as best-effort, sends a generic terminal
+  provider-failure reply, and resumes both `prompt_saved` and `model_complete`
+  checkpoints without regenerating a completed answer.
+- Added integration/contract proof for prompt-saved and model-complete resume,
+  transient provider and delivery retry, exhausted-provider sanitization,
+  final-answer reuse, exact Markdown-to-plain fallback, and the real worker
+  bundle build. Verification passed: `pnpm typecheck`, `pnpm test:unit` (35
+  tests), `pnpm test:integration` (15 tests), `pnpm test:contracts` (8 tests),
+  `pnpm format:check`, and `pnpm build`.
+- Added the Drive-backed conversation service used by worker commands. It
+  appends and syncs canonical user/conversation/message events under the global
+  mutation lock before atomically replacing projections, reloads active context
+  from projections, and preserves the per-user-before-global lock order.
+- Fresh-process integration verification now interrupts after durable
+  `model_complete`, constructs entirely new lock/repository/conversation/turn
+  instances, reuses the projected assistant answer without a provider call, and
+  reaches `delivery_complete`. `pnpm test:integration` passes 16 tests. All
+  TASK-008 completion criteria and listed local verification now pass.
 
 ### TASK-009 — Implement dashboard and download authentication
 
