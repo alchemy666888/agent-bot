@@ -653,7 +653,7 @@ Implementation notes:
 
 ### TASK-012 — Implement consistent authenticated ZIP download
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-025, REQ-F-029, REQ-F-030, REQ-F-031, REQ-F-033, REQ-NF-007, REQ-NF-014, REQ-NF-016
 
@@ -691,7 +691,24 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/worker/export/**`,
+  `src/server/export/service.ts`, `src/app/api/download/route.ts`, worker command
+  dispatch, `tests/integration/export/**`, and `tests/contracts/download/**`.
+- Implemented a global-mutation-lock snapshot barrier that syncs and copies only
+  `data/` to a unique non-Drive temporary directory, releases the lock before
+  creating a standards-compatible streaming ZIP, and removes partial output on
+  failure. Runtime locks, worker/request files, environment values, and export
+  temporaries cannot enter the archive.
+- Added cookie-or-exact-bearer authenticated, no-store ZIP responses. The
+  controller validates archive metadata, bridges `sandbox.readFile()` without
+  full buffering, and removes the temporary snapshot/archive after completion,
+  stream failure, or client cancellation.
+- Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`,
+  `pnpm test:unit` (35 tests), `pnpm test:integration` (19 tests),
+  `pnpm test:contracts` (11 tests), and `pnpm build`. Export integration tests
+  exercised queued writes, valid JSON/JSONL ZIP contents, runtime/secret
+  exclusion, continued writes, and failed-snapshot cleanup; contract tests
+  exercised incremental transfer, completion, interruption, and error cleanup.
 
 ### TASK-013 — Add sanitized observability and health
 
