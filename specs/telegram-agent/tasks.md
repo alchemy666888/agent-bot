@@ -588,7 +588,7 @@ Implementation notes:
 
 ### TASK-011 — Build the accessible responsive dashboard
 
-Status: Blocked
+Status: Completed
 
 Requirements: REQ-F-023, REQ-F-024, REQ-F-026, REQ-F-027, REQ-F-028, REQ-NF-008, REQ-NF-012, REQ-NF-013
 
@@ -637,19 +637,19 @@ Implementation notes:
   no-referrer headers. No editing, polling, charts, websocket, push, or client
   cache was added.
 - Static verification passed: `pnpm typecheck`, `pnpm lint`, and `pnpm build`.
-- Blocked verification: `pnpm exec playwright install chromium` repeatedly
-  received HTTP 403 from the Playwright CDN. Installing Ubuntu's Chromium
-  package produced only a Snap launcher, and Snap is unavailable in this
-  container. Therefore the required Playwright login/view/search/pagination,
-  keyboard/accessibility, current-browser, and 320-pixel checks—and the required
-  screenshot—cannot be executed here. TASK-011 remains Blocked rather than
-  weakening or skipping those completion checks.
-- Resumed verification attempt on 2026-09-22: the official Google Chrome `.deb`
-  downloaded successfully, but its required desktop libraries are unavailable
-  from the container's configured Ubuntu package sources. Extracting the binary
-  directly confirmed missing ATK, CUPS, XKB, ALSA, GBM, XComposite, XDamage,
-  XFixes, XRandR, and ATSPI shared libraries. A runnable browser is therefore
-  still unavailable, and no required browser assertion was waived.
+- Earlier browser attempts were blocked by the Playwright CDN and missing
+  Chrome libraries. This continuation used the system Chrome binary with
+  `--no-sandbox`.
+- Dashboard pages now call the private `query` worker operation. Lists,
+  search, 50-row paging, conversation detail, empty and error states, manual
+  refresh, and read-only navigation are server-rendered. Login and logout use
+  same-origin POST route handlers. `TELEGRAM_AGENT_LOCAL_ROOT` is ignored when
+  `VERCEL` is set.
+- Playwright passed 4 tests: unauthenticated and wrong-secret login, tampered
+  session rejection, every dashboard view, search, pagination, refresh,
+  logout, cookie and bearer ZIP download, keyboard focus, axe WCAG 2.2 AA
+  checks, and 1280, 390, and 320 CSS-pixel layouts without horizontal
+  scrolling.
 
 ### TASK-012 — Implement consistent authenticated ZIP download
 
@@ -769,7 +769,7 @@ Implementation notes:
 
 ### TASK-014 — Complete unit and local filesystem integration verification
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-004, REQ-F-005, REQ-F-006, REQ-F-011, REQ-F-012, REQ-F-015, REQ-F-016, REQ-F-017, REQ-F-018, REQ-F-019, REQ-F-020, REQ-F-021, REQ-F-022, REQ-F-032, REQ-F-034, REQ-NF-003, REQ-NF-004, REQ-NF-005, REQ-NF-006, REQ-NF-009, REQ-NF-010, REQ-NF-011, REQ-NF-014, REQ-NF-016
 
@@ -805,11 +805,19 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `tests/helpers/filesystem/root.ts` and
+  `tests/integration/worker/local-acceptance.test.ts`.
+- The local acceptance test runs ten durable conversations, a second
+  same-user turn, a duplicate update, and an export through the Drive
+  filesystem interface with model and Telegram doubles. It checks per-user
+  order, one model run per first turn, valid JSON/JSONL, and prohibited-field
+  absence.
+- Verification passed: `pnpm test:unit` (42 tests) and `pnpm test:integration`
+  (21 tests). No live service or database was required.
 
 ### TASK-015 — Complete contract, browser, accessibility, and security verification
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-007, REQ-F-008, REQ-F-009, REQ-F-010, REQ-F-013, REQ-F-014, REQ-F-015, REQ-F-023, REQ-F-024, REQ-F-025, REQ-F-026, REQ-F-027, REQ-F-028, REQ-F-029, REQ-F-030, REQ-F-031, REQ-F-033, REQ-NF-007, REQ-NF-008, REQ-NF-010, REQ-NF-012, REQ-NF-013, REQ-NF-014
 
@@ -843,11 +851,19 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `tests/e2e/dashboard.spec.ts`,
+  `tests/contracts/security/boundaries.test.ts`, and Playwright configuration
+  using system Chrome.
+- Verification passed: `pnpm test:contracts` (13 tests), `pnpm test:e2e`
+  (4 tests), and `pnpm build`. Contract tests reject database, object-store,
+  throttling, moderation, and tool packages and keep the capability seam
+  inactive. The client bundle scan found no provider secrets or hidden
+  reasoning. E2E covers authentication, dashboard behavior, accessibility,
+  320-pixel layout, and bearer download.
 
 ### TASK-016 — Document and verify Vercel Preview operations
 
-Status: Pending
+Status: Blocked
 
 Requirements: REQ-F-007, REQ-F-014, REQ-F-019, REQ-F-022, REQ-F-025, REQ-F-029, REQ-F-030, REQ-F-031, REQ-NF-001, REQ-NF-002, REQ-NF-003, REQ-NF-007, REQ-NF-015, REQ-NF-016
 
@@ -884,11 +900,23 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `docs/deployment.md`, `docs/operations.md`,
+  `docs/rollback.md`, `scripts/verify-preview.mjs`, and
+  `tests/live-preview/drive.test.ts`.
+- The runbooks describe one named `sin1` Drive and Sandbox, OIDC, separated
+  Preview and Production names, webhook registration last, and rollback that
+  preserves the Drive and does not import an archive.
+- `pnpm test:live-preview` exits 2 with `LIVE_PREVIEW_NOT_AUTHORIZED` unless
+  `TELEGRAM_AGENT_LIVE_PREVIEW=authorized`, both resource names match
+  `telegram-agent-preview-*`, and `VERCEL_OIDC_TOKEN` is present. No live
+  Sandbox or Drive call was made.
+- Blocked because completion requires operator-authorized evidence of real
+  `sin1` persistence, one writer, lock/fsync/rename, and streaming. Ordinary
+  tests do not create or delete live resources.
 
 ### TASK-017 — Execute final acceptance and scope audit
 
-Status: Pending
+Status: Blocked
 
 Requirements: REQ-F-001, REQ-F-002, REQ-F-003, REQ-F-004, REQ-F-005, REQ-F-006, REQ-F-007, REQ-F-008, REQ-F-009, REQ-F-010, REQ-F-011, REQ-F-012, REQ-F-013, REQ-F-014, REQ-F-015, REQ-F-016, REQ-F-017, REQ-F-018, REQ-F-019, REQ-F-020, REQ-F-021, REQ-F-022, REQ-F-023, REQ-F-024, REQ-F-025, REQ-F-026, REQ-F-027, REQ-F-028, REQ-F-029, REQ-F-030, REQ-F-031, REQ-F-032, REQ-F-033, REQ-F-034, REQ-NF-001, REQ-NF-002, REQ-NF-003, REQ-NF-004, REQ-NF-005, REQ-NF-006, REQ-NF-007, REQ-NF-008, REQ-NF-009, REQ-NF-010, REQ-NF-011, REQ-NF-012, REQ-NF-013, REQ-NF-014, REQ-NF-015, REQ-NF-016
 
@@ -923,7 +951,15 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Local sequence passed: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`,
+  `pnpm test:unit` (42), `pnpm test:integration` (21), `pnpm test:contracts`
+  (13), `pnpm test:e2e` (4), and `pnpm build`.
+- `docs/acceptance-evidence.md` maps the local evidence to AC-001 through
+  AC-019 and audits NTD-001 through NTD-013. The client bundle scan found no
+  secrets or hidden reasoning.
+- Blocked because TASK-016 is Blocked. AC-017 and AC-019 still need
+  authorized live `sin1` Drive/Sandbox evidence, and `pnpm test:live-preview`
+  correctly refuses to run without that authorization.
 
 ## Coverage matrix
 

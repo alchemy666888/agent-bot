@@ -185,6 +185,19 @@ export class DurableConversationService {
     };
   }
 
+  async recordModelRun(record: Record<string, unknown>): Promise<void> {
+    const id = String(record.id);
+    await this.commit(
+      String(record.userId),
+      "model-runs",
+      id,
+      "model_run.completed",
+      1,
+      String(record.createdAt),
+      record,
+    );
+  }
+
   async message(id: string): Promise<Message | undefined> {
     const state = await this.read("messages", id);
     if (!state) return undefined;

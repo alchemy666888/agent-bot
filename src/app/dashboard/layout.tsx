@@ -25,7 +25,7 @@ export default async function DashboardLayout({
           <a href="/dashboard/messages">Messages</a>
           <a href="/dashboard/model-runs">Usage</a>
           <a href="/dashboard/errors">Errors</a>
-          <a href="/api/download">Download</a>
+          <a href="/api/download">Download data</a>
           <form action="/logout" method="post">
             <button>Log out</button>
           </form>

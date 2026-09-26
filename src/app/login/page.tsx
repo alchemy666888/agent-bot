@@ -1,9 +1,8 @@
-import { login } from "./actions";
 export default function Login() {
   return (
-    <main>
+    <main id="content" className="shell">
       <h1>Dashboard login</h1>
-      <form action={login}>
+      <form action="/login/submit" method="post">
         <label htmlFor="secret">Administrator secret</label>
         <input
           id="secret"
