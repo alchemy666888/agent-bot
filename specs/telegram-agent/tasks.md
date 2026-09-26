@@ -712,7 +712,7 @@ Implementation notes:
 
 ### TASK-013 — Add sanitized observability and health
 
-Status: Pending
+Status: Completed
 
 Requirements: REQ-F-014, REQ-F-018, REQ-F-025, REQ-F-032, REQ-NF-007, REQ-NF-009, REQ-NF-011
 
@@ -747,7 +747,25 @@ Completion criteria:
 
 Implementation notes:
 
-- None yet.
+- Files/components changed: `src/shared/logger.ts`,
+  `src/worker/errors/service.ts`, `src/worker/orchestration/telegram-turn.ts`,
+  worker/controller dispatch and public routes, `src/app/api/health/route.ts`,
+  and observability unit/integration/contract tests.
+- Added correlation propagation from webhook and download requests into worker
+  commands, sanitized one-object structured controller/worker logs with bounded
+  error codes, and append-first/atomic-projection durable error records for
+  exhausted provider and Telegram delivery failures. Redaction occurs before
+  log serialization, and durable failures contain only approved identifiers,
+  stage, timestamps, and safe error envelopes.
+- Added a no-store, side-effect-free health route that validates configuration
+  without calling the Sandbox SDK or creating/resuming resources and returns
+  only `ready|degraded` plus safe component states.
+- Verification passed: `pnpm format:check`, `pnpm typecheck`, `pnpm lint`,
+  `pnpm test:unit` (39 tests), `pnpm test:integration` (20 tests),
+  `pnpm test:contracts` (11 tests), and `pnpm build`. Tests inject prohibited
+  authorization, token, hidden-reasoning, exception, and configuration values;
+  verify their absence from logs, durable JSONL/projections, and health output;
+  and verify correlated failure persistence and ready/degraded health behavior.
 
 ### TASK-014 — Complete unit and local filesystem integration verification
 

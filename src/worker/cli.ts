@@ -9,13 +9,19 @@ import { TelegramClient } from "./telegram/client";
 import { TelegramTurn } from "./orchestration/telegram-turn";
 import { initializeLayout } from "./persistence/layout";
 import { exportData } from "./export/service";
+import { DurableErrorService } from "./errors/service";
+import { logStructured, safeError } from "../shared/logger";
 
 const ROOT = "/workspace/telegram-agent";
 
-async function telegramTurn(payload: Record<string, unknown>) {
+async function telegramTurn(
+  payload: Record<string, unknown>,
+  correlationId: string,
+) {
   const input = telegramInputSchema.parse(payload.input);
   await initializeLayout(ROOT);
   const locks = new LockCoordinator(ROOT);
+  const errors = new DurableErrorService(ROOT, locks);
   const turn = new TelegramTurn(
     locks,
     new UpdateRepository(ROOT),
@@ -27,6 +33,10 @@ async function telegramTurn(payload: Record<string, unknown>) {
     }),
     new TelegramClient(requiredEnv("TELEGRAM_BOT_TOKEN")),
     requiredEnv("ASSISTANT_SYSTEM_PROMPT"),
+    {
+      correlationId,
+      recordFailure: (failure) => errors.record({ correlationId, ...failure }),
+    },
   );
   await turn.handle(input);
   return { terminal: true };
@@ -50,12 +60,35 @@ async function main() {
     JSON.parse(await readFile(requestPath, "utf8")),
   );
   if (request.operation !== operation) throw new Error("OPERATION_MISMATCH");
-  const data =
-    request.operation === "telegramTurn"
-      ? await telegramTurn(request.payload)
-      : request.operation === "export"
-        ? await createExport()
-        : {};
+  const started = Date.now();
+  let data;
+  try {
+    data =
+      request.operation === "telegramTurn"
+        ? await telegramTurn(request.payload, request.correlationId)
+        : request.operation === "export"
+          ? await createExport()
+          : {};
+    logStructured({
+      correlationId: request.correlationId,
+      component: "worker",
+      operation: request.operation,
+      stage: "complete",
+      result: "success",
+      durationMs: Date.now() - started,
+    });
+  } catch (error) {
+    logStructured({
+      correlationId: request.correlationId,
+      component: "worker",
+      operation: request.operation,
+      stage: "complete",
+      result: "failure",
+      durationMs: Date.now() - started,
+      code: safeError(error).code,
+    });
+    throw error;
+  }
   const response = workerResponseSchema.parse({
     contractVersion: 1,
     correlationId: request.correlationId,

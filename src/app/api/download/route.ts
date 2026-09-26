@@ -5,6 +5,8 @@ import {
   SESSION_COOKIE,
 } from "../../../server/auth/guards";
 import { prepareExport } from "../../../server/export/service";
+import { uuidV7 } from "../../../shared/ids";
+import { logStructured, safeError } from "../../../shared/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +17,8 @@ const privateHeaders = {
 };
 
 export async function GET(request: Request): Promise<Response> {
+  const correlationId = uuidV7();
+  const started = Date.now();
   let config;
   try {
     config = readDashboardConfig();
@@ -39,7 +43,16 @@ export async function GET(request: Request): Promise<Response> {
     );
 
   try {
-    const exported = await prepareExport();
+    const exported = await prepareExport(correlationId);
+    logStructured({
+      correlationId,
+      component: "controller",
+      operation: "download",
+      stage: "archive-ready",
+      result: "success",
+      durationMs: Date.now() - started,
+      metadata: { size: exported.size },
+    });
     return new Response(exported.stream, {
       headers: {
         ...privateHeaders,
@@ -48,7 +61,16 @@ export async function GET(request: Request): Promise<Response> {
         "Content-Length": String(exported.size),
       },
     });
-  } catch {
+  } catch (error) {
+    logStructured({
+      correlationId,
+      component: "controller",
+      operation: "download",
+      stage: "archive",
+      result: "failure",
+      durationMs: Date.now() - started,
+      code: safeError(error).code,
+    });
     return Response.json(
       { error: "Archive unavailable" },
       { status: 503, headers: privateHeaders },

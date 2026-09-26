@@ -15,7 +15,10 @@ import type { TelegramInput } from "./input";
 const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
 
 /** Dispatches only the minimized Telegram input and operation-required secrets. */
-export async function dispatchTelegramInput(input: TelegramInput) {
+export async function dispatchTelegramInput(
+  input: TelegramInput,
+  correlationId = uuidV7(),
+) {
   const telegram = readTelegramConfig();
   const model = readModelConfig();
   const sandbox = await ensureSandbox(readSandboxConfig());
@@ -28,7 +31,7 @@ export async function dispatchTelegramInput(input: TelegramInput) {
     workerPath,
     {
       contractVersion: 1,
-      correlationId: uuidV7(),
+      correlationId,
       operation: "telegramTurn",
       payload: { input },
     },

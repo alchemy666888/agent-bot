@@ -51,6 +51,15 @@ export class TelegramTurn {
     private model: ModelProvider,
     private telegram: Pick<TelegramClient, "typing" | "send">,
     private prompt: string,
+    private observability?: {
+      correlationId: string;
+      recordFailure(input: {
+        stage: string;
+        error: unknown;
+        updateId: string;
+        userId: string;
+      }): Promise<unknown>;
+    },
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -120,7 +129,13 @@ export class TelegramTurn {
                   isTransient,
                 )
               ).content;
-          } catch {
+          } catch (error) {
+            await this.observability?.recordFailure({
+              stage: "model",
+              error,
+              updateId: input.updateId,
+              userId: input.userId,
+            });
             await retryTransient(
               () => this.telegram.send(input.chatId, GENERIC_FAILURE),
               isTransient,
@@ -146,10 +161,20 @@ export class TelegramTurn {
         }
         const finalAnswer = answer;
         if (!finalAnswer) throw new Error("ASSISTANT_RESPONSE_MISSING");
-        await retryTransient(
-          () => this.telegram.send(input.chatId, finalAnswer),
-          isTransient,
-        );
+        try {
+          await retryTransient(
+            () => this.telegram.send(input.chatId, finalAnswer),
+            isTransient,
+          );
+        } catch (error) {
+          await this.observability?.recordFailure({
+            stage: "delivery",
+            error,
+            updateId: input.updateId,
+            userId: input.userId,
+          });
+          throw error;
+        }
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
           stage: "delivery_complete",
