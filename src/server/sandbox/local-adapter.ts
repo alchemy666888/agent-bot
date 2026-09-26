@@ -4,6 +4,13 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { CommandResult, SandboxHandle, SandboxSdk } from "./sdk-adapter";
 
+type CommandParams = {
+  cmd: string;
+  args?: string[];
+  env?: Record<string, string>;
+  timeoutMs?: number;
+};
+
 const ALLOWED_COMMANDS = new Set(["node", "test", "rm"]);
 
 function commandResult(
@@ -63,12 +70,20 @@ function localHandle(root: string): SandboxHandle {
         await writeFile(file.path, file.content, { mode: 0o600 });
       }
     },
-    async runCommand(command, args = [], options) {
+    async runCommand(
+      commandOrParams: string | CommandParams,
+      args: string[] = [],
+      options?: { env?: Record<string, string>; timeoutMs?: number },
+    ) {
+      const objectForm = typeof commandOrParams !== "string";
+      const command = objectForm ? commandOrParams.cmd : commandOrParams;
+      const argv = objectForm ? (commandOrParams.args ?? []) : args;
+      const commandOptions = objectForm ? commandOrParams : options;
       if (!ALLOWED_COMMANDS.has(command))
         return commandResult(127, "", "COMMAND_REJECTED");
       if (
         command === "rm" &&
-        args.some(
+        argv.some(
           (arg) =>
             !arg.startsWith("-") && !arg.startsWith("/tmp/telegram-agent"),
         )
@@ -76,15 +91,15 @@ function localHandle(root: string): SandboxHandle {
         return commandResult(1, "", "PATH_REJECTED");
       return runProcess(
         command,
-        args,
+        argv,
         {
           PATH: process.env.PATH ?? "/usr/bin:/bin",
           HOME: process.env.HOME ?? "/tmp",
           NODE_ENV: process.env.NODE_ENV ?? "production",
           TELEGRAM_AGENT_ROOT: root,
-          ...options?.env,
+          ...commandOptions?.env,
         },
-        options?.timeoutMs ?? 120_000,
+        commandOptions?.timeoutMs ?? 120_000,
       );
     },
     async readFileToBuffer(file) {

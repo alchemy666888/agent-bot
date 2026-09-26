@@ -43,12 +43,12 @@ describe("private worker transport", () => {
       { contractVersion: 1, correlationId, operation: "health", payload: {} },
       { REQUIRED_ONLY: "fixture" },
     );
-    expect(target.runCommand).toHaveBeenNthCalledWith(
-      1,
-      "node",
-      expect.any(Array),
-      expect.objectContaining({ env: { REQUIRED_ONLY: "fixture" } }),
-    );
+    expect(target.runCommand).toHaveBeenNthCalledWith(1, {
+      cmd: "node",
+      args: expect.any(Array),
+      env: { REQUIRED_ONLY: "fixture" },
+      timeoutMs: 120_000,
+    });
     expect(target.runCommand).toHaveBeenLastCalledWith(
       "rm",
       expect.arrayContaining(["-f"]),
