@@ -23,6 +23,12 @@ export interface SandboxHandle {
     args?: string[],
     options?: { env?: Record<string, string>; timeoutMs?: number },
   ): Promise<CommandResult>;
+  runCommand(params: {
+    cmd: string;
+    args?: string[];
+    env?: Record<string, string>;
+    timeoutMs?: number;
+  }): Promise<CommandResult>;
   readFileToBuffer(file: { path: string }): Promise<Buffer | null>;
   readFile(file: { path: string }): Promise<NodeJS.ReadableStream | null>;
 }
