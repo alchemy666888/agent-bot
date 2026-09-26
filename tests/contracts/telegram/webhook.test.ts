@@ -58,16 +58,19 @@ describe("Telegram webhook", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(dispatchTelegramInput).toHaveBeenCalledWith({
-      kind: "text",
-      updateId: "1",
-      messageId: "2",
-      chatId: "3",
-      userId: "4",
-      username: "public-name",
-      languageCode: undefined,
-      text: "hello",
-    });
+    expect(dispatchTelegramInput).toHaveBeenCalledWith(
+      {
+        kind: "text",
+        updateId: "1",
+        messageId: "2",
+        chatId: "3",
+        userId: "4",
+        username: "public-name",
+        languageCode: undefined,
+        text: "hello",
+      },
+      expect.stringMatching(/^[0-9a-f-]{36}$/),
+    );
     expect(JSON.stringify(dispatchTelegramInput.mock.calls)).not.toContain(
       "must-not-pass",
     );

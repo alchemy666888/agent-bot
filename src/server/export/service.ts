@@ -65,7 +65,9 @@ async function removeExport(sandbox: SandboxHandle, path: string) {
   await sandbox.runCommand("rm", ["-rf", dirname(path)]);
 }
 
-export async function prepareExport(): Promise<PreparedExport> {
+export async function prepareExport(
+  correlationId = uuidV7(),
+): Promise<PreparedExport> {
   const sandbox = await ensureSandbox(readSandboxConfig());
   const workerPath = await installWorker(
     sandbox,
@@ -73,7 +75,7 @@ export async function prepareExport(): Promise<PreparedExport> {
   );
   const response = await invokeWorker(sandbox, workerPath, {
     contractVersion: 1,
-    correlationId: uuidV7(),
+    correlationId,
     operation: "export",
     payload: {},
   });
