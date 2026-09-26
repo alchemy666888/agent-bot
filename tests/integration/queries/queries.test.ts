@@ -25,6 +25,25 @@ describe("read-only queries", () => {
     expect((await service.list("users", { page: 1 })).items).toHaveLength(50);
     expect((await service.list("users", { search: "needle" })).total).toBe(1);
     expect(await readdir(dir)).toEqual(before);
+    await mkdir(join(root, "data/state/conversations"), { recursive: true });
+    await mkdir(join(root, "data/state/messages"), { recursive: true });
+    await writeFile(
+      join(root, "data/state/conversations/conv-1.json"),
+      JSON.stringify({ id: "conv-1", status: "active" }),
+    );
+    await writeFile(
+      join(root, "data/state/messages/msg-1.json"),
+      JSON.stringify({
+        id: "msg-1",
+        conversationId: "conv-1",
+        text: "kept",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    expect((await service.conversation("conv-1", {})).items).toEqual([
+      expect.objectContaining({ text: "kept" }),
+    ]);
+    expect((await service.conversation("missing", {})).found).toBe(false);
   });
   it("rejects malformed pages and returns empty beyond range", async () => {
     root = await mkdtemp(join(tmpdir(), "query-"));

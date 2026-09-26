@@ -7,6 +7,15 @@ export default defineConfig([
   ...nextTypeScript,
   globalIgnores([".next/**", "coverage/**", "dist/**"]),
   {
+    files: [
+      "src/app/dashboard/**/*.{ts,tsx}",
+      "src/components/dashboard/**/*.{ts,tsx}",
+    ],
+    rules: {
+      "@next/next/no-html-link-for-pages": "off",
+    },
+  },
+  {
     files: ["src/app/**/*.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [

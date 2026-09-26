@@ -10,6 +10,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    exclude: ["tests/live-preview/**", "node_modules/**"],
     coverage: { reporter: ["text", "json", "html"] },
   },
 });

@@ -1,4 +1,10 @@
-import type { ModelProvider, ModelRequest } from "../../shared/contracts";
+import type {
+  ModelProvider,
+  ModelRequest,
+  ModelResponse,
+} from "../../shared/contracts";
+import { uuidV7 } from "../../shared/ids";
+import { calculateCost } from "../model/usage";
 import type {
   ConversationService,
   Message,
@@ -42,7 +48,13 @@ type ConversationStore = {
   message(
     ...args: Parameters<ConversationService["message"]>
   ): MaybePromise<Message | undefined>;
+  recordModelRun?(record: Record<string, unknown>): MaybePromise<void>;
 };
+export interface ModelAccounting {
+  inputPricePerMillion?: string;
+  outputPricePerMillion?: string;
+  thinkingEnabled: boolean;
+}
 export class TelegramTurn {
   constructor(
     private locks: LockCoordinator,
@@ -60,6 +72,7 @@ export class TelegramTurn {
         userId: string;
       }): Promise<unknown>;
     },
+    private accounting?: ModelAccounting,
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -96,8 +109,15 @@ export class TelegramTurn {
       const deterministic = commandReply(input.text);
       if (input.text === "/new")
         await this.conversations.newConversation(input.userId);
+      let requestMessageId: string | null = null;
       if (!existing || existing.stage === "received") {
-        await this.conversations.add(input.userId, "user", input.text, at);
+        const userMessage = await this.conversations.add(
+          input.userId,
+          "user",
+          input.text,
+          at,
+        );
+        requestMessageId = userMessage.id;
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
           stage: "prompt_saved",
@@ -114,21 +134,22 @@ export class TelegramTurn {
         : undefined;
       try {
         if (!answer) {
+          let generated: ModelResponse | undefined;
+          let latencyMs = 0;
           try {
-            answer =
-              deterministic ??
-              (
-                await retryTransient(
-                  async () =>
-                    this.model.generate(
-                      await this.conversations.context(
-                        input.userId,
-                        this.prompt,
-                      ),
-                    ),
-                  isTransient,
-                )
-              ).content;
+            if (deterministic) answer = deterministic;
+            else {
+              const started = Date.now();
+              generated = await retryTransient(
+                async () =>
+                  this.model.generate(
+                    await this.conversations.context(input.userId, this.prompt),
+                  ),
+                isTransient,
+              );
+              latencyMs = Date.now() - started;
+              answer = generated.content;
+            }
           } catch (error) {
             await this.observability?.recordFailure({
               stage: "model",
@@ -147,11 +168,44 @@ export class TelegramTurn {
             });
             return;
           }
+          if (!answer) throw new Error("ASSISTANT_RESPONSE_MISSING");
           const assistant = await this.conversations.add(
             input.userId,
             "assistant",
             answer,
           );
+          if (generated && this.accounting)
+            await this.conversations.recordModelRun?.({
+              id: uuidV7(),
+              userId: input.userId,
+              provider: "deepseek",
+              model: "deepseek-v4-pro",
+              thinkingEnabled: this.accounting.thinkingEnabled,
+              effort: "medium",
+              status: "completed",
+              requestMessageId,
+              responseMessageId: assistant.id,
+              providerRequestId: generated.requestId ?? null,
+              inputCount: generated.usage?.inputTokens ?? null,
+              outputCount: generated.usage?.outputTokens ?? null,
+              inputPricePerMillion:
+                this.accounting.inputPricePerMillion ?? null,
+              outputPricePerMillion:
+                this.accounting.outputPricePerMillion ?? null,
+              estimatedCost:
+                generated.usage &&
+                this.accounting.inputPricePerMillion &&
+                this.accounting.outputPricePerMillion
+                  ? calculateCost(
+                      generated.usage.inputTokens,
+                      generated.usage.outputTokens,
+                      this.accounting.inputPricePerMillion,
+                      this.accounting.outputPricePerMillion,
+                    ).estimatedCost
+                  : null,
+              latencyMs,
+              createdAt: new Date().toISOString(),
+            });
           await this.checkpoint(input.userId, {
             updateId: input.updateId,
             stage: "model_complete",
