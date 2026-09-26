@@ -51,6 +51,13 @@ describe("local sandbox adapter", () => {
     const result = await sandbox.runCommand("node", [script]);
     expect(result.exitCode).toBe(0);
     expect((await result.stdout()).trim()).toBe(root);
+    const withSecret = await sandbox.runCommand({
+      cmd: "node",
+      args: ["-e", "console.log(process.env.MARKER)"],
+      env: { MARKER: "kept" },
+    });
+    expect(withSecret.exitCode).toBe(0);
+    expect((await withSecret.stdout()).trim()).toBe("kept");
     expect(await readFile(marker, "utf8")).toContain("schemaVersion");
     expect(
       (await sandbox.runCommand("rm", ["-rf", "/workspace"])).exitCode,

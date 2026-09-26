@@ -38,11 +38,14 @@ export async function invokeWorker(
     await sandbox.writeFiles([
       { path: requestPath, content: Buffer.from(JSON.stringify(valid)) },
     ]);
-    const result = await sandbox.runCommand(
-      "node",
-      [workerPath, valid.operation, requestPath, responsePath],
-      { env, timeoutMs: 120_000 },
-    );
+    // The SDK positional form keeps only signal and timeout. Operation
+    // secrets must use the object form or they never reach the worker.
+    const result = await sandbox.runCommand({
+      cmd: "node",
+      args: [workerPath, valid.operation, requestPath, responsePath],
+      env,
+      timeoutMs: 120_000,
+    });
     if (result.exitCode !== 0) throw new Error("WORKER_COMMAND_FAILED");
     const response = await sandbox.readFileToBuffer({ path: responsePath });
     if (!response) throw new Error("WORKER_RESPONSE_MISSING");

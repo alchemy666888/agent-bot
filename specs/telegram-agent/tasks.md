@@ -901,11 +901,20 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `docs/deployment.md`, `docs/operations.md`,
-  `docs/rollback.md`, `scripts/verify-preview.mjs`, and
-  `tests/live-preview/drive.test.ts`.
+  `docs/rollback.md`, `scripts/verify-preview.mjs`,
+  `tests/live-preview/drive.test.ts`, `src/server/sandbox/transport.ts`,
+  `src/server/sandbox/sdk-adapter.ts`, and
+  `src/server/sandbox/local-adapter.ts`.
 - The runbooks describe one named `sin1` Drive and Sandbox, OIDC, separated
   Preview and Production names, webhook registration last, and rollback that
   preserves the Drive and does not import an archive.
+- Worker invocation uses the SDK object form of `runCommand` so operation
+  secrets are not dropped. The local adapter accepts that form and the
+  positional form used for `test` and `rm`.
+- The authorized live test stops the Sandbox, resumes it, checks `sin1`, an
+  empty route list, the Hobby timeout ceiling, `currentSandboxName`, and a
+  marker written with fsync and rename, then read as a stream. It was not
+  executed.
 - `pnpm test:live-preview` exits 2 with `LIVE_PREVIEW_NOT_AUTHORIZED` unless
   `TELEGRAM_AGENT_LIVE_PREVIEW=authorized`, both resource names match
   `telegram-agent-preview-*`, and `VERCEL_OIDC_TOKEN` is present. No live
@@ -953,7 +962,8 @@ Implementation notes:
 
 - Local sequence passed: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`,
   `pnpm test:unit` (42), `pnpm test:integration` (21), `pnpm test:contracts`
-  (13), `pnpm test:e2e` (4), and `pnpm build`.
+  (13), `pnpm test:e2e` (4), and `pnpm build`. That sequence includes the
+  object-form worker command used to pass operation secrets.
 - `docs/acceptance-evidence.md` maps the local evidence to AC-001 through
   AC-019 and audits NTD-001 through NTD-013. The client bundle scan found no
   secrets or hidden reasoning.
