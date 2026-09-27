@@ -47,7 +47,7 @@ describe("private worker transport", () => {
       cmd: "node",
       args: expect.any(Array),
       env: { REQUIRED_ONLY: "fixture" },
-      timeoutMs: 120_000,
+      timeoutMs: 180_000,
     });
     expect(target.runCommand).toHaveBeenLastCalledWith(
       "rm",

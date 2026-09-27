@@ -5,29 +5,51 @@ import { calculateCost } from "../../../../src/worker/model/usage";
 describe("model adapter", () => {
   it("sends exact settings and returns final content only", async () => {
     const fetcher = vi.fn(async (...args: unknown[]) => {
-      expect(args[0]).toBe("https://example.test/chat/completions");
+      expect(args[0]).toBe("https://example.test/responses");
       return new Response(
         JSON.stringify({
           id: "r",
-          choices: [
-            { message: { content: "final", reasoning_content: "hidden" } },
+          output: [
+            {
+              type: "reasoning",
+              content: [{ type: "reasoning_text", text: "hidden" }],
+            },
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "final" }],
+            },
           ],
-          usage: { prompt_tokens: 2, completion_tokens: 3 },
+          usage: { input_tokens: 2, output_tokens: 3 },
         }),
       );
     });
     const result = await new DeepSeekProvider(
       { apiKey: "fixture", baseUrl: "https://example.test", thinking: true },
       fetcher as typeof fetch,
-    ).generate({ messages: [{ role: "user", content: "hi" }] });
+    ).generate({
+      messages: [
+        { role: "system", content: "be helpful" },
+        { role: "user", content: "hi" },
+      ],
+    });
     expect(result).toEqual({
       content: "final",
       requestId: "r",
       usage: { inputTokens: 2, outputTokens: 3 },
     });
     expect(
-      (fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body,
-    ).toContain('"stream":false');
+      JSON.parse(
+        String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
+      ),
+    ).toEqual({
+      model: "deepseek-v4-pro",
+      stream: false,
+      reasoning: { effort: "medium" },
+      tools: [{ type: "web_search" }],
+      tool_choice: "auto",
+      instructions: "be helpful",
+      input: [{ role: "user", content: "hi" }],
+    });
   });
   it("retries transient errors only twice", async () => {
     const fn = vi.fn(async () => {

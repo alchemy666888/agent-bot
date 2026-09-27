@@ -44,7 +44,7 @@ export async function invokeWorker(
       cmd: "node",
       args: [workerPath, valid.operation, requestPath, responsePath],
       env,
-      timeoutMs: 120_000,
+      timeoutMs: 180_000,
     });
     if (result.exitCode !== 0) throw new Error("WORKER_COMMAND_FAILED");
     const response = await sandbox.readFileToBuffer({ path: responsePath });
