@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { workerRequestSchema, workerResponseSchema } from "../shared/contracts";
 import { telegramInputSchema } from "../server/telegram/input";
@@ -13,9 +13,12 @@ import { initializeLayout } from "./persistence/layout";
 import { exportData } from "./export/service";
 import { DurableErrorService } from "./errors/service";
 import { QueryService } from "./queries/service";
-import { logStructured, safeError } from "../shared/logger";
+import { openDriveStore } from "../shared/google-drive/controller-log";
+import { safeError } from "../shared/logger";
+import { bindDriveSession } from "./persistence/drive-sync";
+import { writeWorkerLog } from "./observability/worker-log";
 
-const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/workspace/telegram-agent";
+const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/tmp/telegram-agent";
 
 const queryPayloadSchema = z
   .object({
@@ -71,6 +74,13 @@ async function createExport() {
   return exportData({ root: ROOT });
 }
 
+async function recover(payload: Record<string, unknown>) {
+  if (payload.relativePath !== "data/live-preview-marker.txt") return {};
+  return {
+    text: await readFile(join(ROOT, "data/live-preview-marker.txt"), "utf8"),
+  };
+}
+
 async function query(payload: Record<string, unknown>) {
   const parsed = queryPayloadSchema.parse(payload);
   const service = new QueryService(ROOT);
@@ -98,36 +108,43 @@ async function main() {
   );
   if (request.operation !== operation) throw new Error("OPERATION_MISMATCH");
   const started = Date.now();
-  let data;
-  try {
-    data =
-      request.operation === "telegramTurn"
-        ? await telegramTurn(request.payload, request.correlationId)
-        : request.operation === "export"
-          ? await createExport()
-          : request.operation === "query"
-            ? await query(request.payload)
-            : {};
-    logStructured({
-      correlationId: request.correlationId,
-      component: "worker",
-      operation: request.operation,
-      stage: "complete",
-      result: "success",
-      durationMs: Date.now() - started,
-    });
-  } catch (error) {
-    logStructured({
-      correlationId: request.correlationId,
-      component: "worker",
-      operation: request.operation,
-      stage: "complete",
-      result: "failure",
-      durationMs: Date.now() - started,
-      code: safeError(error).code,
-    });
-    throw error;
-  }
+  const store = openDriveStore();
+  let data: unknown;
+  let failure: unknown;
+  await bindDriveSession(ROOT, store, async () => {
+    try {
+      data =
+        request.operation === "telegramTurn"
+          ? await telegramTurn(request.payload, request.correlationId)
+          : request.operation === "export"
+            ? await createExport()
+            : request.operation === "query"
+              ? await query(request.payload)
+              : request.operation === "recover"
+                ? await recover(request.payload)
+                : {};
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      await writeWorkerLog(
+        ROOT,
+        {
+          correlationId: request.correlationId,
+          component: "worker",
+          operation: request.operation,
+          stage: "complete",
+          result: failure ? "failure" : "success",
+          durationMs: Date.now() - started,
+          ...(failure ? { code: safeError(failure).code } : {}),
+        },
+        store,
+      );
+    } catch (error) {
+      if (!failure) failure = error;
+    }
+    if (failure) throw failure;
+  });
   const response = workerResponseSchema.parse({
     contractVersion: 1,
     correlationId: request.correlationId,

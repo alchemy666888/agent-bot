@@ -2,7 +2,7 @@
 
 Telegram Agent is a public conversational assistant for private Telegram chats. People message the bot in text. The app answers with DeepSeek model `deepseek-v4-pro`, keeps conversation history as ordinary files, and gives the operator a secret-protected read-only dashboard plus a consistent ZIP download of that data.
 
-Telegram is the user interface. Next.js on Vercel receives webhooks, serves the dashboard, and controls a private Sandbox. The Sandbox is the only process that reads and writes durable files. Those files live on one Vercel Sandbox Drive mounted at `/workspace`. Both the Sandbox and the Drive stay in Singapore (`sin1`). The app does not use PostgreSQL, SQLite, object storage, or a second durable store.
+Telegram is the user interface. Next.js on Vercel receives webhooks, serves the dashboard, and controls a private Sandbox in Singapore (`sin1`). The Sandbox is the only process that reads and writes application data. Durable copies of that data and of structured logs live in Google Drive folder `1cMXhFmW-bV_JHRRv56ajhWADpM-i-3Wo`. The app does not use PostgreSQL, SQLite, object storage, or a Vercel Sandbox Drive.
 
 Supported input is a private text message or `/start`, `/help`, and `/new`. Other Telegram updates are ignored. `/new` archives the current conversation and starts an empty one. Each model request uses the system prompt plus at most the latest 20 complete message pairs. Hidden model reasoning is discarded. The dashboard is read-only: overview, users, conversations, messages, model runs, and sanitized errors. `GET /api/download` streams a ZIP of the `data/` tree for a logged-in session or a single bearer secret.
 
@@ -15,7 +15,7 @@ src/app/                  Next.js routes: home, login, dashboard, webhook, healt
 src/components/dashboard/ Read-only dashboard markup
 src/server/config/        Environment validation and defaults
 src/server/auth/          Dashboard session and download guards
-src/server/sandbox/       Private Sandbox and Drive controller
+src/server/sandbox/       Private Sandbox controller
 src/server/telegram/      Webhook input minimization and worker dispatch
 src/server/dashboard/     Query view models
 src/server/export/        Authenticated ZIP stream
@@ -38,7 +38,7 @@ Public routes:
 | `/api/health`           | `ready` or `degraded` configuration check; it does not create a Drive |
 | `/api/download`         | Authenticated ZIP of persisted `data/`                                |
 
-Durable files, once a Sandbox is running, live under `/workspace/telegram-agent/data`. Canonical records are monthly JSONL files. Small JSON files are rebuildable projections. Locks and worker temporaries stay outside that downloaded tree.
+Durable files live in the Google Drive folder under `data/` and `logs/`. The Sandbox keeps a scratch copy under `/tmp/telegram-agent`. Canonical records are monthly JSONL files. Small JSON files are rebuildable projections. Locks and worker temporaries stay on the sandbox and out of the downloaded archive.
 
 ## Vercel Cloud, Hobby plan
 
@@ -82,8 +82,11 @@ These have no default. An empty value is invalid.
 | `APP_URL`                           | Public site origin used for same-origin login and logout. It must be an absolute URL                                                                                      | After the first Vercel deploy, set this to the production origin, such as `https://your-project.vercel.app`, with no path and no trailing slash required by the parser beyond a valid URL      |
 | `DEEPSEEK_INPUT_PRICE_PER_MILLION`  | Nonnegative decimal price for one million input tokens, stored as a snapshot on each model run                                                                            | Read the current `deepseek-v4-pro` input price at [DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing). The app stores one number and does not switch peak and off-peak rates |
 | `DEEPSEEK_OUTPUT_PRICE_PER_MILLION` | Nonnegative decimal price for one million output tokens                                                                                                                   | Read the current `deepseek-v4-pro` output price on that same page                                                                                                                              |
-| `SANDBOX_DRIVE_NAME`                | Stable name of the one Sandbox Drive. `Drive.getOrCreate` uses this name in `sin1`                                                                                        | Choose a new name for this deployment, such as `telegram-agent-drive`. Reuse it on later deploys so the same files stay attached. Do not reuse a Preview name                                  |
-| `SANDBOX_NAME`                      | Stable name of the one private Sandbox that mounts that Drive                                                                                                             | Choose a new name, such as `telegram-agent`. Keep one writer. A second name attached to the same Drive is rejected                                                                             |
+| `GOOGLE_DRIVE_FOLDER_ID`            | The only Drive folder the app will write. It must be `1cMXhFmW-bV_JHRRv56ajhWADpM-i-3Wo`                                                                                  | Set that exact folder id                                                                                                                                                                       |
+| `GOOGLE_CLIENT_ID`                  | OAuth client id for the Google account that owns the folder                                                                                                               | Create an OAuth client in Google Cloud and authorize scope `https://www.googleapis.com/auth/drive` once                                                                                        |
+| `GOOGLE_CLIENT_SECRET`              | OAuth client secret for that client                                                                                                                                       | Copy it from the same Google Cloud client. Do not commit it                                                                                                                                    |
+| `GOOGLE_REFRESH_TOKEN`              | Refresh token for the owning account                                                                                                                                      | Complete the one-time OAuth consent and store the refresh token. Do not commit it or write it into Drive                                                                                       |
+| `SANDBOX_NAME`                      | Stable name of the one private Sandbox that runs the worker                                                                                                               | Choose a new name, such as `telegram-agent`. The Sandbox filesystem is scratch; the Google Drive folder is the durable copy                                                                    |
 
 ### Optional
 

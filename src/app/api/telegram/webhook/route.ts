@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { readTelegramConfig } from "../../../../server/config";
 import { dispatchTelegramInput } from "../../../../server/telegram/dispatch";
 import { extractTelegramInput } from "../../../../server/telegram/input";
+import { persistControllerLog } from "../../../../shared/google-drive/controller-log";
 import { uuidV7 } from "../../../../shared/ids";
-import { logStructured, safeError } from "../../../../shared/logger";
+import { safeError } from "../../../../shared/logger";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
@@ -39,7 +40,7 @@ export async function POST(request: Request) {
         },
       );
     }
-    logStructured({
+    await persistControllerLog({
       correlationId,
       component: "controller",
       operation: "telegramWebhook",
@@ -52,7 +53,7 @@ export async function POST(request: Request) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
-    logStructured({
+    await persistControllerLog({
       correlationId,
       component: "controller",
       operation: "telegramWebhook",

@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 describe("local sandbox adapter", () => {
-  it("keeps the Drive authoritative on Vercel and local otherwise", () => {
+  it("uses the Vercel SDK when VERCEL is set and the local adapter otherwise", () => {
     expect(
       selectSandboxSdk({
         TELEGRAM_AGENT_LOCAL_ROOT: "/tmp/store",
@@ -28,11 +28,9 @@ describe("local sandbox adapter", () => {
     root = await mkdtemp(join(tmpdir(), "local-sandbox-"));
     const marker = join(root, "data", "manifest.json");
     const sdk = createLocalSandboxSdk(root);
-    const drive = await sdk.getOrCreateDrive({ name: "drive", region: "sin1" });
     const sandbox = await sdk.getOrCreateSandbox({
       name: "agent",
       region: "sin1",
-      mounts: { "/workspace": drive },
       persistent: true,
       resume: true,
       timeout: 1,

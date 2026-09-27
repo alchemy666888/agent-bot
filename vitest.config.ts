@@ -10,7 +10,10 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
-    exclude: ["tests/live-preview/**", "node_modules/**"],
+    exclude:
+      process.env.VITEST_LIVE === "1"
+        ? ["node_modules/**"]
+        : ["tests/live-preview/**", "node_modules/**"],
     coverage: { reporter: ["text", "json", "html"] },
   },
 });

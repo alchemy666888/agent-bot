@@ -1,12 +1,7 @@
 import "server-only";
 
-import { Drive, Sandbox } from "@vercel/sandbox";
+import { Sandbox } from "@vercel/sandbox";
 
-export interface DriveHandle {
-  name: string;
-  region: string;
-  currentSandboxName?: string;
-}
 export interface CommandResult {
   exitCode: number;
   stdout(): Promise<string>;
@@ -33,14 +28,9 @@ export interface SandboxHandle {
   readFile(file: { path: string }): Promise<NodeJS.ReadableStream | null>;
 }
 export interface SandboxSdk {
-  getOrCreateDrive(input: {
-    name: string;
-    region: "sin1";
-  }): Promise<DriveHandle>;
   getOrCreateSandbox(input: {
     name: string;
     region: "sin1";
-    mounts: Record<"/workspace", DriveHandle>;
     persistent: true;
     resume: true;
     timeout: number;
@@ -49,7 +39,6 @@ export interface SandboxSdk {
 }
 
 export const vercelSandboxSdk: SandboxSdk = {
-  getOrCreateDrive: (input) => Drive.getOrCreate(input),
   getOrCreateSandbox: (input) =>
     Sandbox.getOrCreate(
       input as unknown as Parameters<typeof Sandbox.getOrCreate>[0],

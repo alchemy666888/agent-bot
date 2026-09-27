@@ -62,7 +62,7 @@ function localHandle(root: string): SandboxHandle {
   return {
     name: "local-worker",
     region: "sin1",
-    mounts: { "/workspace": { localRoot: root } },
+    mounts: {},
     status: "running",
     async writeFiles(files) {
       for (const file of files) {
@@ -126,16 +126,13 @@ function localHandle(root: string): SandboxHandle {
 export function createLocalSandboxSdk(root: string): SandboxSdk {
   const sandbox = localHandle(root);
   return {
-    async getOrCreateDrive(input) {
-      await mkdir(root, { recursive: true });
-      return { name: input.name, region: "sin1" };
-    },
     async getOrCreateSandbox(input) {
+      await mkdir(root, { recursive: true });
       return {
         ...sandbox,
         name: input.name,
         region: "sin1",
-        mounts: { "/workspace": { name: input.name } },
+        mounts: {},
       };
     },
   };
