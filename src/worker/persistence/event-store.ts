@@ -1,5 +1,6 @@
 import { mkdir, open } from "node:fs/promises";
 import { dirname } from "node:path";
+import { notifyCommit } from "./commit";
 import { recordPath } from "./layout";
 import { eventSchema, type DurableEvent } from "./schemas";
 
@@ -16,6 +17,7 @@ export class EventStore {
     } finally {
       await file.close();
     }
+    await notifyCommit(path);
     return path;
   }
 }

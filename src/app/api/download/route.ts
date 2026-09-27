@@ -5,8 +5,9 @@ import {
   SESSION_COOKIE,
 } from "../../../server/auth/guards";
 import { prepareExport } from "../../../server/export/service";
+import { persistControllerLog } from "../../../shared/google-drive/controller-log";
 import { uuidV7 } from "../../../shared/ids";
-import { logStructured, safeError } from "../../../shared/logger";
+import { safeError } from "../../../shared/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ export async function GET(request: Request): Promise<Response> {
 
   try {
     const exported = await prepareExport(correlationId);
-    logStructured({
+    await persistControllerLog({
       correlationId,
       component: "controller",
       operation: "download",
@@ -62,7 +63,7 @@ export async function GET(request: Request): Promise<Response> {
       },
     });
   } catch (error) {
-    logStructured({
+    await persistControllerLog({
       correlationId,
       component: "controller",
       operation: "download",

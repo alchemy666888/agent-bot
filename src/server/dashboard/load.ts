@@ -2,6 +2,7 @@ import "server-only";
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { googleDriveProcessEnv } from "../../shared/google-drive/config";
 import { uuidV7 } from "../../shared/ids";
 import { readSandboxConfig } from "../config";
 import { ensureSandbox } from "../sandbox/controller";
@@ -21,12 +22,17 @@ export async function loadDashboard(
     sandbox,
     await readFile(workerSourcePath),
   );
-  const response = await invokeWorker(sandbox, workerPath, {
-    contractVersion: 1,
-    correlationId: uuidV7(),
-    operation: "query",
-    payload: { view, ...payload, ...(id ? { id } : {}) },
-  });
+  const response = await invokeWorker(
+    sandbox,
+    workerPath,
+    {
+      contractVersion: 1,
+      correlationId: uuidV7(),
+      operation: "query",
+      payload: { view, ...payload, ...(id ? { id } : {}) },
+    },
+    googleDriveProcessEnv(),
+  );
   if (!response.ok || !response.data) throw new Error("DASHBOARD_QUERY_FAILED");
   return response.data;
 }

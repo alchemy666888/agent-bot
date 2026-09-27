@@ -22,30 +22,19 @@ export async function ensureSandbox(
   config: SandboxConfig,
   sdk: SandboxSdk = selectSandboxSdk(),
 ): Promise<SandboxHandle> {
-  const drive = await sdk.getOrCreateDrive({
-    name: config.SANDBOX_DRIVE_NAME,
-    region: "sin1",
-  });
-  if (drive.name !== config.SANDBOX_DRIVE_NAME || drive.region !== "sin1")
-    throw new Error("SANDBOX_CONFIGURATION_MISMATCH");
-  if (
-    drive.currentSandboxName &&
-    drive.currentSandboxName !== config.SANDBOX_NAME
-  )
-    throw new Error("DRIVE_ALREADY_ATTACHED");
   const sandbox = await sdk.getOrCreateSandbox({
     name: config.SANDBOX_NAME,
     region: "sin1",
-    mounts: { "/workspace": drive },
     persistent: true,
     resume: true,
     timeout: HOBBY_SANDBOX_TIMEOUT_MS,
     keepLastSnapshots: { count: 1 },
   });
+  const routes = (sandbox as { routes?: unknown }).routes;
   if (
     sandbox.name !== config.SANDBOX_NAME ||
     sandbox.region !== "sin1" ||
-    !("/workspace" in sandbox.mounts)
+    (Array.isArray(routes) && routes.length > 0)
   )
     throw new Error("SANDBOX_CONFIGURATION_MISMATCH");
   return sandbox;

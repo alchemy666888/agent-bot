@@ -8,7 +8,7 @@ import type {
 const handle = (): SandboxHandle => ({
   name: "agent",
   region: "sin1",
-  mounts: { "/workspace": {} },
+  mounts: {},
   status: "running",
   writeFiles: vi.fn(),
   runCommand: vi.fn(),
@@ -16,41 +16,41 @@ const handle = (): SandboxHandle => ({
   readFile: vi.fn(),
 });
 const config = {
-  SANDBOX_DRIVE_NAME: "drive",
   SANDBOX_NAME: "agent",
   region: "sin1" as const,
 };
 
 describe("sandbox lifecycle", () => {
-  it("uses one private sin1 mount with persistence and resume", async () => {
+  it("uses one private sin1 sandbox with persistence and resume", async () => {
     const sdk: SandboxSdk = {
-      getOrCreateDrive: vi.fn(async () => ({ name: "drive", region: "sin1" })),
       getOrCreateSandbox: vi.fn(async () => handle()),
     };
     await expect(ensureSandbox(config, sdk)).resolves.toMatchObject({
       name: "agent",
     });
-    expect(sdk.getOrCreateSandbox).toHaveBeenCalledWith(
-      expect.objectContaining({
-        region: "sin1",
-        persistent: true,
-        resume: true,
-        mounts: { "/workspace": expect.anything() },
-      }),
-    );
-    expect(sdk.getOrCreateSandbox).not.toHaveBeenCalledWith(
-      expect.objectContaining({ ports: expect.anything() }),
-    );
+    const input = vi.mocked(sdk.getOrCreateSandbox).mock.calls[0]?.[0];
+    expect(input).toMatchObject({
+      region: "sin1",
+      persistent: true,
+      resume: true,
+    });
+    expect(input).not.toHaveProperty("mounts");
+    expect(input).not.toHaveProperty("ports");
   });
+
   it.each([
-    { name: "drive", region: "iad1" },
-    { name: "drive", region: "sin1", currentSandboxName: "other" },
-  ])("fails closed for invalid drive %#", async (drive) => {
-    const sdk = {
-      getOrCreateDrive: vi.fn(async () => drive),
-      getOrCreateSandbox: vi.fn(),
-    } as unknown as SandboxSdk;
-    await expect(ensureSandbox(config, sdk)).rejects.toThrow();
-    expect(sdk.getOrCreateSandbox).not.toHaveBeenCalled();
+    { name: "agent", region: "iad1" },
+    { name: "other", region: "sin1" },
+    { name: "agent", region: "sin1", routes: ["/public"] },
+  ])("fails closed for an unexpected sandbox %#", async (sandbox) => {
+    const sdk: SandboxSdk = {
+      getOrCreateSandbox: vi.fn(async () => ({
+        ...handle(),
+        ...sandbox,
+      })),
+    };
+    await expect(ensureSandbox(config, sdk)).rejects.toThrow(
+      "SANDBOX_CONFIGURATION_MISMATCH",
+    );
   });
 });

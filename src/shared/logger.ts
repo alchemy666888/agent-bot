@@ -17,10 +17,12 @@ export interface LogRecord {
 export function logStructured(
   record: LogRecord,
   sink: (line: string) => void = console.info,
-): void {
-  sink(
-    JSON.stringify(redact({ timestamp: new Date().toISOString(), ...record })),
+): string {
+  const line = JSON.stringify(
+    redact({ timestamp: new Date().toISOString(), ...record }),
   );
+  sink(line);
+  return line;
 }
 
 export function safeError(

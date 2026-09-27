@@ -12,6 +12,7 @@ import {
   invokeWorker,
   streamSandboxFile,
 } from "../sandbox/transport";
+import { googleDriveProcessEnv } from "../../shared/google-drive/config";
 import { uuidV7 } from "../../shared/ids";
 
 const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
@@ -73,12 +74,17 @@ export async function prepareExport(
     sandbox,
     await readFile(workerSourcePath),
   );
-  const response = await invokeWorker(sandbox, workerPath, {
-    contractVersion: 1,
-    correlationId,
-    operation: "export",
-    payload: {},
-  });
+  const response = await invokeWorker(
+    sandbox,
+    workerPath,
+    {
+      contractVersion: 1,
+      correlationId,
+      operation: "export",
+      payload: {},
+    },
+    googleDriveProcessEnv(),
+  );
   if (!response.ok) throw new Error("EXPORT_FAILED");
   const exported = exportSchema.parse(response.data);
   let source: NodeJS.ReadableStream;

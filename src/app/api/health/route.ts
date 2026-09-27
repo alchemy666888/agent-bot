@@ -1,5 +1,6 @@
 import {
   readDashboardConfig,
+  readGoogleDriveConfig,
   readModelConfig,
   readSandboxConfig,
   readTelegramConfig,
@@ -16,6 +17,7 @@ export function GET(): Response {
     telegram: valid(readTelegramConfig),
     dashboard: valid(readDashboardConfig),
     sandbox: valid(readSandboxConfig),
+    googleDrive: valid(readGoogleDriveConfig),
   } as const;
   const ready = Object.values(components).every((state) => state === "ready");
   return Response.json(

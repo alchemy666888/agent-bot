@@ -26,7 +26,6 @@ export default defineConfig({
       DASHBOARD_SECRET,
       SESSION_SIGNING_SECRET,
       APP_URL: "http://127.0.0.1:3000",
-      SANDBOX_DRIVE_NAME: "e2e-drive",
       SANDBOX_NAME: "e2e-sandbox",
       TELEGRAM_AGENT_LOCAL_ROOT: E2E_ROOT,
     },

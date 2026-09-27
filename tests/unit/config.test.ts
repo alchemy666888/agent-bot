@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  GOOGLE_DRIVE_FOLDER_ID,
+  googleDriveProcessEnv,
+  readGoogleDriveConfig,
+} from "../../src/shared/google-drive/config";
+import {
   DEFAULT_SYSTEM_PROMPT,
   readDashboardConfig,
   readModelConfig,
@@ -55,7 +60,6 @@ describe("entry-point configuration", () => {
   it("rejects a region other than sin1", () => {
     expect(() =>
       readSandboxConfig({
-        SANDBOX_DRIVE_NAME: "fixture-drive",
         SANDBOX_NAME: "fixture-sandbox",
         SANDBOX_REGION: "iad1",
       }),
@@ -78,9 +82,34 @@ describe("entry-point configuration", () => {
     ).toBeTruthy();
     expect(
       readSandboxConfig({
-        SANDBOX_DRIVE_NAME: "drive",
         SANDBOX_NAME: "sandbox",
       }).region,
     ).toBe("sin1");
+    expect(
+      readGoogleDriveConfig({
+        GOOGLE_DRIVE_FOLDER_ID,
+        GOOGLE_CLIENT_ID: "client",
+        GOOGLE_CLIENT_SECRET: "client-value",
+        GOOGLE_REFRESH_TOKEN: "refresh-value",
+      }).GOOGLE_DRIVE_FOLDER_ID,
+    ).toBe(GOOGLE_DRIVE_FOLDER_ID);
+  });
+
+  it("passes Drive credentials only when they are configured", () => {
+    expect(googleDriveProcessEnv({})).toEqual({});
+    expect(() => googleDriveProcessEnv({ VERCEL: "1" })).toThrow(
+      "GOOGLE_DRIVE_CONFIGURATION_INVALID",
+    );
+  });
+
+  it("rejects any Google Drive folder other than the configured one", () => {
+    expect(() =>
+      readGoogleDriveConfig({
+        GOOGLE_DRIVE_FOLDER_ID: "different-folder",
+        GOOGLE_CLIENT_ID: "client",
+        GOOGLE_CLIENT_SECRET: "client-value",
+        GOOGLE_REFRESH_TOKEN: "refresh-value",
+      }),
+    ).toThrow();
   });
 });

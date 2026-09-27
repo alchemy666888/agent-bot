@@ -2,8 +2,8 @@ import { join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { atomicJson } from "./atomic-json";
 
-export const DATA_ROOT = "/workspace/telegram-agent/data";
-export const RUNTIME_ROOT = "/workspace/telegram-agent/runtime";
+export const DATA_ROOT = "/tmp/telegram-agent/data";
+export const RUNTIME_ROOT = "/tmp/telegram-agent/runtime";
 export const recordKinds = [
   "users",
   "conversations",

@@ -2,6 +2,11 @@ import "server-only";
 
 import { z } from "zod";
 
+export {
+  GOOGLE_DRIVE_FOLDER_ID,
+  readGoogleDriveConfig,
+} from "../../shared/google-drive/config";
+
 export const SANDBOX_REGION = "sin1" as const;
 export const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful, accurate, and safe general-purpose assistant. Reply in the language of the user's latest message unless they request another language.";
@@ -39,7 +44,6 @@ const dashboardSchema = z.object({
 });
 
 const sandboxSchema = z.object({
-  SANDBOX_DRIVE_NAME: requiredString,
   SANDBOX_NAME: requiredString,
   SANDBOX_REGION: z.literal(SANDBOX_REGION).optional(),
   VERCEL_OIDC_TOKEN: requiredString.optional(),

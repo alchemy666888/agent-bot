@@ -1,5 +1,6 @@
 import { mkdir, open, rename } from "node:fs/promises";
 import { dirname } from "node:path";
+import { notifyCommit } from "./commit";
 
 export async function atomicJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -18,4 +19,5 @@ export async function atomicJson(path: string, value: unknown): Promise<void> {
   } finally {
     await directory.close();
   }
+  await notifyCommit(path);
 }
