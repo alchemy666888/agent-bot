@@ -10,6 +10,19 @@ import { exportData } from "../../../src/worker/export/service";
 const exec = promisify(execFile);
 const roots: string[] = [];
 
+async function waitForLock(path: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    try {
+      await readFile(join(path, "owner.json"), "utf8");
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  throw new Error("LOCK_NOT_HELD");
+}
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
@@ -68,6 +81,7 @@ describe("consistent data export", () => {
       await held;
       await writeFile(join(root, "data/state/before.json"), '{"before":true}');
     });
+    await waitForLock(join(root, "runtime/locks/mutation.lock"));
     const pendingExport = exportData({
       root,
       runtimeRoot: join(root, "non-drive-exports"),

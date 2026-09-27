@@ -55,35 +55,34 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `package.json`, `pnpm-lock.yaml`, TypeScript,
-  Next.js, ESLint, Prettier, Vitest, and Playwright configuration;
-  `.env.example`; `src/app/**`; `src/server/config/**`; initial source
-  boundaries; and baseline configuration/browser tests.
+Next.js, ESLint, Prettier, Vitest, and Playwright configuration;
+`.env.example`; `src/app/**`; `src/server/config/**`; initial source
+boundaries; and baseline configuration/browser tests.
 - Preflight stopped before application changes because
-  `specs/telegram-agent/requirements.md` declares
-  `Status: Draft — awaiting approval`, while the execution rules require all
-  four SDD documents to be approved.
+`specs/telegram-agent/requirements.md` declares
+`Status: Draft — awaiting approval`, while the execution rules require all
+four SDD documents to be approved.
 - Evidence: `git status --short --branch` showed a clean greenfield worktree;
-  `git ls-files` showed only the four standard SDD files; `rg -n '^Status:'
-  specs/telegram-agent/{requirements,design,tasks,codex-prompt}.md` showed the
-  requirements document as Draft and the other three documents as Approved;
-  `rg '^Status:' specs/telegram-agent/tasks.md` showed all 17 tasks Pending
-  before this status update.
+`git ls-files` showed only the four standard SDD files; `rg -n '^Status:' specs/telegram-agent/{requirements,design,tasks,codex-prompt}.md` showed the
+requirements document as Draft and the other three documents as Approved;
+`rg '^Status:' specs/telegram-agent/tasks.md` showed all 17 tasks Pending
+before this status update.
 - No dependencies were installed, no application files were created, no
-  secrets were accessed, and no live or externally consequential action was
-  attempted.
+secrets were accessed, and no live or externally consequential action was
+attempted.
 - The operator explicitly approved the requirements document on 2026-09-20,
-  resolving the preflight blocker and authorizing TASK-001 to proceed.
+resolving the preflight blocker and authorizing TASK-001 to proceed.
 - Created the strict Next.js App Router baseline, deterministic pnpm manifest,
-  lint/format/Vitest/build configuration, approved source boundaries, and a
-  server-only lazy configuration module with `sin1` enforcement and approved
-  DeepSeek defaults.
+lint/format/Vitest/build configuration, approved source boundaries, and a
+server-only lazy configuration module with `sin1` enforcement and approved
+DeepSeek defaults.
 - Added `.env.example` containing only the approved variable names and unit
-  coverage for valid defaults, entry-point isolation, missing/empty values,
-  malformed booleans/prices, arbitrary dashboard secrets, and invalid regions.
+coverage for valid defaults, entry-point isolation, missing/empty values,
+malformed booleans/prices, arbitrary dashboard secrets, and invalid regions.
 - Verification passed: `pnpm install --frozen-lockfile`, `pnpm typecheck`,
-  `pnpm lint`, `pnpm format:check`, `pnpm test:unit` (14 tests), `pnpm build`,
-  and `git diff --check`. Direct dependency inspection found no database,
-  object-store, throttling, moderation, or tool package.
+`pnpm lint`, `pnpm format:check`, `pnpm test:unit` (14 tests), `pnpm build`,
+and `git diff --check`. Direct dependency inspection found no database,
+object-store, throttling, moderation, or tool package.
 - No live resource, Preview environment, external service, or secret was used.
 
 ### TASK-002 — Define shared contracts, identifiers, redaction, and capability boundary
@@ -126,17 +125,17 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `src/shared/contracts/**`, `src/shared/ids.ts`,
-  `src/shared/redaction.ts`, `src/shared/capabilities.ts`, and
-  `tests/unit/shared/**`.
+`src/shared/redaction.ts`, `src/shared/capabilities.ts`, and
+`tests/unit/shared/**`.
 - Added strict version-1 worker, provider-neutral model, safe-error, and
-  paginated view-model schemas; UUIDv7 and decimal Telegram ID helpers;
-  recursive secret/hidden-reasoning redaction; and an inert, disabled future
-  capability interface with no implementation or registration.
+paginated view-model schemas; UUIDv7 and decimal Telegram ID helpers;
+recursive secret/hidden-reasoning redaction; and an inert, disabled future
+capability interface with no implementation or registration.
 - Added malformed/good contract, identifier, prohibited-field, nested-secret,
-  and hidden-reasoning unit coverage.
+and hidden-reasoning unit coverage.
 - Verification passed: `pnpm typecheck`, `pnpm lint`, and `pnpm test:unit`
-  (18 tests across two files). Source inspection confirmed the capability
-  boundary contains no executable tool or runtime registry.
+(18 tests across two files). Source inspection confirmed the capability
+boundary contains no executable tool or runtime registry.
 
 ### TASK-003 — Implement the private Sandbox controller and worker bootstrap
 
@@ -179,16 +178,16 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `src/server/sandbox/controller.ts`,
-  `src/server/sandbox/sdk-adapter.ts`, `src/server/sandbox/transport.ts`,
-  `src/worker/cli.ts`, the worker build script, and Sandbox unit tests.
+`src/server/sandbox/sdk-adapter.ts`, `src/server/sandbox/transport.ts`,
+`src/worker/cli.ts`, the worker build script, and Sandbox unit tests.
 - Implemented explicit `sin1` named Drive/Sandbox creation, occupied-Drive and
-  returned-configuration validation, one `/workspace` mount, persistent resume,
-  one retained snapshot, no port/failover configuration, hashed worker bundles
-  under `/tmp`, unique request/response files, least-privilege command env,
-  schema validation, streaming reads, and cleanup in `finally`.
+returned-configuration validation, one `/workspace` mount, persistent resume,
+one retained snapshot, no port/failover configuration, hashed worker bundles
+under `/tmp`, unique request/response files, least-privilege command env,
+schema validation, streaming reads, and cleanup in `finally`.
 - Verification passed: `pnpm worker:build`, `pnpm typecheck`, `pnpm lint`, and
-  `pnpm test:unit` (25 tests). Mocks cover lifecycle arguments, wrong region,
-  competing attachment, command failure, malformed response, and cleanup.
+`pnpm test:unit` (25 tests). Mocks cover lifecycle arguments, wrong region,
+competing attachment, command failure, malformed response, and cleanup.
 - No live Sandbox, Drive, OIDC credential, secret, or external service was used.
 
 ### TASK-004 — Implement Drive files, append-only events, projections, and recovery
@@ -234,19 +233,19 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed:
-  `src/worker/persistence/{layout,schemas,event-store,atomic-json,projector,recovery}.ts`
-  and `tests/integration/persistence/event-store.test.ts`.
+`src/worker/persistence/{layout,schemas,event-store,atomic-json,projector,recovery}.ts`
+and `tests/integration/persistence/event-store.test.ts`.
 - Implemented UTC monthly record paths, strict durable-event validation,
-  append-plus-fsync, atomic projection replacement plus directory sync,
-  source-event/revision projection metadata, and partial-tail quarantine.
+append-plus-fsync, atomic projection replacement plus directory sync,
+source-event/revision projection metadata, and partial-tail quarantine.
 - Current verification passed: `pnpm typecheck`, `pnpm lint`,
-  `pnpm test:unit` (25 tests), and `pnpm test:integration` (2 tests).
+`pnpm test:unit` (25 tests), and `pnpm test:integration` (2 tests).
 - Completed the remaining scope with schema-versioned tree/manifest
-  initialization and deterministic multi-partition replay that reconstructs
-  only latest-revision projections while preserving all canonical events.
+initialization and deterministic multi-partition replay that reconstructs
+only latest-revision projections while preserving all canonical events.
 - Final TASK-004 verification passed: `pnpm typecheck` and
-  `pnpm test:integration` (3 tests), including initialization, month rotation,
-  prohibited-field rejection, incomplete-tail isolation, and exact rebuild.
+`pnpm test:integration` (3 tests), including initialization, month rotation,
+prohibited-field rejection, incomplete-tail isolation, and exact rebuild.
 
 ### TASK-005 — Implement locks, serialized mutation, and update checkpoints
 
@@ -288,19 +287,19 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed:
-  `src/worker/locks/coordinator.ts`, `src/worker/updates/{repository,state-machine}.ts`,
-  and `tests/integration/concurrency/locks.test.ts`.
+`src/worker/locks/coordinator.ts`, `src/worker/updates/{repository,state-machine}.ts`,
+and `tests/integration/concurrency/locks.test.ts`.
 - Implemented filesystem-backed per-user/global locks, per-user-before-global
-  order enforcement, export-only global acquisition, bounded wait, stale-owner
-  recovery, ownership cleanup, strict checkpoint schemas, monotonic transitions,
-  and terminal-state idempotency.
+order enforcement, export-only global acquisition, bounded wait, stale-owner
+recovery, ownership cleanup, strict checkpoint schemas, monotonic transitions,
+and terminal-state idempotency.
 - Current verification passed: `pnpm typecheck`, `pnpm lint`, and
-  `pnpm test:integration` (5 tests), including 10 concurrent users with two
-  same-user turns each and lock-order rejection.
+`pnpm test:integration` (5 tests), including 10 concurrent users with two
+same-user turns each and lock-order rejection.
 - Completed heartbeat ownership, live-owner stale protection, terminal duplicate
-  handling, durable atomic checkpoint state, and concurrent-redelivery tests.
+handling, durable atomic checkpoint state, and concurrent-redelivery tests.
 - Final TASK-005 verification passed: `pnpm typecheck`, `pnpm lint`, and
-  `pnpm test:integration` (7 tests across persistence, locks, and checkpoints).
+`pnpm test:integration` (7 tests across persistence, locks, and checkpoints).
 
 ### TASK-006 — Implement user, conversation, message, and command services
 
@@ -343,13 +342,13 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `src/worker/conversations/service.ts`,
-  `src/worker/commands/index.ts`, and `tests/unit/worker/domain/**`.
+`src/worker/commands/index.ts`, and `tests/unit/worker/domain/**`.
 - Implemented approved-field-only user upserts with immutable first-seen,
-  exactly one active conversation, atomic context boundary behavior for `/new`,
-  latest 20 complete message pairs, and deterministic `/start`, `/help`, `/new`
-  replies without a privacy/retention notice or model invocation.
+exactly one active conversation, atomic context boundary behavior for `/new`,
+latest 20 complete message pairs, and deterministic `/start`, `/help`, `/new`
+replies without a privacy/retention notice or model invocation.
 - Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
-  (28 tests), and `pnpm test:integration` (7 tests).
+(28 tests), and `pnpm test:integration` (7 tests).
 
 ### TASK-007 — Implement DeepSeek, retry policy, and usage accounting
 
@@ -391,15 +390,15 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `src/worker/model/{deepseek,retry,usage}.ts` and
-  `tests/unit/worker/model/**`.
+`tests/unit/worker/model/**`.
 - Implemented the provider-neutral adapter using exactly `deepseek-v4-pro`,
-  non-streamed requests, configurable thinking, medium effort, abort signals,
-  final-content-only parsing, optional usage, bounded transient retry, and
-  integer decimal-micro cost calculations with applied price snapshots.
+non-streamed requests, configurable thinking, medium effort, abort signals,
+final-content-only parsing, optional usage, bounded transient retry, and
+integer decimal-micro cost calculations with applied price snapshots.
 - Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
-  (31 tests), and `pnpm test:integration` (7 tests). Tests prove hidden
-  reasoning is discarded, exact request settings, three attempts maximum, and
-  exact decimal cost arithmetic.
+(31 tests), and `pnpm test:integration` (7 tests). Tests prove hidden
+reasoning is discarded, exact request settings, three attempts maximum, and
+exact decimal cost arithmetic.
 
 ### TASK-008 — Implement Telegram webhook, transport, and turn orchestration
 
@@ -444,51 +443,51 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed:
-  `src/server/telegram/input.ts`, `src/app/api/telegram/webhook/route.ts`,
-  `src/worker/telegram/client.ts`, `src/worker/orchestration/telegram-turn.ts`,
-  and `tests/contracts/telegram/**`.
+`src/server/telegram/input.ts`, `src/app/api/telegram/webhook/route.ts`,
+`src/worker/telegram/client.ts`, `src/worker/orchestration/telegram-turn.ts`,
+and `tests/contracts/telegram/**`.
 - Implemented secret-before-body webhook validation, minimal private-text
-  extraction that drops names/raw fields, ignored edited/group updates,
-  unsupported private-input guidance, typing, lossless 4096-character chunks,
-  Markdown-to-plain fallback, and checkpoint-aware turn orchestration.
+extraction that drops names/raw fields, ignored edited/group updates,
+unsupported private-input guidance, typing, lossless 4096-character chunks,
+Markdown-to-plain fallback, and checkpoint-aware turn orchestration.
 - Initial verification covered raw-field exclusion, group/edit rejection, and
-  exact long-text reconstruction.
+exact long-text reconstruction.
 - Added duplicate terminal handling, command/model separation, and
-  model-complete response reuse so redelivery does not regenerate or redeliver;
-  mocked turn integration passes.
+model-complete response reuse so redelivery does not regenerate or redeliver;
+mocked turn integration passes.
 - Connected the webhook boundary to the named private Sandbox dispatcher. The
-  controller now sends only the minimized input in a validated worker request,
-  supplies only Telegram/model operation secrets, installs the build-hashed
-  worker outside the Drive, maps safe worker failures to retryable/non-retryable
-  HTTP responses, and applies no-store responses. Production builds now create
-  and trace the standalone worker asset.
+controller now sends only the minimized input in a validated worker request,
+supplies only Telegram/model operation secrets, installs the build-hashed
+worker outside the Drive, maps safe worker failures to retryable/non-retryable
+HTTP responses, and applies no-store responses. Production builds now create
+and trace the standalone worker asset.
 - Added webhook contract coverage for secret-before-body rejection, malformed
-  JSON, prohibited raw/name-field exclusion, minimized dispatch, no-store, and
-  sanitized retryable failure. Verification passed: `pnpm typecheck`,
-  `pnpm test:contracts` (7 tests), `pnpm test:integration` (11 tests),
-  `pnpm lint`, `pnpm format:check`, and `pnpm build`.
+JSON, prohibited raw/name-field exclusion, minimized dispatch, no-store, and
+sanitized retryable failure. Verification passed: `pnpm typecheck`,
+`pnpm test:contracts` (7 tests), `pnpm test:integration` (11 tests),
+`pnpm lint`, `pnpm format:check`, and `pnpm build`.
 - The bundled worker CLI now validates the minimized Telegram payload,
-  initializes the Drive layout, constructs the lock/update/model/Telegram turn
-  dependencies, and executes `telegramTurn`. Turn orchestration now includes
-  the latest user prompt in model context, retries transient model and Telegram
-  failures at most twice, treats typing as best-effort, sends a generic terminal
-  provider-failure reply, and resumes both `prompt_saved` and `model_complete`
-  checkpoints without regenerating a completed answer.
+initializes the Drive layout, constructs the lock/update/model/Telegram turn
+dependencies, and executes `telegramTurn`. Turn orchestration now includes
+the latest user prompt in model context, retries transient model and Telegram
+failures at most twice, treats typing as best-effort, sends a generic terminal
+provider-failure reply, and resumes both `prompt_saved` and `model_complete`
+checkpoints without regenerating a completed answer.
 - Added integration/contract proof for prompt-saved and model-complete resume,
-  transient provider and delivery retry, exhausted-provider sanitization,
-  final-answer reuse, exact Markdown-to-plain fallback, and the real worker
-  bundle build. Verification passed: `pnpm typecheck`, `pnpm test:unit` (35
-  tests), `pnpm test:integration` (15 tests), `pnpm test:contracts` (8 tests),
-  `pnpm format:check`, and `pnpm build`.
+transient provider and delivery retry, exhausted-provider sanitization,
+final-answer reuse, exact Markdown-to-plain fallback, and the real worker
+bundle build. Verification passed: `pnpm typecheck`, `pnpm test:unit` (35
+tests), `pnpm test:integration` (15 tests), `pnpm test:contracts` (8 tests),
+`pnpm format:check`, and `pnpm build`.
 - Added the Drive-backed conversation service used by worker commands. It
-  appends and syncs canonical user/conversation/message events under the global
-  mutation lock before atomically replacing projections, reloads active context
-  from projections, and preserves the per-user-before-global lock order.
+appends and syncs canonical user/conversation/message events under the global
+mutation lock before atomically replacing projections, reloads active context
+from projections, and preserves the per-user-before-global lock order.
 - Fresh-process integration verification now interrupts after durable
-  `model_complete`, constructs entirely new lock/repository/conversation/turn
-  instances, reuses the projected assistant answer without a provider call, and
-  reaches `delivery_complete`. `pnpm test:integration` passes 16 tests. All
-  TASK-008 completion criteria and listed local verification now pass.
+`model_complete`, constructs entirely new lock/repository/conversation/turn
+instances, reuses the projected assistant answer without a provider call, and
+reaches `delivery_complete`. `pnpm test:integration` passes 16 tests. All
+TASK-008 completion criteria and listed local verification now pass.
 
 ### TASK-009 — Implement dashboard and download authentication
 
@@ -530,14 +529,14 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `src/server/auth/{secret,session,guards}.ts`,
-  `src/app/login/**`, `src/app/logout/route.ts`, and auth unit tests.
+`src/app/login/**`, `src/app/logout/route.ts`, and auth unit tests.
 - Implemented keyed fixed-length timing-safe comparisons for arbitrary nonempty
-  Unicode secrets, signed 24-hour `__Host-telegram-agent-session` cookies,
-  signature/expiry validation, same-origin POST logout, and exact single bearer
-  or session-cookie download authorization with fail-closed parsing.
+Unicode secrets, signed 24-hour `__Host-telegram-agent-session` cookies,
+signature/expiry validation, same-origin POST logout, and exact single bearer
+or session-cookie download authorization with fail-closed parsing.
 - Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
-  (35 tests), `pnpm test:integration` (9 tests), and source inspection for URL,
-  browser-storage, HTML, log, worker-file, and Drive-data secret exclusion.
+(35 tests), `pnpm test:integration` (9 tests), and source inspection for URL,
+browser-storage, HTML, log, worker-file, and Drive-data secret exclusion.
 
 ### TASK-010 — Implement read-only dashboard queries
 
@@ -578,13 +577,13 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `src/worker/queries/service.ts`,
-  `src/server/dashboard/view-models.ts`, and `tests/integration/queries/**`.
+`src/server/dashboard/view-models.ts`, and `tests/integration/queries/**`.
 - Implemented typed, read-only overview and category queries over projections,
-  deterministic whole-result sorting, fixed 50-row pages, case-insensitive
-  applicable search, empty/beyond-range results, and strict input validation.
+deterministic whole-result sorting, fixed 50-row pages, case-insensitive
+applicable search, empty/beyond-range results, and strict input validation.
 - Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm test:unit`
-  (35 tests), `pnpm test:integration` (11 tests), and file-list comparison
-  before/after queries demonstrating no mutation.
+(35 tests), `pnpm test:integration` (11 tests), and file-list comparison
+before/after queries demonstrating no mutation.
 
 ### TASK-011 — Build the accessible responsive dashboard
 
@@ -628,28 +627,28 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed so far: `src/app/dashboard/**`,
-  `src/components/dashboard/**`, `src/app/globals.css`, root layout styling,
-  and dashboard security headers in `next.config.ts`.
+`src/components/dashboard/**`, `src/app/globals.css`, root layout styling,
+and dashboard security headers in `next.config.ts`.
 - Implemented authenticated, server-rendered, force-dynamic/no-store dashboard
-  routes; semantic navigation, headings, search labels, empty states,
-  pagination landmarks, manual-refresh guidance, visible focus, responsive
-  320-pixel styles, logout/download navigation, anti-framing, CSP, nosniff, and
-  no-referrer headers. No editing, polling, charts, websocket, push, or client
-  cache was added.
+routes; semantic navigation, headings, search labels, empty states,
+pagination landmarks, manual-refresh guidance, visible focus, responsive
+320-pixel styles, logout/download navigation, anti-framing, CSP, nosniff, and
+no-referrer headers. No editing, polling, charts, websocket, push, or client
+cache was added.
 - Static verification passed: `pnpm typecheck`, `pnpm lint`, and `pnpm build`.
 - Earlier browser attempts were blocked by the Playwright CDN and missing
-  Chrome libraries. This continuation used the system Chrome binary with
-  `--no-sandbox`.
+Chrome libraries. This continuation used the system Chrome binary with
+`--no-sandbox`.
 - Dashboard pages now call the private `query` worker operation. Lists,
-  search, 50-row paging, conversation detail, empty and error states, manual
-  refresh, and read-only navigation are server-rendered. Login and logout use
-  same-origin POST route handlers. `TELEGRAM_AGENT_LOCAL_ROOT` is ignored when
-  `VERCEL` is set.
+search, 50-row paging, conversation detail, empty and error states, manual
+refresh, and read-only navigation are server-rendered. Login and logout use
+same-origin POST route handlers. `TELEGRAM_AGENT_LOCAL_ROOT` is ignored when
+`VERCEL` is set.
 - Playwright passed 4 tests: unauthenticated and wrong-secret login, tampered
-  session rejection, every dashboard view, search, pagination, refresh,
-  logout, cookie and bearer ZIP download, keyboard focus, axe WCAG 2.2 AA
-  checks, and 1280, 390, and 320 CSS-pixel layouts without horizontal
-  scrolling.
+session rejection, every dashboard view, search, pagination, refresh,
+logout, cookie and bearer ZIP download, keyboard focus, axe WCAG 2.2 AA
+checks, and 1280, 390, and 320 CSS-pixel layouts without horizontal
+scrolling.
 
 ### TASK-012 — Implement consistent authenticated ZIP download
 
@@ -692,23 +691,27 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `src/worker/export/**`,
-  `src/server/export/service.ts`, `src/app/api/download/route.ts`, worker command
-  dispatch, `tests/integration/export/**`, and `tests/contracts/download/**`.
+`src/server/export/service.ts`, `src/app/api/download/route.ts`, worker command
+dispatch, `tests/integration/export/**`, and `tests/contracts/download/**`.
 - Implemented a global-mutation-lock snapshot barrier that syncs and copies only
-  `data/` to a unique non-Drive temporary directory, releases the lock before
-  creating a standards-compatible streaming ZIP, and removes partial output on
-  failure. Runtime locks, worker/request files, environment values, and export
-  temporaries cannot enter the archive.
+`data/` to a unique non-Drive temporary directory, releases the lock before
+creating a standards-compatible streaming ZIP, and removes partial output on
+failure. Runtime locks, worker/request files, environment values, and export
+temporaries cannot enter the archive.
 - Added cookie-or-exact-bearer authenticated, no-store ZIP responses. The
-  controller validates archive metadata, bridges `sandbox.readFile()` without
-  full buffering, and removes the temporary snapshot/archive after completion,
-  stream failure, or client cancellation.
+controller validates archive metadata, bridges `sandbox.readFile()` without
+full buffering, and removes the temporary snapshot/archive after completion,
+stream failure, or client cancellation.
 - Verification passed: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`,
-  `pnpm test:unit` (35 tests), `pnpm test:integration` (19 tests),
-  `pnpm test:contracts` (11 tests), and `pnpm build`. Export integration tests
-  exercised queued writes, valid JSON/JSONL ZIP contents, runtime/secret
-  exclusion, continued writes, and failed-snapshot cleanup; contract tests
-  exercised incremental transfer, completion, interruption, and error cleanup.
+`pnpm test:unit` (35 tests), `pnpm test:integration` (19 tests),
+`pnpm test:contracts` (11 tests), and `pnpm build`. Export integration tests
+exercised queued writes, valid JSON/JSONL ZIP contents, runtime/secret
+exclusion, continued writes, and failed-snapshot cleanup; contract tests
+exercised incremental transfer, completion, interruption, and error cleanup.
+- The queued-write export test now waits until the first writer holds the
+global mutation lock before starting the export and the following write.
+Five repeated runs of `tests/integration/export/export.test.ts` passed, and
+`pnpm test:integration` passed 21 tests.
 
 ### TASK-013 — Add sanitized observability and health
 
@@ -748,24 +751,24 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `src/shared/logger.ts`,
-  `src/worker/errors/service.ts`, `src/worker/orchestration/telegram-turn.ts`,
-  worker/controller dispatch and public routes, `src/app/api/health/route.ts`,
-  and observability unit/integration/contract tests.
+`src/worker/errors/service.ts`, `src/worker/orchestration/telegram-turn.ts`,
+worker/controller dispatch and public routes, `src/app/api/health/route.ts`,
+and observability unit/integration/contract tests.
 - Added correlation propagation from webhook and download requests into worker
-  commands, sanitized one-object structured controller/worker logs with bounded
-  error codes, and append-first/atomic-projection durable error records for
-  exhausted provider and Telegram delivery failures. Redaction occurs before
-  log serialization, and durable failures contain only approved identifiers,
-  stage, timestamps, and safe error envelopes.
+commands, sanitized one-object structured controller/worker logs with bounded
+error codes, and append-first/atomic-projection durable error records for
+exhausted provider and Telegram delivery failures. Redaction occurs before
+log serialization, and durable failures contain only approved identifiers,
+stage, timestamps, and safe error envelopes.
 - Added a no-store, side-effect-free health route that validates configuration
-  without calling the Sandbox SDK or creating/resuming resources and returns
-  only `ready|degraded` plus safe component states.
+without calling the Sandbox SDK or creating/resuming resources and returns
+only `ready|degraded` plus safe component states.
 - Verification passed: `pnpm format:check`, `pnpm typecheck`, `pnpm lint`,
-  `pnpm test:unit` (39 tests), `pnpm test:integration` (20 tests),
-  `pnpm test:contracts` (11 tests), and `pnpm build`. Tests inject prohibited
-  authorization, token, hidden-reasoning, exception, and configuration values;
-  verify their absence from logs, durable JSONL/projections, and health output;
-  and verify correlated failure persistence and ready/degraded health behavior.
+`pnpm test:unit` (39 tests), `pnpm test:integration` (20 tests),
+`pnpm test:contracts` (11 tests), and `pnpm build`. Tests inject prohibited
+authorization, token, hidden-reasoning, exception, and configuration values;
+verify their absence from logs, durable JSONL/projections, and health output;
+and verify correlated failure persistence and ready/degraded health behavior.
 
 ### TASK-014 — Complete unit and local filesystem integration verification
 
@@ -806,14 +809,14 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `tests/helpers/filesystem/root.ts` and
-  `tests/integration/worker/local-acceptance.test.ts`.
+`tests/integration/worker/local-acceptance.test.ts`.
 - The local acceptance test runs ten durable conversations, a second
-  same-user turn, a duplicate update, and an export through the Drive
-  filesystem interface with model and Telegram doubles. It checks per-user
-  order, one model run per first turn, valid JSON/JSONL, and prohibited-field
-  absence.
+same-user turn, a duplicate update, and an export through the Drive
+filesystem interface with model and Telegram doubles. It checks per-user
+order, one model run per first turn, valid JSON/JSONL, and prohibited-field
+absence.
 - Verification passed: `pnpm test:unit` (42 tests) and `pnpm test:integration`
-  (21 tests). No live service or database was required.
+(21 tests). No live service or database was required.
 
 ### TASK-015 — Complete contract, browser, accessibility, and security verification
 
@@ -852,14 +855,14 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `tests/e2e/dashboard.spec.ts`,
-  `tests/contracts/security/boundaries.test.ts`, and Playwright configuration
-  using system Chrome.
+`tests/contracts/security/boundaries.test.ts`, and Playwright configuration
+using system Chrome.
 - Verification passed: `pnpm test:contracts` (13 tests), `pnpm test:e2e`
-  (4 tests), and `pnpm build`. Contract tests reject database, object-store,
-  throttling, moderation, and tool packages and keep the capability seam
-  inactive. The client bundle scan found no provider secrets or hidden
-  reasoning. E2E covers authentication, dashboard behavior, accessibility,
-  320-pixel layout, and bearer download.
+(4 tests), and `pnpm build`. Contract tests reject database, object-store,
+throttling, moderation, and tool packages and keep the capability seam
+inactive. The client bundle scan found no provider secrets or hidden
+reasoning. E2E covers authentication, dashboard behavior, accessibility,
+320-pixel layout, and bearer download.
 
 ### TASK-016 — Document and verify Vercel Preview operations
 
@@ -901,27 +904,37 @@ Completion criteria:
 Implementation notes:
 
 - Files/components changed: `docs/deployment.md`, `docs/operations.md`,
-  `docs/rollback.md`, `scripts/verify-preview.mjs`,
-  `tests/live-preview/drive.test.ts`, `src/server/sandbox/transport.ts`,
-  `src/server/sandbox/sdk-adapter.ts`, and
-  `src/server/sandbox/local-adapter.ts`.
+`docs/rollback.md`, `scripts/verify-preview.mjs`,
+`tests/live-preview/drive.test.ts`, `src/server/sandbox/transport.ts`,
+`src/server/sandbox/sdk-adapter.ts`, and
+`src/server/sandbox/local-adapter.ts`.
 - The runbooks describe one named `sin1` Drive and Sandbox, OIDC, separated
-  Preview and Production names, webhook registration last, and rollback that
-  preserves the Drive and does not import an archive.
+Preview and Production names, webhook registration last, and rollback that
+preserves the Drive and does not import an archive.
 - Worker invocation uses the SDK object form of `runCommand` so operation
-  secrets are not dropped. The local adapter accepts that form and the
-  positional form used for `test` and `rm`.
+secrets are not dropped. The local adapter accepts that form and the
+positional form used for `test` and `rm`.
 - The authorized live test stops the Sandbox, resumes it, checks `sin1`, an
-  empty route list, the Hobby timeout ceiling, `currentSandboxName`, and a
-  marker written with fsync and rename, then read as a stream. It was not
-  executed.
+empty route list, the Hobby timeout ceiling, `currentSandboxName`, and a
+marker written with fsync and rename, then read as a stream. It was not
+executed.
 - `pnpm test:live-preview` exits 2 with `LIVE_PREVIEW_NOT_AUTHORIZED` unless
   `TELEGRAM_AGENT_LIVE_PREVIEW=authorized`, both resource names match
   `telegram-agent-preview-*`, and `VERCEL_OIDC_TOKEN` is present. No live
   Sandbox or Drive call was made.
-- Blocked because completion requires operator-authorized evidence of real
+- On 2026-09-27 the operator authorized the live Preview check. The run used
+  `TELEGRAM_AGENT_LIVE_PREVIEW=authorized` and exited 2 with
+  `LIVE_PREVIEW_RESOURCE_MISMATCH` because `SANDBOX_DRIVE_NAME` and
+  `SANDBOX_NAME` are unset. `VERCEL_OIDC_TOKEN` is also unset, and this
+  machine has no linked Vercel project or pulled env file. No Sandbox or
+  Drive call was made.
+- Blocked because completion still requires the exact `telegram-agent-preview-*`
+  resource names, a pulled `VERCEL_OIDC_TOKEN`, and passing evidence of real
   `sin1` persistence, one writer, lock/fsync/rename, and streaming. Ordinary
   tests do not create or delete live resources.
+- On 2026-09-27 the operator deferred this task for the current stage and
+  asked to deploy without the live Preview evidence. The task stays Blocked.
+  Its completion criteria were not met and were not waived.
 
 ### TASK-017 — Execute final acceptance and scope audit
 
@@ -961,91 +974,96 @@ Completion criteria:
 Implementation notes:
 
 - Local sequence passed: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`,
-  `pnpm test:unit` (42), `pnpm test:integration` (21), `pnpm test:contracts`
-  (13), `pnpm test:e2e` (4), and `pnpm build`. That sequence includes the
-  object-form worker command used to pass operation secrets.
+`pnpm test:unit` (42), `pnpm test:integration` (21), `pnpm test:contracts`
+(13), `pnpm test:e2e` (4), and `pnpm build`. That sequence includes the
+object-form worker command used to pass operation secrets.
 - `docs/acceptance-evidence.md` maps the local evidence to AC-001 through
-  AC-019 and audits NTD-001 through NTD-013. The client bundle scan found no
-  secrets or hidden reasoning.
-- Blocked because TASK-016 is Blocked. AC-017 and AC-019 still need
-  authorized live `sin1` Drive/Sandbox evidence, and `pnpm test:live-preview`
-  correctly refuses to run without that authorization.
+AC-019 and audits NTD-001 through NTD-013. The client bundle scan found no
+secrets or hidden reasoning.
+- Blocked because TASK-016 is Blocked. The 2026-09-27 authorized run exited 2
+  with `LIVE_PREVIEW_RESOURCE_MISMATCH` before any Sandbox call. AC-017 and
+  AC-019 still need a passing live `sin1` Drive/Sandbox run.
+- On 2026-09-27 the operator deferred this task together with TASK-016 for the
+  current stage. The task stays Blocked.
 
 ## Coverage matrix
 
-| Requirement or design ID | Implementing tasks |
-|---|---|
-| REQ-F-001 | TASK-008, TASK-015, TASK-017 |
-| REQ-F-002 | TASK-008, TASK-015, TASK-017 |
-| REQ-F-003 | TASK-006, TASK-008, TASK-015, TASK-017 |
-| REQ-F-004 | TASK-006, TASK-014, TASK-017 |
-| REQ-F-005 | TASK-006, TASK-014, TASK-017 |
-| REQ-F-006 | TASK-006, TASK-014, TASK-017 |
-| REQ-F-007 | TASK-007, TASK-015, TASK-016, TASK-017 |
-| REQ-F-008 | TASK-001, TASK-007, TASK-015, TASK-017 |
-| REQ-F-009 | TASK-001, TASK-007, TASK-015, TASK-017 |
-| REQ-F-010 | TASK-006, TASK-007, TASK-008, TASK-015, TASK-017 |
-| REQ-F-011 | TASK-005, TASK-008, TASK-014, TASK-017 |
-| REQ-F-012 | TASK-003, TASK-005, TASK-014, TASK-017 |
-| REQ-F-013 | TASK-008, TASK-015, TASK-017 |
-| REQ-F-014 | TASK-003, TASK-007, TASK-008, TASK-013, TASK-015, TASK-016, TASK-017 |
-| REQ-F-015 | TASK-005, TASK-008, TASK-014, TASK-015, TASK-017 |
-| REQ-F-016 | TASK-004, TASK-006, TASK-014, TASK-017 |
-| REQ-F-017 | TASK-004, TASK-006, TASK-008, TASK-014, TASK-017 |
-| REQ-F-018 | TASK-002, TASK-004, TASK-006, TASK-007, TASK-008, TASK-013, TASK-014, TASK-017 |
-| REQ-F-019 | TASK-004, TASK-014, TASK-016, TASK-017 |
-| REQ-F-020 | TASK-004, TASK-014, TASK-017 |
-| REQ-F-021 | TASK-004, TASK-005, TASK-014, TASK-017 |
-| REQ-F-022 | TASK-004, TASK-006, TASK-014, TASK-016, TASK-017 |
-| REQ-F-023 | TASK-009, TASK-011, TASK-015, TASK-017 |
-| REQ-F-024 | TASK-009, TASK-011, TASK-015, TASK-017 |
-| REQ-F-025 | TASK-002, TASK-003, TASK-009, TASK-012, TASK-013, TASK-015, TASK-016, TASK-017 |
-| REQ-F-026 | TASK-010, TASK-011, TASK-015, TASK-017 |
-| REQ-F-027 | TASK-010, TASK-011, TASK-015, TASK-017 |
-| REQ-F-028 | TASK-010, TASK-011, TASK-015, TASK-017 |
-| REQ-F-029 | TASK-009, TASK-012, TASK-015, TASK-016, TASK-017 |
-| REQ-F-030 | TASK-005, TASK-012, TASK-015, TASK-016, TASK-017 |
-| REQ-F-031 | TASK-012, TASK-015, TASK-016, TASK-017 |
-| REQ-F-032 | TASK-007, TASK-010, TASK-013, TASK-014, TASK-017 |
-| REQ-F-033 | TASK-001, TASK-003, TASK-005, TASK-008, TASK-010, TASK-012, TASK-015, TASK-017 |
-| REQ-F-034 | TASK-002, TASK-007, TASK-014, TASK-017 |
-| REQ-NF-001 | TASK-001, TASK-003, TASK-016, TASK-017 |
-| REQ-NF-002 | TASK-001, TASK-003, TASK-016, TASK-017 |
-| REQ-NF-003 | TASK-004, TASK-014, TASK-016, TASK-017 |
-| REQ-NF-004 | TASK-005, TASK-014, TASK-017 |
-| REQ-NF-005 | TASK-004, TASK-014, TASK-017 |
-| REQ-NF-006 | TASK-004, TASK-014, TASK-017 |
-| REQ-NF-007 | TASK-001, TASK-002, TASK-003, TASK-008, TASK-009, TASK-012, TASK-013, TASK-015, TASK-016, TASK-017 |
-| REQ-NF-008 | TASK-009, TASK-011, TASK-015, TASK-017 |
-| REQ-NF-009 | TASK-002, TASK-004, TASK-006, TASK-008, TASK-013, TASK-014, TASK-017 |
-| REQ-NF-010 | TASK-005, TASK-007, TASK-008, TASK-014, TASK-015, TASK-017 |
-| REQ-NF-011 | TASK-002, TASK-007, TASK-010, TASK-013, TASK-014, TASK-017 |
-| REQ-NF-012 | TASK-011, TASK-015, TASK-017 |
-| REQ-NF-013 | TASK-011, TASK-015, TASK-017 |
-| REQ-NF-014 | TASK-001, TASK-002, TASK-003, TASK-006, TASK-007, TASK-008, TASK-010, TASK-012, TASK-014, TASK-015, TASK-017 |
-| REQ-NF-015 | TASK-001, TASK-003, TASK-016, TASK-017 |
-| REQ-NF-016 | TASK-005, TASK-012, TASK-014, TASK-016, TASK-017 |
-| DES-001 | TASK-001, TASK-017 |
-| DES-002 | TASK-008, TASK-011, TASK-015, TASK-017 |
-| DES-003 | TASK-009, TASK-015, TASK-017 |
-| DES-004 | TASK-003, TASK-015, TASK-017 |
-| DES-005 | TASK-003, TASK-015, TASK-017 |
-| DES-006 | TASK-003, TASK-015, TASK-017 |
-| DES-007 | TASK-004, TASK-014, TASK-017 |
-| DES-008 | TASK-005, TASK-014, TASK-017 |
-| DES-009 | TASK-004, TASK-014, TASK-017 |
-| DES-010 | TASK-008, TASK-015, TASK-017 |
-| DES-011 | TASK-008, TASK-015, TASK-017 |
-| DES-012 | TASK-005, TASK-014, TASK-017 |
-| DES-013 | TASK-006, TASK-014, TASK-017 |
-| DES-014 | TASK-002, TASK-007, TASK-014, TASK-017 |
-| DES-015 | TASK-007, TASK-015, TASK-017 |
-| DES-016 | TASK-007, TASK-008, TASK-015, TASK-017 |
-| DES-017 | TASK-007, TASK-014, TASK-017 |
-| DES-018 | TASK-010, TASK-015, TASK-017 |
-| DES-019 | TASK-011, TASK-015, TASK-017 |
-| DES-020 | TASK-012, TASK-015, TASK-017 |
-| DES-021 | TASK-002, TASK-013, TASK-015, TASK-017 |
-| DES-022 | TASK-014, TASK-015, TASK-017 |
-| DES-023 | TASK-016, TASK-017 |
-| DES-024 | TASK-002, TASK-014, TASK-017 |
+
+| Requirement or design ID | Implementing tasks                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| REQ-F-001                | TASK-008, TASK-015, TASK-017                                                                                 |
+| REQ-F-002                | TASK-008, TASK-015, TASK-017                                                                                 |
+| REQ-F-003                | TASK-006, TASK-008, TASK-015, TASK-017                                                                       |
+| REQ-F-004                | TASK-006, TASK-014, TASK-017                                                                                 |
+| REQ-F-005                | TASK-006, TASK-014, TASK-017                                                                                 |
+| REQ-F-006                | TASK-006, TASK-014, TASK-017                                                                                 |
+| REQ-F-007                | TASK-007, TASK-015, TASK-016, TASK-017                                                                       |
+| REQ-F-008                | TASK-001, TASK-007, TASK-015, TASK-017                                                                       |
+| REQ-F-009                | TASK-001, TASK-007, TASK-015, TASK-017                                                                       |
+| REQ-F-010                | TASK-006, TASK-007, TASK-008, TASK-015, TASK-017                                                             |
+| REQ-F-011                | TASK-005, TASK-008, TASK-014, TASK-017                                                                       |
+| REQ-F-012                | TASK-003, TASK-005, TASK-014, TASK-017                                                                       |
+| REQ-F-013                | TASK-008, TASK-015, TASK-017                                                                                 |
+| REQ-F-014                | TASK-003, TASK-007, TASK-008, TASK-013, TASK-015, TASK-016, TASK-017                                         |
+| REQ-F-015                | TASK-005, TASK-008, TASK-014, TASK-015, TASK-017                                                             |
+| REQ-F-016                | TASK-004, TASK-006, TASK-014, TASK-017                                                                       |
+| REQ-F-017                | TASK-004, TASK-006, TASK-008, TASK-014, TASK-017                                                             |
+| REQ-F-018                | TASK-002, TASK-004, TASK-006, TASK-007, TASK-008, TASK-013, TASK-014, TASK-017                               |
+| REQ-F-019                | TASK-004, TASK-014, TASK-016, TASK-017                                                                       |
+| REQ-F-020                | TASK-004, TASK-014, TASK-017                                                                                 |
+| REQ-F-021                | TASK-004, TASK-005, TASK-014, TASK-017                                                                       |
+| REQ-F-022                | TASK-004, TASK-006, TASK-014, TASK-016, TASK-017                                                             |
+| REQ-F-023                | TASK-009, TASK-011, TASK-015, TASK-017                                                                       |
+| REQ-F-024                | TASK-009, TASK-011, TASK-015, TASK-017                                                                       |
+| REQ-F-025                | TASK-002, TASK-003, TASK-009, TASK-012, TASK-013, TASK-015, TASK-016, TASK-017                               |
+| REQ-F-026                | TASK-010, TASK-011, TASK-015, TASK-017                                                                       |
+| REQ-F-027                | TASK-010, TASK-011, TASK-015, TASK-017                                                                       |
+| REQ-F-028                | TASK-010, TASK-011, TASK-015, TASK-017                                                                       |
+| REQ-F-029                | TASK-009, TASK-012, TASK-015, TASK-016, TASK-017                                                             |
+| REQ-F-030                | TASK-005, TASK-012, TASK-015, TASK-016, TASK-017                                                             |
+| REQ-F-031                | TASK-012, TASK-015, TASK-016, TASK-017                                                                       |
+| REQ-F-032                | TASK-007, TASK-010, TASK-013, TASK-014, TASK-017                                                             |
+| REQ-F-033                | TASK-001, TASK-003, TASK-005, TASK-008, TASK-010, TASK-012, TASK-015, TASK-017                               |
+| REQ-F-034                | TASK-002, TASK-007, TASK-014, TASK-017                                                                       |
+| REQ-NF-001               | TASK-001, TASK-003, TASK-016, TASK-017                                                                       |
+| REQ-NF-002               | TASK-001, TASK-003, TASK-016, TASK-017                                                                       |
+| REQ-NF-003               | TASK-004, TASK-014, TASK-016, TASK-017                                                                       |
+| REQ-NF-004               | TASK-005, TASK-014, TASK-017                                                                                 |
+| REQ-NF-005               | TASK-004, TASK-014, TASK-017                                                                                 |
+| REQ-NF-006               | TASK-004, TASK-014, TASK-017                                                                                 |
+| REQ-NF-007               | TASK-001, TASK-002, TASK-003, TASK-008, TASK-009, TASK-012, TASK-013, TASK-015, TASK-016, TASK-017           |
+| REQ-NF-008               | TASK-009, TASK-011, TASK-015, TASK-017                                                                       |
+| REQ-NF-009               | TASK-002, TASK-004, TASK-006, TASK-008, TASK-013, TASK-014, TASK-017                                         |
+| REQ-NF-010               | TASK-005, TASK-007, TASK-008, TASK-014, TASK-015, TASK-017                                                   |
+| REQ-NF-011               | TASK-002, TASK-007, TASK-010, TASK-013, TASK-014, TASK-017                                                   |
+| REQ-NF-012               | TASK-011, TASK-015, TASK-017                                                                                 |
+| REQ-NF-013               | TASK-011, TASK-015, TASK-017                                                                                 |
+| REQ-NF-014               | TASK-001, TASK-002, TASK-003, TASK-006, TASK-007, TASK-008, TASK-010, TASK-012, TASK-014, TASK-015, TASK-017 |
+| REQ-NF-015               | TASK-001, TASK-003, TASK-016, TASK-017                                                                       |
+| REQ-NF-016               | TASK-005, TASK-012, TASK-014, TASK-016, TASK-017                                                             |
+| DES-001                  | TASK-001, TASK-017                                                                                           |
+| DES-002                  | TASK-008, TASK-011, TASK-015, TASK-017                                                                       |
+| DES-003                  | TASK-009, TASK-015, TASK-017                                                                                 |
+| DES-004                  | TASK-003, TASK-015, TASK-017                                                                                 |
+| DES-005                  | TASK-003, TASK-015, TASK-017                                                                                 |
+| DES-006                  | TASK-003, TASK-015, TASK-017                                                                                 |
+| DES-007                  | TASK-004, TASK-014, TASK-017                                                                                 |
+| DES-008                  | TASK-005, TASK-014, TASK-017                                                                                 |
+| DES-009                  | TASK-004, TASK-014, TASK-017                                                                                 |
+| DES-010                  | TASK-008, TASK-015, TASK-017                                                                                 |
+| DES-011                  | TASK-008, TASK-015, TASK-017                                                                                 |
+| DES-012                  | TASK-005, TASK-014, TASK-017                                                                                 |
+| DES-013                  | TASK-006, TASK-014, TASK-017                                                                                 |
+| DES-014                  | TASK-002, TASK-007, TASK-014, TASK-017                                                                       |
+| DES-015                  | TASK-007, TASK-015, TASK-017                                                                                 |
+| DES-016                  | TASK-007, TASK-008, TASK-015, TASK-017                                                                       |
+| DES-017                  | TASK-007, TASK-014, TASK-017                                                                                 |
+| DES-018                  | TASK-010, TASK-015, TASK-017                                                                                 |
+| DES-019                  | TASK-011, TASK-015, TASK-017                                                                                 |
+| DES-020                  | TASK-012, TASK-015, TASK-017                                                                                 |
+| DES-021                  | TASK-002, TASK-013, TASK-015, TASK-017                                                                       |
+| DES-022                  | TASK-014, TASK-015, TASK-017                                                                                 |
+| DES-023                  | TASK-016, TASK-017                                                                                           |
+| DES-024                  | TASK-002, TASK-014, TASK-017                                                                                 |
+
+
