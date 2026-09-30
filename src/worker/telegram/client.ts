@@ -12,6 +12,32 @@ export function chunkTelegramText(text: string, limit = 4096): string[] {
   if (rest) chunks.push(rest);
   return chunks;
 }
+
+/**
+ * Turn the small Markdown subset commonly returned by the model into readable
+ * Telegram plain text. Sending plain text avoids leaking Markdown punctuation
+ * when the model produces syntax that Telegram's parser does not accept.
+ */
+export function formatTelegramText(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/^\s*```[^\n]*\n?/gm, "")
+    .replace(/^\s*#{1,6}\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "│ ")
+    .replace(/^(\s*)[-+*]\s+/gm, "$1• ")
+    .replace(/^\s*(?:[-*_]\s*){3,}$/gm, "────────")
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "$1 ($2)")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
+    .replace(/(\*\*|__)(.*?)\1/g, "$2")
+    .replace(/(~~)(.*?)\1/g, "$2")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2")
+    .replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1$2")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/\\([_*#[\]()~`>+\-=|{}.!])/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export class TelegramClient {
   constructor(
     private token: string,
@@ -28,17 +54,12 @@ export class TelegramClient {
     await this.call("sendChatAction", { chat_id: chatId, action: "typing" });
   }
   async send(chatId: string, text: string) {
-    for (const chunk of chunkTelegramText(text)) {
-      let response = await this.call("sendMessage", {
+    const formatted = formatTelegramText(text);
+    for (const chunk of chunkTelegramText(formatted)) {
+      const response = await this.call("sendMessage", {
         chat_id: chatId,
         text: chunk,
-        parse_mode: "MarkdownV2",
       });
-      if (!response.ok)
-        response = await this.call("sendMessage", {
-          chat_id: chatId,
-          text: chunk,
-        });
       if (!response.ok) throw new Error("TELEGRAM_DELIVERY_FAILED");
     }
   }

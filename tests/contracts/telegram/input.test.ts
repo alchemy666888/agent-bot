@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { extractTelegramInput } from "../../../src/server/telegram/input";
 import {
   chunkTelegramText,
+  formatTelegramText,
   TelegramClient,
 } from "../../../src/worker/telegram/client";
 import { vi } from "vitest";
@@ -44,22 +45,25 @@ describe("Telegram contract", () => {
     expect(chunks.join("")).toBe(text);
     expect(chunks.every((x) => x.length <= 4096)).toBe(true);
   });
-  it("falls back to plain text without changing or regenerating content", async () => {
+  it("removes Markdown punctuation while retaining readable structure", () => {
+    expect(
+      formatTelegramText(
+        "## Summary\n- **Open interest:** $52.89B\n> `Note`\n\n[Source](https://example.com)",
+      ),
+    ).toBe(
+      "Summary\n• Open interest: $52.89B\n│ Note\n\nSource (https://example.com)",
+    );
+  });
+  it("sends polished plain text without exposing formatting markers", async () => {
     const request = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 400 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
     const client = new TelegramClient("fixture-token", request);
-    await client.send("3", "*exact* response");
-    expect(request).toHaveBeenCalledTimes(2);
+    await client.send("3", "## Result\n- **exact** response");
+    expect(request).toHaveBeenCalledTimes(1);
     expect(JSON.parse(request.mock.calls[0]![1]!.body as string)).toEqual({
       chat_id: "3",
-      text: "*exact* response",
-      parse_mode: "MarkdownV2",
-    });
-    expect(JSON.parse(request.mock.calls[1]![1]!.body as string)).toEqual({
-      chat_id: "3",
-      text: "*exact* response",
+      text: "Result\n• exact response",
     });
   });
 });
