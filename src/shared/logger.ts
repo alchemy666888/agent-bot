@@ -1,5 +1,6 @@
 import { redact } from "./redaction";
-import { skillAuditEventSchema } from "../worker/persistence/schemas";
+import type { z } from "zod";
+import type { securityAuditEventSchema } from "../worker/persistence/schemas";
 
 export type LogResult = "success" | "failure" | "retry" | "degraded";
 
@@ -14,35 +15,23 @@ export interface LogRecord {
   metadata?: Record<string, unknown>;
 }
 
-/** Only these security fields may cross the logging boundary. */
-export interface SecurityAuditRecord {
-  correlationId: string;
-  action: string;
-  result: "success" | "denied";
-  actorTelegramUserId?: string;
-  resourceId?: string;
-  reasonCode?: string;
-}
+export type SecurityAuditEvent = z.infer<typeof securityAuditEventSchema>;
+export type SecurityAuditSink = (line: string) => void;
 
+/** Security audit records use a fixed schema and the same recursive redaction as logs. */
 export function logSecurityAudit(
-  record: SecurityAuditRecord,
-  sink: (line: string) => void = console.info,
+  event: SecurityAuditEvent,
+  sink: SecurityAuditSink = console.info,
 ): string {
-  return logStructured(
-    {
-      component: "worker",
-      operation: "security-audit",
-      stage: record.action,
-      result: record.result === "success" ? "success" : "failure",
-      code: record.reasonCode,
-      metadata: {
-        actorTelegramUserId: record.actorTelegramUserId,
-        resourceId: record.resourceId,
-      },
-      correlationId: record.correlationId,
-    },
-    sink,
+  const line = JSON.stringify(
+    redact({
+      timestamp: new Date().toISOString(),
+      component: "security-audit",
+      ...event,
+    }),
   );
+  sink(line);
+  return line;
 }
 
 /** Emits one sanitized JSON object. Callers must pass metadata, never raw bodies. */
