@@ -6,7 +6,7 @@ import {
 import type { SandboxHandle } from "../../../../src/server/sandbox/sdk-adapter";
 import { uuidV7 } from "../../../../src/shared/ids";
 
-function sandbox(response: unknown, exitCode = 0): SandboxHandle {
+function sandbox(response: unknown, exitCode = 0, stderr = ""): SandboxHandle {
   return {
     name: "agent",
     region: "sin1",
@@ -16,7 +16,7 @@ function sandbox(response: unknown, exitCode = 0): SandboxHandle {
     runCommand: vi.fn(async () => ({
       exitCode,
       stdout: async () => "",
-      stderr: async () => "",
+      stderr: async () => stderr,
     })),
     readFileToBuffer: vi.fn(async () => Buffer.from(JSON.stringify(response))),
     readFile: vi.fn(async () => null),
@@ -81,4 +81,32 @@ describe("private worker transport", () => {
     ).rejects.toThrow("WORKER_COMMAND_FAILED");
     expect(target.runCommand).toHaveBeenCalledTimes(2);
   });
+  it.each([
+    [
+      'Error: Dynamic require of "events" is not supported',
+      "WORKER_BUNDLE_INCOMPATIBLE",
+    ],
+    [
+      "Error: connect ECONNREFUSED 10.0.0.1:5432",
+      "DATABASE_CONNECTION_REFUSED",
+    ],
+    [
+      'error: password authentication failed for user "telegram"',
+      "DATABASE_AUTHENTICATION_FAILED",
+    ],
+    ["contains supersecretvalue", "WORKER_COMMAND_FAILED"],
+  ])(
+    "maps safe command diagnostics without exposing stderr",
+    async (stderr, code) => {
+      const target = sandbox({}, 1, stderr);
+      await expect(
+        invokeWorker(target, "/tmp/worker.mjs", {
+          contractVersion: 1,
+          correlationId: uuidV7(),
+          operation: "health",
+          payload: {},
+        }),
+      ).rejects.toThrow(code);
+    },
+  );
 });
