@@ -52,6 +52,8 @@ describe("security boundaries", () => {
     expect(worker).toContain("createCapabilityRegistry");
     expect(capabilities).toContain("CAPABILITY_DENIED");
     expect(capabilities).toContain("permitted.includes(id)");
+  });
+
   it("keeps capability identifiers and adapters code-owned", async () => {
     const capabilities = await readFile("src/shared/capabilities.ts", "utf8");
     expect(capabilities).toContain("capabilityIdentifiers");
