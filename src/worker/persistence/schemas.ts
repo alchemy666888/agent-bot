@@ -3,15 +3,35 @@ import { safeErrorSchema } from "../../shared/contracts";
 import { capabilityIdentifierSchema } from "../../shared/capabilities";
 
 export const MAX_SKILL_DOCUMENT_BYTES = 64 * 1024;
-const telegramUserIdSchema = z.string().regex(/^[1-9]\d*$/);
+export const MAX_TOOL_OUTPUT_BYTES = 32 * 1024;
+const telegramUserIdSchema = z.string().regex(/^\d+$/);
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const boundedDocument = z
+  .string()
+  .min(1)
+  .refine(
+    (text) => Buffer.byteLength(text, "utf8") <= MAX_SKILL_DOCUMENT_BYTES,
+    "Skill document exceeds size limit",
+  );
+export const capabilityIdSchema = z.enum(allowedCapabilityIds);
+export const skillRoleSchema = z.enum([
+  "author",
+  "approver",
+  "owner",
+  "consumer",
+]);
 
 export const skillDocumentSchema = z
   .object({
-    name: z.string().trim().min(1).max(100),
-    instructions: z
-      .string()
-      .min(1)
+    draftId: z.uuid(),
+    revision: z.number().int().positive(),
+    authorTelegramUserId: telegramUserIdSchema,
+    ownerTelegramUserId: telegramUserIdSchema,
+    content: boundedDocument,
+    contentDigest: digestSchema,
+    requestedCapabilities: z
+      .array(capabilityIdSchema)
+      .max(allowedCapabilityIds.length)
       .refine(
         (value) => Buffer.byteLength(value, "utf8") <= MAX_SKILL_DOCUMENT_BYTES,
         {
@@ -25,13 +45,13 @@ export const skillDocumentSchema = z
   })
   .strict();
 
-/** An approval is useful only as a complete, immutable provenance tuple. */
+/** A server-created attestation bound to immutable content, never approval prose. */
 export const skillApprovalSchema = z
   .object({
     draftId: z.uuid(),
     revision: z.number().int().positive(),
     contentDigest: digestSchema,
-    telegramUserId: telegramUserIdSchema,
+    approverTelegramUserId: telegramUserIdSchema,
     approvedAt: z.iso.datetime(),
   })
   .strict();
@@ -45,9 +65,19 @@ export const installedSkillSchema = z
     contentDigest: digestSchema,
     grantedCapabilities: z.array(capabilityIdentifierSchema),
     approval: skillApprovalSchema,
+    grantedCapabilities: z.array(capabilityIdSchema),
+    installedByTelegramUserId: telegramUserIdSchema,
     installedAt: z.iso.datetime(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      value.approval.draftId !== value.draft.draftId ||
+      value.approval.revision !== value.draft.revision ||
+      value.approval.contentDigest !== value.draft.contentDigest
+    )
+      ctx.addIssue({ code: "custom", message: "Approval provenance mismatch" });
+  });
 
 export const securityAuditEventSchema = z
   .object({
@@ -77,59 +107,7 @@ export const securityAuditEventSchema = z
   })
   .strict();
 
-export const MAX_SKILL_DOCUMENT_BYTES = 64 * 1024;
-export const MAX_TOOL_OUTPUT_BYTES = 32 * 1024;
-
-/** Operator-maintained identifiers. Skill documents may request, but never define, these. */
-export const capabilityIdSchema = z.enum([
-  "network.http",
-  "telegram.send",
-  "storage.read",
-  "storage.write",
-]);
-export const skillRoleSchema = z.enum([
-  "author",
-  "approver",
-  "owner",
-  "consumer",
-]);
-const telegramUserIdSchema = z.string().regex(/^[1-9]\d{0,19}$/);
-const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
-
-export const skillDraftSchema = z
-  .object({
-    draftId: z.uuid(),
-    revision: z.number().int().positive(),
-    authorTelegramUserId: telegramUserIdSchema,
-    content: z.string().min(1).max(MAX_SKILL_DOCUMENT_BYTES),
-    contentDigest: sha256Schema,
-    requestedCapabilities: z.array(capabilityIdSchema).max(16),
-    createdAt: z.iso.datetime(),
-  })
-  .strict();
-
-export const skillApprovalSchema = z
-  .object({
-    draftId: z.uuid(),
-    revision: z.number().int().positive(),
-    contentDigest: sha256Schema,
-    approverTelegramUserId: telegramUserIdSchema,
-    approvedAt: z.iso.datetime(),
-  })
-  .strict();
-
-export const installedSkillSchema = z
-  .object({
-    skillId: z.uuid(),
-    ownerTelegramUserId: telegramUserIdSchema,
-    content: z.string().min(1).max(MAX_SKILL_DOCUMENT_BYTES),
-    grantedCapabilities: z.array(capabilityIdSchema).max(16),
-    installedAt: z.iso.datetime(),
-    provenance: skillApprovalSchema,
-  })
-  .strict();
-
-export const securityAuditEventSchema = z
+export const auditEventSchema = z
   .object({
     event: z.enum([
       "skill.draft.created",
@@ -152,13 +130,13 @@ export const securityAuditEventSchema = z
   })
   .strict();
 
+/** Durable events reject fields likely to contain credentials, raw input, or model/tool internals. */
 const safePayload = z
   .record(z.string(), z.unknown())
   .superRefine((value, ctx) => {
-    const serialized = JSON.stringify(value);
     if (
       /first_name|last_name|authorization|cookie|secret|token|password|api.?key|reasoning|raw(update|body|response)|tool.?output/i.test(
-        serialized,
+        JSON.stringify(value),
       )
     )
       ctx.addIssue({ code: "custom", message: "Prohibited durable field" });
@@ -220,6 +198,7 @@ export const eventSchema = z
     error: safeErrorSchema.optional(),
   })
   .strict();
+
 export type DurableEvent = z.infer<typeof eventSchema>;
 export type SkillDraft = z.infer<typeof skillDraftSchema>;
 export type SkillApproval = z.infer<typeof skillApprovalSchema>;

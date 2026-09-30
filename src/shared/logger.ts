@@ -3,7 +3,6 @@ import type { z } from "zod";
 import type { securityAuditEventSchema } from "../worker/persistence/schemas";
 
 export type LogResult = "success" | "failure" | "retry" | "degraded";
-
 export interface LogRecord {
   correlationId: string;
   component: "controller" | "worker";
@@ -15,26 +14,55 @@ export interface LogRecord {
   metadata?: Record<string, unknown>;
 }
 
-export type SecurityAuditEvent = z.infer<typeof securityAuditEventSchema>;
-export type SecurityAuditSink = (line: string) => void;
+export type SecurityAuditAction =
+  | "skill.draft.created"
+  | "skill.draft.revised"
+  | "skill.approved"
+  | "skill.installed"
+  | "skill.invoked"
+  | "skill.authorization_denied"
+  | "telegram.update.replayed";
 
-/** Security audit records use a fixed schema and the same recursive redaction as logs. */
+/** Audit input is constrained to codes/identifiers and always takes the redaction path. */
 export function logSecurityAudit(
-  event: SecurityAuditEvent,
-  sink: SecurityAuditSink = console.info,
+  event: {
+    correlationId: string;
+    action: SecurityAuditAction;
+    result: "success" | "denied";
+    actorTelegramUserId?: string;
+    code?: string;
+    metadata?: Record<string, unknown>;
+  },
+  sink: (line: string) => void = console.info,
 ): string {
-  const line = JSON.stringify(
-    redact({
-      timestamp: new Date().toISOString(),
-      component: "security-audit",
-      ...event,
-    }),
+  return logStructured(
+    {
+      correlationId: event.correlationId,
+      component: "worker",
+      operation: event.action,
+      stage: "authorization",
+      result: event.result === "success" ? "success" : "failure",
+      ...(event.code && /^[A-Z][A-Z0-9_]{0,63}$/.test(event.code)
+        ? { code: event.code }
+        : {}),
+      metadata: {
+        ...(event.actorTelegramUserId
+          ? {
+              actorTelegramUserId: /^\d+$/.test(event.actorTelegramUserId)
+                ? event.actorTelegramUserId
+                : "invalid",
+            }
+          : {}),
+        ...event.metadata,
+      },
+    },
+    sink,
   );
   sink(line);
   return line;
 }
 
-/** Emits one sanitized JSON object. Callers must pass metadata, never raw bodies. */
+/** Emits one bounded, redacted JSON object. Callers must never pass raw bodies. */
 export function logStructured(
   record: LogRecord,
   sink: (line: string) => void = console.info,
@@ -127,46 +155,4 @@ export function safeError(
         }
       : {}),
   };
-}
-
-export type SecurityAuditAction =
-  | "skill.draft.created"
-  | "skill.draft.revised"
-  | "skill.approved"
-  | "skill.installed"
-  | "skill.invoked"
-  | "skill.authorization_denied"
-  | "telegram.update.replayed";
-
-/** Security audit records use fixed actions/codes and pass through the same redactor. */
-export function logSecurityAudit(
-  event: {
-    correlationId: string;
-    action: SecurityAuditAction;
-    result: "success" | "denied";
-    actorTelegramUserId?: string;
-    code?: string;
-    metadata?: Record<string, unknown>;
-  },
-  sink: (line: string) => void = console.info,
-): string {
-  return logStructured(
-    {
-      correlationId: event.correlationId,
-      component: "worker",
-      operation: event.action,
-      stage: "authorization",
-      result: event.result === "success" ? "success" : "failure",
-      ...(event.code && /^[A-Z][A-Z0-9_]{0,63}$/.test(event.code)
-        ? { code: event.code }
-        : {}),
-      metadata: {
-        ...(event.actorTelegramUserId
-          ? { actorTelegramUserId: event.actorTelegramUserId }
-          : {}),
-        ...event.metadata,
-      },
-    },
-    sink,
-  );
 }

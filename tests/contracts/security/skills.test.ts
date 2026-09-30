@@ -86,22 +86,29 @@ describe("skill security contract", () => {
       }),
     ).toThrowError("APPROVAL_INVALID");
   });
-
-  it("requires operator grants at installation and invocation", async () => {
-    const noGrant = approvedService("text", ["storage.write"]);
-    expect(() =>
-      noGrant.service.install({
-        actorTelegramUserId: ids.owner,
-        draftId: noGrant.draft.draftId,
-      }),
-    ).toThrowError("CAPABILITY_NOT_GRANTED");
-    const grants: Record<string, "network.http"[]> = {
-      [ids.owner]: ["network.http"],
-      [ids.consumer]: ["network.http"],
-    };
-    const service = new SkillService(
-      { principals: policy.principals, capabilityGrants: grants },
-      vi.fn(),
+  it("revalidates revoked capabilities and consumers at invocation", async () => {
+    const f = await approved(["network.http"]);
+    const skill = await f.service.install(
+      f.draft.draftId,
+      f.approval,
+      installer,
+    );
+    expect(skill.approval).toEqual({
+      draftId: f.draft.draftId,
+      revision: f.draft.revision,
+      contentDigest: f.draft.contentDigest,
+      approverTelegramUserId: approver,
+      approvedAt: "2026-01-02T03:04:05.000Z",
+    });
+    await expect(f.service.invocationPrompt(skill, "999")).rejects.toEqual(
+      denial("CONSUMER_NOT_AUTHORIZED"),
+    );
+    (f.policy.capabilityGrants as Map<string, ReadonlySet<CapabilityId>>).set(
+      owner,
+      new Set(),
+    );
+    await expect(f.service.invocationPrompt(skill, owner)).rejects.toEqual(
+      denial("CAPABILITY_REVOKED"),
     );
     const draft = service.createDraft({
       actorTelegramUserId: ids.author,
