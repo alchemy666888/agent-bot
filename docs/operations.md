@@ -1,42 +1,33 @@
 # Operations
 
-`GET /api/health` reports safe readiness states and validates that `DATABASE_URL` is a PostgreSQL URL. It never returns or logs the connection string.
+## Routine checks
 
-Each worker session hydrates its empty scratch tree from PostgreSQL. Every committed logical file is then upserted into `telegram_agent_files`; deletions remove the matching row. PostgreSQL is the source of truth. Scratch files, locks, and exports are not durable.
+`GET /api/health` must safely report configuration and schema compatibility without returning credentials. Monitor PostgreSQL availability/locks/storage, lifecycle transition errors, authorization denials, tool latency/outcomes, expired execution leases, unknown outcomes, Telegram delivery, and append-only audit ingestion. Correlate a run by `correlation_id`; logs contain reason codes and hashes, not raw secrets or unsanitized tool payloads.
 
-Back up and monitor the PostgreSQL service using the provider's facilities. Restrict the database role and network access, rotate the connection string as a secret, and do not configure Google OAuth or Drive credentials.
+Useful operator questions include: skills/runs by owner and state; current/version pointer consistency; grants whose capability is disabled; expired processing leases; unknown-outcome tool calls; and audit events by actor, target, capability, execution, and UTC interval. Access these through read-only views/tooling, not ad-hoc mutation.
 
-## Troubleshooting worker failures
+## Capability and incident controls
 
-Filter Vercel logs by the `correlationId` from the failed webhook event. Worker
-failures include a bounded `metadata` object that is safe to retain in logs:
+Set `SKILLS_ENABLED=false` to stop new skill runs. Disable a registry capability to stop its new dispatches; authorization checks the kill switch again immediately before a side effect. Do not edit a grant or approved version to contain an incident—revoke/disable it and create a new explicitly approved revision.
 
-- `stage: bootstrap` points to database or process initialization.
-- `stage: persistence-sync` points to loading durable state from PostgreSQL.
-- `stage: operation` points to the Telegram turn, model request, or delivery.
-- `stage: worker-log` points to writing the worker's durable completion log.
-- `kind` is the JavaScript exception class, such as `TypeError` or `Error`.
-- `causeCode` is an allowlisted runtime or provider code, such as a Node network
-  code or PostgreSQL SQLSTATE.
-- `status` is an HTTP-like status exposed by the failing dependency.
+For a stuck run, inspect its execution, idempotency key, last committed step, descriptor retry class, provider idempotency/reference, and audit trail. Reclaim an expired lease only through the reconciliation command. Retry a call only when it is declared retry-safe or the provider can return the original result for the same key. Mark an ambiguous non-retry-safe call `unknown_outcome`, investigate externally, and tell the user; never replay it automatically.
 
-The exception message, stack, request body, connection string, and credentials
-are intentionally not transported out of the Sandbox. Use the stage and
-structured code to select the next system to inspect. For example,
-`persistence-sync` plus PostgreSQL SQLSTATE `28P01` indicates database
-authentication, while `operation` plus status `401` points to a model or
-Telegram credential. If the code remains `INTERNAL_ERROR`, report the complete
-`metadata` object and correlation ID; unlike the raw exception, those fields are
-designed to be shared safely.
+Database/Sandbox failures use sanitized stages (`bootstrap`, `persistence-sync`, `operation`, `tool-dispatch`, `delivery`). PostgreSQL authentication (`28P01`), DNS (`ENOTFOUND`), and IPv4 routing (`ENETUNREACH`) are infrastructure failures. Fix connectivity and let checkpoint recovery resume; do not switch to local files.
 
-`persistence-sync` plus `causeCode: ENETUNREACH` is reported as
-`DATABASE_NETWORK_UNREACHABLE`. It means the Sandbox has no route to the address
-returned by the database hostname. This commonly occurs when `DATABASE_URL`
-uses an IPv6-only direct database endpoint. Replace it with the provider's
-IPv4-compatible pooled or session-pooler connection string, redeploy, and send a
-new Telegram message. Do not remove provider-required SSL query parameters.
+## Backup and restoration
 
-`persistence-sync` plus `causeCode: ENOTFOUND` is reported as
-`DATABASE_HOST_NOT_FOUND`. Database DNS failures are retried before the request
-fails. If the error persists, copy the hostname from the provider console into
-`DATABASE_URL`, without quotes or whitespace, and redeploy.
+Schedule encrypted provider snapshots plus logical backups at an operator-defined recovery interval. Backups must consistently include schema migrations, users/conversations, skills/revisions/clarifications/approvals/versions, registry/grants, selections, executions/tool calls, idempotency, and audit events. Store backup ID, database/schema version, checksum, UTC time, and retention. Never include application/provider credentials.
+
+At least once per release and on the regular disaster-recovery cadence:
+
+1. Restore the chosen backup to a new isolated database with no Telegram webhook and stubbed external adapters.
+2. Run `DATABASE_URL=<isolated-url> pnpm restore:verify`.
+3. Verify migration checksums, FK/integrity checks, row counts by table, revision content hashes, one current version per skill, exact grants, private/global visibility, selections, audit continuity, and absence of secrets.
+4. List/discover as two test owners; prove cross-owner denial. Dry-run a restored selected skill pinned to its version.
+5. Record duration, recovery point, output, and operator approval in `docs/acceptance-evidence.md`; destroy the isolated restore according to policy.
+
+An export is useful for inspection but is not a database backup unless restoration from it has passed the same checks.
+
+## Acceptance gate
+
+Run `pnpm test -- tests/acceptance/skills` after migrations, registry changes, authorization changes, and recovery changes. The feature remains incomplete if any requirement lacks an existing implementation module, named automated acceptance test, passing CI evidence, Preview walkthrough, and restore rehearsal.
