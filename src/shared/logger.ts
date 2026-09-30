@@ -13,6 +13,38 @@ export interface LogRecord {
   metadata?: Record<string, unknown>;
 }
 
+export const securityAuditActions = [
+  "skill.draft.created",
+  "skill.approved",
+  "skill.install.denied",
+  "skill.installed",
+  "skill.invoke.denied",
+  "skill.invoked",
+  "update.replay.denied",
+] as const;
+export type SecurityAuditAction = (typeof securityAuditActions)[number];
+
+/** Security audit metadata is passed through the same mandatory redaction path. */
+export function logSecurityAudit(
+  action: SecurityAuditAction,
+  actorTelegramUserId: string,
+  result: LogResult,
+  metadata: Record<string, unknown> = {},
+  sink?: (line: string) => void,
+): string {
+  return logStructured(
+    {
+      correlationId: `audit:${crypto.randomUUID()}`,
+      component: "worker",
+      operation: "skillAuthorization",
+      stage: action,
+      result,
+      metadata: { actorTelegramUserId, ...metadata },
+    },
+    sink,
+  );
+}
+
 /** Emits one sanitized JSON object. Callers must pass metadata, never raw bodies. */
 export function logStructured(
   record: LogRecord,
