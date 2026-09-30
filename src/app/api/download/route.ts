@@ -5,7 +5,7 @@ import {
   SESSION_COOKIE,
 } from "../../../server/auth/guards";
 import { prepareExport } from "../../../server/export/service";
-import { persistControllerLog } from "../../../shared/google-drive/controller-log";
+import { persistControllerLog } from "../../../shared/postgres/controller-log";
 import { uuidV7 } from "../../../shared/ids";
 import { safeError } from "../../../shared/logger";
 

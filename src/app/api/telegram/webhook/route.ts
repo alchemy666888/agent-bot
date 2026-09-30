@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readTelegramConfig } from "../../../../server/config";
 import { dispatchTelegramInput } from "../../../../server/telegram/dispatch";
 import { extractTelegramInput } from "../../../../server/telegram/input";
-import { persistControllerLog } from "../../../../shared/google-drive/controller-log";
+import { persistControllerLog } from "../../../../shared/postgres/controller-log";
 import { uuidV7 } from "../../../../shared/ids";
 import { safeError } from "../../../../shared/logger";
 export const runtime = "nodejs";

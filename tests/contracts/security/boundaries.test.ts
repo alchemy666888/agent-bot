@@ -14,7 +14,7 @@ async function sourceFiles(directory: string): Promise<string[]> {
 }
 
 describe("security boundaries", () => {
-  it("excludes databases, object stores, throttles, moderation, and tools", async () => {
+  it("uses PostgreSQL without other stores, throttles, moderation, or tools", async () => {
     const manifest = JSON.parse(await readFile("package.json", "utf8")) as {
       dependencies: Record<string, string>;
       devDependencies: Record<string, string>;
@@ -23,15 +23,18 @@ describe("security boundaries", () => {
       ...manifest.dependencies,
       ...manifest.devDependencies,
     });
+    expect(names).toContain("pg");
     expect(names.join("\n")).not.toMatch(
-      /postgres|sqlite|prisma|mongoose|drizzle|knex|@aws-sdk|@vercel\/blob|stripe|rate-limiter|helmet/i,
+      /sqlite|prisma|mongoose|drizzle|knex|googleapis|@aws-sdk|@vercel\/blob|stripe|rate-limiter|helmet/i,
     );
     const files = (await sourceFiles("src")).filter((path) =>
       /\.(ts|tsx)$/.test(path),
     );
     for (const path of files) {
       const text = await readFile(path, "utf8");
-      expect(text).not.toMatch(/from ["'](pg|better-sqlite3|prisma|@aws-sdk)/);
+      expect(text).not.toMatch(
+        /from ["'](better-sqlite3|prisma|googleapis|@aws-sdk)/,
+      );
       if (
         path.includes(`${join("src", "app")}`) ||
         path.includes(`${join("src", "components")}`)

@@ -1,3 +1,5 @@
+> **Persistence amendment (2026-09-30):** PostgreSQL is the only durable persistence system. All earlier Google Drive, Vercel Sandbox Drive, file-only, and no-database requirements in this historical document are superseded. The Sandbox filesystem is scratch space only.
+
 # Design: Telegram Agent on Vercel Sandbox Drive
 
 Status: Approved

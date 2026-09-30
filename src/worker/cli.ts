@@ -13,9 +13,9 @@ import { initializeLayout } from "./persistence/layout";
 import { exportData } from "./export/service";
 import { DurableErrorService } from "./errors/service";
 import { QueryService } from "./queries/service";
-import { openDriveStore } from "../shared/google-drive/controller-log";
+import { openPersistenceStore } from "../shared/postgres/controller-log";
 import { safeError } from "../shared/logger";
-import { bindDriveSession } from "./persistence/drive-sync";
+import { bindPersistenceSession } from "./persistence/database-sync";
 import { writeWorkerLog } from "./observability/worker-log";
 
 const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/tmp/telegram-agent";
@@ -108,10 +108,10 @@ async function main() {
   );
   if (request.operation !== operation) throw new Error("OPERATION_MISMATCH");
   const started = Date.now();
-  const store = openDriveStore();
+  const store = openPersistenceStore();
   let data: unknown;
   let failure: unknown;
-  await bindDriveSession(ROOT, store, async () => {
+  await bindPersistenceSession(ROOT, store, async () => {
     try {
       data =
         request.operation === "telegramTurn"

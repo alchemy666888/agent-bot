@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  GOOGLE_DRIVE_FOLDER_ID,
-  googleDriveProcessEnv,
-  readGoogleDriveConfig,
-} from "../../src/shared/google-drive/config";
+  databaseProcessEnv,
+  readDatabaseConfig,
+} from "../../src/shared/postgres/config";
 import {
   DEFAULT_SYSTEM_PROMPT,
   readDashboardConfig,
@@ -86,30 +85,21 @@ describe("entry-point configuration", () => {
       }).region,
     ).toBe("sin1");
     expect(
-      readGoogleDriveConfig({
-        GOOGLE_DRIVE_FOLDER_ID,
-        GOOGLE_CLIENT_ID: "client",
-        GOOGLE_CLIENT_SECRET: "client-value",
-        GOOGLE_REFRESH_TOKEN: "refresh-value",
-      }).GOOGLE_DRIVE_FOLDER_ID,
-    ).toBe(GOOGLE_DRIVE_FOLDER_ID);
+      readDatabaseConfig({ DATABASE_URL: "postgresql://user:pass@db.test/app" })
+        .DATABASE_URL,
+    ).toBe("postgresql://user:pass@db.test/app");
   });
 
-  it("passes Drive credentials only when they are configured", () => {
-    expect(googleDriveProcessEnv({})).toEqual({});
-    expect(() => googleDriveProcessEnv({ VERCEL: "1" })).toThrow(
-      "GOOGLE_DRIVE_CONFIGURATION_INVALID",
-    );
+  it("requires and passes the PostgreSQL connection string", () => {
+    expect(() => databaseProcessEnv({})).toThrow();
+    expect(
+      databaseProcessEnv({ DATABASE_URL: "postgres://u:p@db.test/app" }),
+    ).toEqual({ DATABASE_URL: "postgres://u:p@db.test/app" });
   });
 
-  it("rejects any Google Drive folder other than the configured one", () => {
+  it("rejects a non-PostgreSQL database URL", () => {
     expect(() =>
-      readGoogleDriveConfig({
-        GOOGLE_DRIVE_FOLDER_ID: "different-folder",
-        GOOGLE_CLIENT_ID: "client",
-        GOOGLE_CLIENT_SECRET: "client-value",
-        GOOGLE_REFRESH_TOKEN: "refresh-value",
-      }),
+      readDatabaseConfig({ DATABASE_URL: "https://db.test" }),
     ).toThrow();
   });
 });

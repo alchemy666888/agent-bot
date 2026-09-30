@@ -1,4 +1,4 @@
-export interface DriveStore {
+export interface PersistenceStore {
   listFiles(prefixes: string[]): Promise<{ relativePath: string }[]>;
   download(relativePath: string): Promise<Buffer>;
   upload(relativePath: string, body: Buffer): Promise<void>;

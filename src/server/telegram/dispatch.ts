@@ -9,7 +9,7 @@ import {
 } from "../config";
 import { ensureSandbox } from "../sandbox/controller";
 import { installWorker, invokeWorker } from "../sandbox/transport";
-import { googleDriveProcessEnv } from "../../shared/google-drive/config";
+import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
 import type { TelegramInput } from "./input";
 
@@ -49,7 +49,7 @@ export async function dispatchTelegramInput(
       DEEPSEEK_OUTPUT_PRICE_PER_MILLION: String(
         model.DEEPSEEK_OUTPUT_PRICE_PER_MILLION,
       ),
-      ...googleDriveProcessEnv(),
+      ...databaseProcessEnv(),
     },
   );
 }

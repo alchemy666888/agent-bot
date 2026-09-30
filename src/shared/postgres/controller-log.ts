@@ -1,12 +1,12 @@
 import { logStructured, type LogRecord } from "../logger";
-import { createGoogleDriveClient } from "./client";
-import { readGoogleDriveConfig } from "./config";
-import { retryDrive } from "./retry";
-import type { DriveStore } from "./store";
+import { createPostgresStore } from "./client";
+import { readDatabaseConfig } from "./config";
+import { retryPersistence } from "./retry";
+import type { PersistenceStore } from "./store";
 
 export function controllerLogPath(record: LogRecord): string {
   if (!/^[A-Za-z0-9-]+$/.test(record.correlationId))
-    throw new Error("DRIVE_PATH_REJECTED");
+    throw new Error("PERSISTENCE_PATH_REJECTED");
   const stage =
     record.stage
       .toLowerCase()
@@ -15,23 +15,23 @@ export function controllerLogPath(record: LogRecord): string {
   return `logs/controller/${record.correlationId}-${stage}.json`;
 }
 
-export function openDriveStore(
+export function openPersistenceStore(
   env: Record<string, string | undefined> = process.env,
-): DriveStore | null {
-  if (!env.GOOGLE_CLIENT_ID) return null;
-  return createGoogleDriveClient(readGoogleDriveConfig(env));
+): PersistenceStore | null {
+  if (!env.DATABASE_URL) return null;
+  return createPostgresStore(readDatabaseConfig(env).DATABASE_URL);
 }
 
-/** Creates one Drive file per controller event. Missing config does not change the HTTP result. */
+/** Creates one persistence record per controller event. Missing config does not change the HTTP result. */
 export async function persistControllerLog(
   record: LogRecord,
-  store?: DriveStore,
+  store?: PersistenceStore,
 ): Promise<void> {
   const line = logStructured(record);
-  const target = store ?? (process.env.VITEST ? null : openDriveStore());
+  const target = store ?? (process.env.VITEST ? null : openPersistenceStore());
   if (!target) return;
   try {
-    await retryDrive(() =>
+    await retryPersistence(() =>
       target.upload(controllerLogPath(record), Buffer.from(line)),
     );
   } catch (error) {

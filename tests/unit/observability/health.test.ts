@@ -20,7 +20,7 @@ describe("health route", () => {
         telegram: "degraded",
         dashboard: "degraded",
         sandbox: "degraded",
-        googleDrive: "degraded",
+        postgres: "degraded",
       },
     });
   });
@@ -37,10 +37,7 @@ describe("health route", () => {
       SESSION_SIGNING_SECRET: "signing-secret",
       APP_URL: "https://example.test",
       SANDBOX_NAME: "sandbox-name",
-      GOOGLE_DRIVE_FOLDER_ID: "1cMXhFmW-bV_JHRRv56ajhWADpM-i-3Wo",
-      GOOGLE_CLIENT_ID: "client-id",
-      GOOGLE_CLIENT_SECRET: "client-value",
-      GOOGLE_REFRESH_TOKEN: "refresh-value",
+      DATABASE_URL: "postgresql://user:pass@localhost:5432/app",
     });
     const response = GET();
     const body = JSON.stringify(await response.json());
