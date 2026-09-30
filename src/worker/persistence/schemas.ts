@@ -105,15 +105,23 @@ export const auditEventSchema = z
   })
   .strict();
 
-/** Durable events reject fields likely to contain credentials, raw input, or model/tool internals. */
+const prohibitedDurableField =
+  /first_name|last_name|authorization|cookie|secret|token|password|api.?key|reasoning|raw(update|body|response)|tool.?output/i;
+
+function containsProhibitedField(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some(containsProhibitedField);
+  return Object.entries(value).some(
+    ([key, nested]) =>
+      prohibitedDurableField.test(key) || containsProhibitedField(nested),
+  );
+}
+
+/** Durable events reject field names likely to contain credentials, raw input, or model/tool internals. */
 const safePayload = z
   .record(z.string(), z.unknown())
   .superRefine((value, ctx) => {
-    if (
-      /first_name|last_name|authorization|cookie|secret|token|password|api.?key|reasoning|raw(update|body|response)|tool.?output/i.test(
-        JSON.stringify(value),
-      )
-    )
+    if (containsProhibitedField(value))
       ctx.addIssue({ code: "custom", message: "Prohibited durable field" });
   });
 export const eventSchema = z
