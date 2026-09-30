@@ -17,6 +17,11 @@ import { openPersistenceStore } from "../shared/postgres/controller-log";
 import { safeError } from "../shared/logger";
 import { bindPersistenceSession } from "./persistence/database-sync";
 import { writeWorkerLog } from "./observability/worker-log";
+import { readDatabaseConfig } from "../shared/postgres/config";
+import {
+  createPostgresSkillRepository,
+  type PostgresSkillRepository,
+} from "./skills/postgres-repository";
 
 const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/tmp/telegram-agent";
 
@@ -40,6 +45,7 @@ const queryPayloadSchema = z
 async function telegramTurn(
   payload: Record<string, unknown>,
   correlationId: string,
+  skills?: PostgresSkillRepository,
 ) {
   const input = telegramInputSchema.parse(payload.input);
   await initializeLayout(ROOT);
@@ -65,6 +71,7 @@ async function telegramTurn(
       outputPricePerMillion: process.env.DEEPSEEK_OUTPUT_PRICE_PER_MILLION,
       thinkingEnabled: process.env.DEEPSEEK_THINKING_ENABLED !== "false",
     },
+    skills,
   );
   await turn.handle(input);
   return { terminal: true };
@@ -113,13 +120,22 @@ async function main() {
   let failureStage = "bootstrap";
   try {
     const store = openPersistenceStore();
+    const skills = process.env.DATABASE_URL
+      ? (() => {
+          const database = readDatabaseConfig();
+          return createPostgresSkillRepository(
+            database.DATABASE_URL,
+            database.AIVEN_PG_CA,
+          );
+        })()
+      : undefined;
     failureStage = "persistence-sync";
     await bindPersistenceSession(ROOT, store, async () => {
       failureStage = "operation";
       try {
         data =
           request.operation === "telegramTurn"
-            ? await telegramTurn(request.payload, request.correlationId)
+            ? await telegramTurn(request.payload, request.correlationId, skills)
             : request.operation === "export"
               ? await createExport()
               : request.operation === "query"

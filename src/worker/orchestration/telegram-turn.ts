@@ -17,6 +17,7 @@ import type { TelegramClient } from "../telegram/client";
 import type { TelegramInput } from "../../server/telegram/input";
 import { retryTransient } from "../model/retry";
 import type { UpdateState } from "../updates/state-machine";
+import type { PostgresSkillRepository } from "../skills/postgres-repository";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -73,6 +74,11 @@ export class TelegramTurn {
       }): Promise<unknown>;
     },
     private accounting?: ModelAccounting,
+    /** Installed-skill catalog is injected here rather than read from file blobs. */
+    readonly skills?: Pick<
+      PostgresSkillRepository,
+      "getById" | "getByName" | "listAvailableToTelegramUser"
+    >,
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
