@@ -145,6 +145,13 @@ describe("skill authorization security contract", () => {
       f.approval,
       installer,
     );
+    expect(skill.approval).toEqual({
+      draftId: f.draft.draftId,
+      revision: f.draft.revision,
+      contentDigest: f.draft.contentDigest,
+      approverTelegramUserId: approver,
+      approvedAt: "2026-01-02T03:04:05.000Z",
+    });
     await expect(f.service.invocationPrompt(skill, "999")).rejects.toEqual(
       denial("CONSUMER_NOT_AUTHORIZED"),
     );

@@ -3,6 +3,7 @@ export const allowedCapabilityIds = [
   "model.read",
   "telegram.reply",
   "http.fetch",
+  "network.http",
 ] as const;
 export type CapabilityId = (typeof allowedCapabilityIds)[number];
 
