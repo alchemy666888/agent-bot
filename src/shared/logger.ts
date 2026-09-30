@@ -1,4 +1,5 @@
 import { redact } from "./redaction";
+import { skillAuditEventSchema } from "../worker/persistence/schemas";
 
 export type LogResult = "success" | "failure" | "retry" | "degraded";
 
@@ -13,67 +14,32 @@ export interface LogRecord {
   metadata?: Record<string, unknown>;
 }
 
-export type SecurityAuditOperation =
-  | "skill.draft.created"
-  | "skill.approved"
-  | "skill.installed"
-  | "skill.invoked"
-  | "skill.authorization_denied"
-  | "telegram.update.replayed";
+/** Only these security fields may cross the logging boundary. */
+export interface SecurityAuditRecord {
+  correlationId: string;
+  action: string;
+  result: "success" | "denied";
+  actorTelegramUserId?: string;
+  resourceId?: string;
+  reasonCode?: string;
+}
 
-/** Security audit records deliberately accept identifiers and codes, never content or tool output. */
 export function logSecurityAudit(
-  operation: SecurityAuditOperation,
-  fields: {
-    correlationId: string;
-    actorTelegramUserId: string;
-    result: "success" | "failure";
-    code?: string;
-    skillId?: string;
-  },
+  record: SecurityAuditRecord,
   sink: (line: string) => void = console.info,
 ): string {
   return logStructured(
     {
-      correlationId: fields.correlationId,
       component: "worker",
-      operation,
-      stage: "authorization",
-      result: fields.result,
-      ...(fields.code ? { code: fields.code } : {}),
+      operation: "security-audit",
+      stage: record.action,
+      result: record.result === "success" ? "success" : "failure",
+      code: record.reasonCode,
       metadata: {
-        actorTelegramUserId: /^\d+$/.test(fields.actorTelegramUserId)
-          ? fields.actorTelegramUserId
-          : "invalid",
-        ...(fields.skillId ? { skillId: fields.skillId.slice(0, 128) } : {}),
+        actorTelegramUserId: record.actorTelegramUserId,
+        resourceId: record.resourceId,
       },
-export const securityAuditActions = [
-  "skill.draft.created",
-  "skill.approved",
-  "skill.install.denied",
-  "skill.installed",
-  "skill.invoke.denied",
-  "skill.invoked",
-  "update.replay.denied",
-] as const;
-export type SecurityAuditAction = (typeof securityAuditActions)[number];
-
-/** Security audit metadata is passed through the same mandatory redaction path. */
-export function logSecurityAudit(
-  action: SecurityAuditAction,
-  actorTelegramUserId: string,
-  result: LogResult,
-  metadata: Record<string, unknown> = {},
-  sink?: (line: string) => void,
-): string {
-  return logStructured(
-    {
-      correlationId: `audit:${crypto.randomUUID()}`,
-      component: "worker",
-      operation: "skillAuthorization",
-      stage: action,
-      result,
-      metadata: { actorTelegramUserId, ...metadata },
+      correlationId: record.correlationId,
     },
     sink,
   );
@@ -87,6 +53,18 @@ export function logStructured(
   const line = JSON.stringify(
     redact({ timestamp: new Date().toISOString(), ...record }),
   );
+  sink(line);
+  return line;
+}
+
+/** Security audit records are schema-limited before logging: content, prompts,
+ * tool output, credentials and free-form errors cannot enter the audit log. */
+export function logSkillAudit(
+  event: unknown,
+  sink: (line: string) => void = console.info,
+): string {
+  const safe = skillAuditEventSchema.parse(event);
+  const line = JSON.stringify(redact(safe));
   sink(line);
   return line;
 }
