@@ -76,4 +76,23 @@ describe("sanitized observability", () => {
       },
     });
   });
+
+  it("identifies a database DNS failure from its structured cause", () => {
+    const error = Object.assign(
+      new Error("getaddrinfo ENOTFOUND private-host"),
+      {
+        code: "ENOTFOUND",
+      },
+    );
+    expect(safeError(error, "INTERNAL_ERROR", "persistence-sync")).toEqual({
+      code: "DATABASE_HOST_NOT_FOUND",
+      classification: "permanent",
+      message: "Operation failed",
+      diagnostic: {
+        stage: "persistence-sync",
+        kind: "Error",
+        causeCode: "ENOTFOUND",
+      },
+    });
+  });
 });
