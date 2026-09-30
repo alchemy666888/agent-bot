@@ -7,6 +7,7 @@ import {
 import {
   DEFAULT_SYSTEM_PROMPT,
   readDashboardConfig,
+  readGitHubConfig,
   readModelConfig,
   readSandboxConfig,
   readTelegramConfig,
@@ -61,6 +62,46 @@ describe("entry-point configuration", () => {
       readSandboxConfig({
         SANDBOX_NAME: "fixture-sandbox",
         SANDBOX_REGION: "iad1",
+      }),
+    ).toThrow();
+  });
+
+  it("loads validated server-only GitHub connector settings", () => {
+    expect(
+      readGitHubConfig({
+        GITHUB_CONNECTOR: "github/skills-repo",
+        GITHUB_SKILLS_OWNER: "alchemy666888",
+        GITHUB_SKILLS_REPO: "skill",
+        GITHUB_SKILLS_BRANCH: "feature/skills-v2",
+        GITHUB_SKILLS_PREFIX: "skills/approved",
+        NEXT_PUBLIC_GITHUB_TOKEN: "must-not-be-returned",
+        VERCEL_OIDC_TOKEN: "must-not-be-returned",
+      }),
+    ).toEqual({
+      GITHUB_CONNECTOR: "github/skills-repo",
+      GITHUB_SKILLS_OWNER: "alchemy666888",
+      GITHUB_SKILLS_REPO: "skill",
+      GITHUB_SKILLS_BRANCH: "feature/skills-v2",
+      GITHUB_SKILLS_PREFIX: "skills/approved",
+    });
+  });
+
+  it.each([
+    { GITHUB_CONNECTOR: "gitlab/skills-repo" },
+    { GITHUB_SKILLS_OWNER: "bad owner" },
+    { GITHUB_SKILLS_REPO: "../skill" },
+    { GITHUB_SKILLS_BRANCH: "main..other" },
+    { GITHUB_SKILLS_PREFIX: "/skills" },
+    { GITHUB_SKILLS_PREFIX: "skills/../private" },
+  ])("rejects invalid GitHub settings %#", (invalid) => {
+    expect(() =>
+      readGitHubConfig({
+        GITHUB_CONNECTOR: "github/skills-repo",
+        GITHUB_SKILLS_OWNER: "alchemy666888",
+        GITHUB_SKILLS_REPO: "skill",
+        GITHUB_SKILLS_BRANCH: "main",
+        GITHUB_SKILLS_PREFIX: "skills",
+        ...invalid,
       }),
     ).toThrow();
   });
