@@ -342,9 +342,9 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   MAX_SKILL_DOCUMENT_BYTES,
   MAX_TOOL_OUTPUT_BYTES,
-  auditEventSchema,
   capabilityIdSchema,
   installedSkillSchema,
+  securityAuditEventSchema,
   skillApprovalSchema,
   skillDraftSchema,
   type AuditEvent,
@@ -353,6 +353,9 @@ import {
   type SkillApproval,
   type SkillDraft as AuthorizedSkillDraft,
 } from "../persistence/schemas";
+import { logSecurityAudit, type SecurityAuditSink } from "../../shared/logger";
+import { redact } from "../../shared/redaction";
+import type { z } from "zod";
 
 export interface SkillAuthorizationPolicy {
   /** All entries come from operator-controlled configuration, never skill text. */
@@ -376,10 +379,10 @@ export interface SkillStore {
   appendAudit(value: AuditEvent): Promise<void>;
 }
 
-export class SkillSecurityError extends Error {
+export class SkillAuthorizationError extends Error {
   constructor(readonly code: string) {
     super(code);
-    this.name = "SkillSecurityError";
+    this.name = "SkillAuthorizationError";
   }
 }
 
@@ -409,9 +412,14 @@ export function untrustedPromptDocument(
 }
 
 export class SkillService {
+  private readonly drafts = new Map<string, SkillDraft>();
+  private readonly approvals = new Map<string, SkillApproval>();
+  private readonly installed = new Map<string, InstalledSkill>();
+
   constructor(
-    private readonly store: SkillStore,
     private readonly policy: SkillAuthorizationPolicy,
+    private readonly auditSink: SecurityAuditSink = (line) =>
+      console.info(line),
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -444,8 +452,6 @@ export class SkillService {
 
   async createDraft(input: {
     draftId?: string;
-    authorTelegramUserId: string;
-    ownerTelegramUserId: string;
     content: string;
     requestedCapabilities?: readonly string[];
   }): Promise<AuthorizedSkillDraft> {
@@ -476,25 +482,23 @@ export class SkillService {
       );
     }
     const draft = skillDraftSchema.parse({
-      draftId: input.draftId ?? randomUUID(),
-      revision: 1,
-      authorTelegramUserId: input.authorTelegramUserId,
-      ownerTelegramUserId: input.ownerTelegramUserId,
+      draftId: prior?.draftId ?? input.draftId ?? randomUUID(),
+      revision: (prior?.revision ?? 0) + 1,
+      authorTelegramUserId: input.actorTelegramUserId,
       content: input.content,
-      contentDigest: skillContentDigest(input.content),
-      requestedCapabilities: capabilities,
+      contentDigest: digest(input.content),
+      requestedCapabilities: [...new Set(capabilities)],
       createdAt: this.now().toISOString(),
     });
-    await this.store.saveDraft(draft);
-    await this.audit({
-      action: "skill.draft.created",
-      result: "success",
-      actorTelegramUserId: input.authorTelegramUserId,
+    this.drafts.set(draft.draftId, draft);
+    this.audit({
+      event: "skill.draft.created",
+      actorTelegramUserId: input.actorTelegramUserId,
       draftId: draft.draftId,
       revision: draft.revision,
       contentDigest: draft.contentDigest,
     });
-    return draft;
+    return structuredClone(draft);
   }
 
   async reviseDraft(

@@ -43,10 +43,19 @@ describe("security boundaries", () => {
     }
   });
 
+  it("keeps capabilities behind the approved registry", async () => {
+    const worker = await readFile("src/worker/cli.ts", "utf8");
+    const capabilities = await readFile(
+      "src/worker/capabilities/registry.ts",
+      "utf8",
+    );
+    expect(worker).toContain("createCapabilityRegistry");
+    expect(capabilities).toContain("CAPABILITY_DENIED");
+    expect(capabilities).toContain("permitted.includes(id)");
   it("keeps capability identifiers and adapters code-owned", async () => {
     const capabilities = await readFile("src/shared/capabilities.ts", "utf8");
-    expect(capabilities).toContain("allowedCapabilityIds");
-    expect(capabilities).toContain("CapabilityAdapter");
-    expect(capabilities).not.toMatch(/eval\(|new Function/);
+    expect(capabilities).toContain("capabilityIdentifiers");
+    expect(capabilities).toContain("capabilityIdentifierSchema");
+    expect(capabilities).not.toMatch(/tool_choice|child_process|fetch\(/);
   });
 });

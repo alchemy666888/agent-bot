@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { safeErrorSchema } from "../../shared/contracts";
-import { allowedCapabilityIds } from "../../shared/capabilities";
+import { capabilityIdentifierSchema } from "../../shared/capabilities";
 
 export const MAX_SKILL_DOCUMENT_BYTES = 64 * 1024;
 export const MAX_TOOL_OUTPUT_BYTES = 32 * 1024;
@@ -21,7 +21,7 @@ export const skillRoleSchema = z.enum([
   "consumer",
 ]);
 
-export const skillDraftSchema = z
+export const skillDocumentSchema = z
   .object({
     draftId: z.uuid(),
     revision: z.number().int().positive(),
@@ -33,10 +33,15 @@ export const skillDraftSchema = z
       .array(capabilityIdSchema)
       .max(allowedCapabilityIds.length)
       .refine(
-        (items) => new Set(items).size === items.length,
-        "Duplicate capability",
+        (value) => Buffer.byteLength(value, "utf8") <= MAX_SKILL_DOCUMENT_BYTES,
+        {
+          message: "Skill document exceeds configured size limit",
+        },
       ),
-    createdAt: z.iso.datetime(),
+    requestedCapabilities: z
+      .array(capabilityIdentifierSchema)
+      .max(16)
+      .default([]),
   })
   .strict();
 
@@ -55,7 +60,10 @@ export const installedSkillSchema = z
   .object({
     skillId: z.uuid(),
     version: z.number().int().positive(),
-    draft: skillDraftSchema,
+    ownerTelegramUserId: telegramUserIdSchema,
+    document: skillDocumentSchema,
+    contentDigest: digestSchema,
+    grantedCapabilities: z.array(capabilityIdentifierSchema),
     approval: skillApprovalSchema,
     grantedCapabilities: z.array(capabilityIdSchema),
     installedByTelegramUserId: telegramUserIdSchema,
@@ -71,18 +79,10 @@ export const installedSkillSchema = z
       ctx.addIssue({ code: "custom", message: "Approval provenance mismatch" });
   });
 
-export const toolOutputSchema = z
-  .string()
-  .refine(
-    (text) => Buffer.byteLength(text, "utf8") <= MAX_TOOL_OUTPUT_BYTES,
-    "Tool output exceeds size limit",
-  );
-
-export const auditEventSchema = z
+export const securityAuditEventSchema = z
   .object({
     eventId: z.uuid(),
     occurredAt: z.iso.datetime(),
-    actorTelegramUserId: telegramUserIdSchema.optional(),
     action: z.enum([
       "skill.draft.created",
       "skill.draft.revised",
@@ -93,15 +93,40 @@ export const auditEventSchema = z
       "telegram.update.replayed",
     ]),
     result: z.enum(["success", "denied"]),
+    actorTelegramUserId: telegramUserIdSchema.optional(),
     skillId: z.uuid().optional(),
     draftId: z.uuid().optional(),
-    revision: z.number().int().positive().optional(),
-    contentDigest: digestSchema.optional(),
     reasonCode: z
       .string()
       .regex(/^[A-Z][A-Z0-9_]{0,63}$/)
       .optional(),
-    capabilities: z.array(capabilityIdSchema).optional(),
+    metadata: z.record(
+      z.string(),
+      z.union([z.string().max(256), z.number(), z.boolean()]),
+    ),
+  })
+  .strict();
+
+export const auditEventSchema = z
+  .object({
+    event: z.enum([
+      "skill.draft.created",
+      "skill.approval.granted",
+      "skill.install.allowed",
+      "skill.install.denied",
+      "skill.invoke.allowed",
+      "skill.invoke.denied",
+      "telegram.update.replayed",
+    ]),
+    actorTelegramUserId: telegramUserIdSchema.optional(),
+    draftId: z.uuid().optional(),
+    skillId: z.uuid().optional(),
+    revision: z.number().int().positive().optional(),
+    contentDigest: sha256Schema.optional(),
+    reasonCode: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]{0,63}$/)
+      .optional(),
   })
   .strict();
 
@@ -116,6 +141,42 @@ const safePayload = z
     )
       ctx.addIssue({ code: "custom", message: "Prohibited durable field" });
   });
+
+export const MAX_SKILL_DOCUMENT_BYTES = 64 * 1024;
+export const MAX_TOOL_OUTPUT_BYTES = 32 * 1024;
+
+export const approvalProvenanceSchema = z
+  .object({
+    draftId: z.uuid(),
+    revision: z.number().int().positive(),
+    contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    telegramUserId: z.string().regex(/^\d+$/),
+    approvedAt: z.iso.datetime(),
+  })
+  .strict();
+
+export const skillAuditEventSchema = z
+  .object({
+    event: z.enum([
+      "skill.draft.created",
+      "skill.approval.accepted",
+      "skill.approval.rejected",
+      "skill.install.accepted",
+      "skill.install.rejected",
+      "skill.invoke.accepted",
+      "skill.invoke.rejected",
+    ]),
+    occurredAt: z.iso.datetime(),
+    actorTelegramUserId: z.string().regex(/^\d+$/),
+    skillId: z.uuid().optional(),
+    draftId: z.uuid().optional(),
+    revision: z.number().int().positive().optional(),
+    reasonCode: z
+      .string()
+      .regex(/^[A-Z][A-Z0-9_]{0,63}$/)
+      .optional(),
+  })
+  .strict();
 export const eventSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -128,7 +189,7 @@ export const eventSchema = z
       "updates",
       "model-runs",
       "errors",
-      "skill-drafts",
+      "audit",
     ]),
     type: z.string().min(1),
     occurredAt: z.iso.datetime(),
