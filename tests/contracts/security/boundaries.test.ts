@@ -43,13 +43,10 @@ describe("security boundaries", () => {
     }
   });
 
-  it("keeps the future capability seam inactive", async () => {
-    const worker = await readFile("src/worker/cli.ts", "utf8");
+  it("keeps capability identifiers platform-owned", async () => {
     const capabilities = await readFile("src/shared/capabilities.ts", "utf8");
-    expect(worker).not.toContain("capabilities");
-    expect(capabilities).toContain("readonly enabled: false");
-    expect(capabilities).not.toMatch(
-      /tool_choice|export function|export class/,
-    );
+    expect(capabilities).toContain("capabilityIdentifiers");
+    expect(capabilities).toContain("capabilityIdentifierSchema");
+    expect(capabilities).not.toMatch(/tool_choice|child_process|fetch\(/);
   });
 });

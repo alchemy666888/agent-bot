@@ -13,6 +13,37 @@ export interface LogRecord {
   metadata?: Record<string, unknown>;
 }
 
+/** Only these security fields may cross the logging boundary. */
+export interface SecurityAuditRecord {
+  correlationId: string;
+  action: string;
+  result: "success" | "denied";
+  actorTelegramUserId?: string;
+  resourceId?: string;
+  reasonCode?: string;
+}
+
+export function logSecurityAudit(
+  record: SecurityAuditRecord,
+  sink: (line: string) => void = console.info,
+): string {
+  return logStructured(
+    {
+      component: "worker",
+      operation: "security-audit",
+      stage: record.action,
+      result: record.result === "success" ? "success" : "failure",
+      code: record.reasonCode,
+      metadata: {
+        actorTelegramUserId: record.actorTelegramUserId,
+        resourceId: record.resourceId,
+      },
+      correlationId: record.correlationId,
+    },
+    sink,
+  );
+}
+
 /** Emits one sanitized JSON object. Callers must pass metadata, never raw bodies. */
 export function logStructured(
   record: LogRecord,
