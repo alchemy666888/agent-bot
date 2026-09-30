@@ -10,7 +10,7 @@ import type {
   Message,
   UserProfile,
 } from "../conversations/service";
-import { commandReply } from "../commands";
+import { handleCommand, type InstalledSkill } from "../commands";
 import { LockCoordinator } from "../locks/coordinator";
 import { UpdateRepository } from "../updates/repository";
 import type { TelegramClient } from "../telegram/client";
@@ -74,6 +74,7 @@ export class TelegramTurn {
       }): Promise<unknown>;
     },
     private accounting?: ModelAccounting,
+    private skills: readonly InstalledSkill[] = [],
     private skillAuthoring?: Pick<
       SkillAuthoringService,
       "shouldHandle" | "handle"
@@ -114,7 +115,9 @@ export class TelegramTurn {
         languageCode: input.languageCode,
         at,
       });
-      const deterministic = commandReply(input.text);
+      const command = handleCommand(input.text, this.skills, input.userId);
+      const deterministic =
+        command?.kind === "reply" ? command.text : undefined;
       if (input.text === "/new")
         await this.conversations.newConversation(input.userId);
       let requestMessageId: string | null = null;
@@ -161,7 +164,30 @@ export class TelegramTurn {
               generated = await retryTransient(
                 async () =>
                   this.model.generate(
-                    await this.conversations.context(input.userId, this.prompt),
+                    command?.kind === "invoke"
+                      ? {
+                          messages: [
+                            {
+                              role: "system" as const,
+                              content: [
+                                this.prompt,
+                                `Explicitly selected skill: ${command.invocation.skill.displayName} (${command.invocation.skill.name}), version ${command.invocation.skill.version}.`,
+                                `Purpose: ${command.invocation.skill.purpose}`,
+                                `Supported tasks: ${command.invocation.skill.supportedTasks?.join("; ") || "not specified"}.`,
+                                `Operating constraints: ${command.invocation.skill.operatingConstraints || "none specified"}.`,
+                                "Follow these skill constraints and address only the explicit request below.",
+                              ].join("\n"),
+                            },
+                            {
+                              role: "user" as const,
+                              content: command.invocation.request,
+                            },
+                          ],
+                        }
+                      : await this.conversations.context(
+                          input.userId,
+                          this.prompt,
+                        ),
                   ),
                 isTransient,
               );
