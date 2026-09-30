@@ -1,4 +1,6 @@
 import { redact } from "./redaction";
+import type { z } from "zod";
+import type { securityAuditEventSchema } from "../worker/persistence/schemas";
 
 export type LogResult = "success" | "failure" | "retry" | "degraded";
 
@@ -11,6 +13,25 @@ export interface LogRecord {
   durationMs?: number;
   code?: string;
   metadata?: Record<string, unknown>;
+}
+
+export type SecurityAuditEvent = z.infer<typeof securityAuditEventSchema>;
+export type SecurityAuditSink = (line: string) => void;
+
+/** Security audit records use a fixed schema and the same recursive redaction as logs. */
+export function logSecurityAudit(
+  event: SecurityAuditEvent,
+  sink: SecurityAuditSink = console.info,
+): string {
+  const line = JSON.stringify(
+    redact({
+      timestamp: new Date().toISOString(),
+      component: "security-audit",
+      ...event,
+    }),
+  );
+  sink(line);
+  return line;
 }
 
 /** Emits one sanitized JSON object. Callers must pass metadata, never raw bodies. */
