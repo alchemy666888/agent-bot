@@ -1,10 +1,30 @@
-import type { ModelRequest, ModelResponse } from "./contracts";
+import { z } from "zod";
 
-/** Reserved extension seam. No capability is registered or executable in this release. */
-export interface FutureCapabilityBoundary {
-  readonly enabled: false;
-  afterModel(
-    request: Readonly<ModelRequest>,
-    response: Readonly<ModelResponse>,
-  ): Promise<ModelResponse>;
+/** Capability names are platform-owned. Skill documents can request, but never define, them. */
+export const capabilityIdentifiers = [
+  "model.generate",
+  "telegram.send",
+  "network.http",
+  "filesystem.read",
+  "filesystem.write",
+  "sandbox.execute",
+] as const;
+
+export const capabilityIdentifierSchema = z.enum(capabilityIdentifiers);
+export type CapabilityIdentifier = z.infer<typeof capabilityIdentifierSchema>;
+
+export const sensitiveCapabilities = new Set<CapabilityIdentifier>([
+  "telegram.send",
+  "network.http",
+  "filesystem.read",
+  "filesystem.write",
+  "sandbox.execute",
+]);
+
+export function parseCapabilities(
+  value: readonly string[],
+): CapabilityIdentifier[] {
+  return [
+    ...new Set(value.map((item) => capabilityIdentifierSchema.parse(item))),
+  ];
 }

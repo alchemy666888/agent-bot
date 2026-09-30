@@ -10,13 +10,14 @@ import type {
   Message,
   UserProfile,
 } from "../conversations/service";
-import { commandReply } from "../commands";
+import { handleCommand, type InstalledSkill } from "../commands";
 import { LockCoordinator } from "../locks/coordinator";
 import { UpdateRepository } from "../updates/repository";
 import type { TelegramClient } from "../telegram/client";
 import type { TelegramInput } from "../../server/telegram/input";
 import { retryTransient } from "../model/retry";
 import type { UpdateState } from "../updates/state-machine";
+import type { SkillResolver } from "../skills/resolver";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -73,6 +74,7 @@ export class TelegramTurn {
       }): Promise<unknown>;
     },
     private accounting?: ModelAccounting,
+    private skills?: SkillResolver,
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -88,6 +90,8 @@ export class TelegramTurn {
     }
     await this.locks.withUser(input.userId, async () => {
       const existing = await this.updates.get(input.updateId);
+      if (existing?.telegramUserId && existing.telegramUserId !== input.userId)
+        throw new Error("UPDATE_ACTOR_MISMATCH");
       if (
         existing?.stage === "delivery_complete" ||
         existing?.stage === "failed"
@@ -97,6 +101,7 @@ export class TelegramTurn {
       if (!existing)
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
+          telegramUserId: input.userId,
           stage: "received",
           updatedAt: at,
         });
@@ -106,7 +111,9 @@ export class TelegramTurn {
         languageCode: input.languageCode,
         at,
       });
-      const deterministic = commandReply(input.text);
+      const command = handleCommand(input.text, this.skills, input.userId);
+      const deterministic =
+        command?.kind === "reply" ? command.text : undefined;
       if (input.text === "/new")
         await this.conversations.newConversation(input.userId);
       let requestMessageId: string | null = null;
@@ -120,6 +127,7 @@ export class TelegramTurn {
         requestMessageId = userMessage.id;
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
+          telegramUserId: input.userId,
           stage: "prompt_saved",
           updatedAt: at,
         });
@@ -136,19 +144,40 @@ export class TelegramTurn {
         if (!answer) {
           let generated: ModelResponse | undefined;
           let latencyMs = 0;
+          let resolution: ReturnType<SkillResolver["resolve"]> | undefined;
           try {
             if (deterministic) answer = deterministic;
             else {
-              const started = Date.now();
-              generated = await retryTransient(
-                async () =>
-                  this.model.generate(
-                    await this.conversations.context(input.userId, this.prompt),
-                  ),
-                isTransient,
-              );
-              latencyMs = Date.now() - started;
-              answer = generated.content;
+              resolution = this.skills?.resolve(input.text);
+              if (resolution?.kind === "ambiguous") {
+                answer = `I found multiple relevant skills (${resolution.skillIds.join(", ")}). Please choose one with /skill <id>.`;
+              } else if (
+                resolution?.kind === "selected" &&
+                resolution.skill.prohibitedActions.some((restriction) =>
+                  input.text.toLowerCase().includes(restriction.toLowerCase()),
+                )
+              ) {
+                answer =
+                  "I can't perform that action because the selected skill prohibits it.";
+              } else {
+                const started = Date.now();
+                const context = await this.conversations.context(
+                  input.userId,
+                  this.prompt,
+                );
+                generated = await retryTransient(
+                  async () =>
+                    this.model.generate({
+                      ...context,
+                      ...(resolution?.kind === "selected"
+                        ? { skill: resolution.skill }
+                        : {}),
+                    }),
+                  isTransient,
+                );
+                latencyMs = Date.now() - started;
+                answer = generated.content;
+              }
             }
           } catch (error) {
             await this.observability?.recordFailure({
@@ -163,6 +192,7 @@ export class TelegramTurn {
             );
             await this.checkpoint(input.userId, {
               updateId: input.updateId,
+              telegramUserId: input.userId,
               stage: "failed",
               updatedAt: new Date().toISOString(),
             });
@@ -204,10 +234,22 @@ export class TelegramTurn {
                     ).estimatedCost
                   : null,
               latencyMs,
+              skillId:
+                resolution?.kind === "selected" ? resolution.skill.id : null,
+              skillVersion:
+                resolution?.kind === "selected"
+                  ? resolution.skill.version
+                  : null,
+              permittedCapabilities:
+                resolution?.kind === "selected"
+                  ? resolution.skill.capabilities.map((item) => item.id)
+                  : [],
+              capabilityAudit: generated.capabilityAudit ?? [],
               createdAt: new Date().toISOString(),
             });
           await this.checkpoint(input.userId, {
             updateId: input.updateId,
+            telegramUserId: input.userId,
             stage: "model_complete",
             assistantId: assistant.id,
             updatedAt: new Date().toISOString(),
@@ -231,6 +273,7 @@ export class TelegramTurn {
         }
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
+          telegramUserId: input.userId,
           stage: "delivery_complete",
           updatedAt: new Date().toISOString(),
         });

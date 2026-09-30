@@ -46,6 +46,18 @@ export function logStructured(
   return line;
 }
 
+/** Security audit records are schema-limited before logging: content, prompts,
+ * tool output, credentials and free-form errors cannot enter the audit log. */
+export function logSkillAudit(
+  event: unknown,
+  sink: (line: string) => void = console.info,
+): string {
+  const safe = skillAuditEventSchema.parse(event);
+  const line = JSON.stringify(redact(safe));
+  sink(line);
+  return line;
+}
+
 export function safeError(
   error: unknown,
   fallbackCode = "INTERNAL_ERROR",
@@ -115,4 +127,46 @@ export function safeError(
         }
       : {}),
   };
+}
+
+export type SecurityAuditAction =
+  | "skill.draft.created"
+  | "skill.draft.revised"
+  | "skill.approved"
+  | "skill.installed"
+  | "skill.invoked"
+  | "skill.authorization_denied"
+  | "telegram.update.replayed";
+
+/** Security audit records use fixed actions/codes and pass through the same redactor. */
+export function logSecurityAudit(
+  event: {
+    correlationId: string;
+    action: SecurityAuditAction;
+    result: "success" | "denied";
+    actorTelegramUserId?: string;
+    code?: string;
+    metadata?: Record<string, unknown>;
+  },
+  sink: (line: string) => void = console.info,
+): string {
+  return logStructured(
+    {
+      correlationId: event.correlationId,
+      component: "worker",
+      operation: event.action,
+      stage: "authorization",
+      result: event.result === "success" ? "success" : "failure",
+      ...(event.code && /^[A-Z][A-Z0-9_]{0,63}$/.test(event.code)
+        ? { code: event.code }
+        : {}),
+      metadata: {
+        ...(event.actorTelegramUserId
+          ? { actorTelegramUserId: event.actorTelegramUserId }
+          : {}),
+        ...event.metadata,
+      },
+    },
+    sink,
+  );
 }
