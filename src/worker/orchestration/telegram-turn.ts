@@ -93,6 +93,8 @@ export class TelegramTurn {
     }
     await this.locks.withUser(input.userId, async () => {
       const existing = await this.updates.get(input.updateId);
+      if (existing?.telegramUserId && existing.telegramUserId !== input.userId)
+        throw new Error("UPDATE_ACTOR_MISMATCH");
       if (
         existing?.stage === "delivery_complete" ||
         existing?.stage === "failed"
@@ -102,6 +104,7 @@ export class TelegramTurn {
       if (!existing)
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
+          telegramUserId: input.userId,
           stage: "received",
           updatedAt: at,
         });
@@ -125,6 +128,7 @@ export class TelegramTurn {
         requestMessageId = userMessage.id;
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
+          telegramUserId: input.userId,
           stage: "prompt_saved",
           updatedAt: at,
         });
@@ -177,6 +181,7 @@ export class TelegramTurn {
             );
             await this.checkpoint(input.userId, {
               updateId: input.updateId,
+              telegramUserId: input.userId,
               stage: "failed",
               updatedAt: new Date().toISOString(),
             });
@@ -222,6 +227,7 @@ export class TelegramTurn {
             });
           await this.checkpoint(input.userId, {
             updateId: input.updateId,
+            telegramUserId: input.userId,
             stage: "model_complete",
             assistantId: assistant.id,
             updatedAt: new Date().toISOString(),
@@ -245,6 +251,7 @@ export class TelegramTurn {
         }
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
+          telegramUserId: input.userId,
           stage: "delivery_complete",
           updatedAt: new Date().toISOString(),
         });
