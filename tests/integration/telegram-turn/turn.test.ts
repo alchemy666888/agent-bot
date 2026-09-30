@@ -6,6 +6,8 @@ import { TelegramTurn } from "../../../src/worker/orchestration/telegram-turn";
 import { LockCoordinator } from "../../../src/worker/locks/coordinator";
 import { UpdateRepository } from "../../../src/worker/updates/repository";
 import { ConversationService } from "../../../src/worker/conversations/service";
+import { CapabilityRegistry } from "../../../src/worker/capabilities/registry";
+import { SkillResolver } from "../../../src/worker/skills/resolver";
 let root = "";
 afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true });
@@ -63,6 +65,48 @@ describe("Telegram turn", () => {
       text: "/help",
     });
     expect(model.generate).not.toHaveBeenCalled();
+  });
+
+  it("enforces a selected skill's prohibited actions before generation", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const model = { generate: vi.fn() };
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    const skills = new SkillResolver(new CapabilityRegistry(), [
+      {
+        id: "safe-files",
+        version: "1",
+        instructions: "Help with files.",
+        triggers: { keywords: ["files"], minimumConfidence: 1 },
+        tools: [],
+        prohibitedActions: ["delete files"],
+      },
+    ]);
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      model,
+      telegram,
+      "system",
+      undefined,
+      undefined,
+      skills,
+    ).handle({
+      kind: "text",
+      updateId: "7",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "delete files",
+    });
+    expect(model.generate).not.toHaveBeenCalled();
+    expect(telegram.send).toHaveBeenCalledWith(
+      "3",
+      expect.stringContaining("prohibits"),
+    );
   });
 
   it("resumes prompt-saved and model-complete checkpoints", async () => {
