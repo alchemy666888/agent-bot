@@ -23,6 +23,7 @@ const commandFailureCodes: ReadonlyArray<[RegExp, string]> = [
     "DATABASE_TLS_FAILED",
   ],
   [/ECONNREFUSED/, "DATABASE_CONNECTION_REFUSED"],
+  [/ENETUNREACH/, "DATABASE_NETWORK_UNREACHABLE"],
   [/ENOTFOUND|getaddrinfo/i, "DATABASE_HOST_NOT_FOUND"],
   [
     /ETIMEDOUT|connection terminated|timeout expired/i,
