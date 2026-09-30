@@ -91,6 +91,10 @@ describe("private worker transport", () => {
       "DATABASE_CONNECTION_REFUSED",
     ],
     [
+      "Error: connect ENETUNREACH 2001:db8::1:5432",
+      "DATABASE_NETWORK_UNREACHABLE",
+    ],
+    [
       'error: password authentication failed for user "telegram"',
       "DATABASE_AUTHENTICATION_FAILED",
     ],

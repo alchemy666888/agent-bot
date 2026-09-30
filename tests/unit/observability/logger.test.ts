@@ -60,4 +60,20 @@ describe("sanitized observability", () => {
     });
     expect(JSON.stringify(safeError(error))).not.toContain("secret");
   });
+
+  it("identifies an unreachable database network from its structured cause", () => {
+    const error = Object.assign(new Error("connect ENETUNREACH private-host"), {
+      code: "ENETUNREACH",
+    });
+    expect(safeError(error, "INTERNAL_ERROR", "persistence-sync")).toEqual({
+      code: "DATABASE_NETWORK_UNREACHABLE",
+      classification: "permanent",
+      message: "Operation failed",
+      diagnostic: {
+        stage: "persistence-sync",
+        kind: "Error",
+        causeCode: "ENETUNREACH",
+      },
+    });
+  });
 });

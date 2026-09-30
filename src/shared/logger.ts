@@ -54,7 +54,12 @@ export function safeError(
       ? error.name
       : "UnknownError";
   const candidate = error instanceof Error ? error.message : fallbackCode;
-  const code = /^[A-Z][A-Z0-9_]*$/.test(candidate) ? candidate : fallbackCode;
+  const code =
+    stage === "persistence-sync" && causeCode === "ENETUNREACH"
+      ? "DATABASE_NETWORK_UNREACHABLE"
+      : /^[A-Z][A-Z0-9_]*$/.test(candidate)
+        ? candidate
+        : fallbackCode;
   const transient =
     status === 408 ||
     status === 409 ||

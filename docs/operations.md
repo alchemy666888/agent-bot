@@ -28,3 +28,10 @@ authentication, while `operation` plus status `401` points to a model or
 Telegram credential. If the code remains `INTERNAL_ERROR`, report the complete
 `metadata` object and correlation ID; unlike the raw exception, those fields are
 designed to be shared safely.
+
+`persistence-sync` plus `causeCode: ENETUNREACH` is reported as
+`DATABASE_NETWORK_UNREACHABLE`. It means the Sandbox has no route to the address
+returned by the database hostname. This commonly occurs when `DATABASE_URL`
+uses an IPv6-only direct database endpoint. Replace it with the provider's
+IPv4-compatible pooled or session-pooler connection string, redeploy, and send a
+new Telegram message. Do not remove provider-required SSL query parameters.
