@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DeepSeekProvider } from "../../../../src/worker/model/deepseek";
 import { retryTransient } from "../../../../src/worker/model/retry";
 import { calculateCost } from "../../../../src/worker/model/usage";
+import { CapabilityRegistry } from "../../../../src/worker/capabilities/registry";
 describe("model adapter", () => {
   it("sends exact settings and returns final content only", async () => {
     const fetcher = vi.fn(async (...args: unknown[]) => {
@@ -45,8 +46,6 @@ describe("model adapter", () => {
       model: "deepseek-v4-pro",
       stream: false,
       reasoning: { effort: "medium" },
-      tools: [{ type: "web_search" }],
-      tool_choice: "auto",
       instructions: "be helpful",
       input: [{ role: "user", content: "hi" }],
     });
@@ -68,4 +67,53 @@ describe("model adapter", () => {
     expect(
       calculateCost(1_000_000, 500_000, "1.25", "2.00").estimatedCost,
     ).toBe("2.250000"));
+
+  it("rejects malformed tool calls", async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: "function_call",
+                name: "lookup",
+                call_id: "1",
+                arguments: "{",
+              },
+            ],
+          }),
+        ),
+    );
+    await expect(
+      new DeepSeekProvider(
+        { apiKey: "x", baseUrl: "https://example.test", thinking: false },
+        fetcher as typeof fetch,
+      ).generate({ messages: [{ role: "user", content: "x" }] }),
+    ).rejects.toThrow("MALFORMED_TOOL_CALL");
+  });
+
+  it("denies tool calls not declared by the resolved skill", async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: "function_call",
+                name: "lookup",
+                call_id: "1",
+                arguments: "{}",
+              },
+            ],
+          }),
+        ),
+    );
+    await expect(
+      new DeepSeekProvider(
+        { apiKey: "x", baseUrl: "https://example.test", thinking: false },
+        fetcher as typeof fetch,
+        new CapabilityRegistry(),
+      ).generate({ messages: [{ role: "user", content: "x" }] }),
+    ).rejects.toThrow("CAPABILITY_DENIED");
+  });
 });

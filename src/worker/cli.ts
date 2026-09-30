@@ -17,6 +17,8 @@ import { openPersistenceStore } from "../shared/postgres/controller-log";
 import { safeError } from "../shared/logger";
 import { bindPersistenceSession } from "./persistence/database-sync";
 import { writeWorkerLog } from "./observability/worker-log";
+import { createCapabilityRegistry } from "./capabilities";
+import { SkillResolver, type InstalledSkill } from "./skills/resolver";
 
 const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/tmp/telegram-agent";
 
@@ -45,15 +47,26 @@ async function telegramTurn(
   await initializeLayout(ROOT);
   const locks = new LockCoordinator(ROOT);
   const errors = new DurableErrorService(ROOT, locks);
+  const capabilities = createCapabilityRegistry();
+  const skills = new SkillResolver(
+    capabilities,
+    process.env.INSTALLED_SKILLS_JSON
+      ? (JSON.parse(process.env.INSTALLED_SKILLS_JSON) as InstalledSkill[])
+      : [],
+  );
   const turn = new TelegramTurn(
     locks,
     new UpdateRepository(ROOT),
     new DurableConversationService(ROOT, locks),
-    new DeepSeekProvider({
-      apiKey: requiredEnv("DEEPSEEK_API_KEY"),
-      baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
-      thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
-    }),
+    new DeepSeekProvider(
+      {
+        apiKey: requiredEnv("DEEPSEEK_API_KEY"),
+        baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
+        thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
+      },
+      fetch,
+      capabilities,
+    ),
     new TelegramClient(requiredEnv("TELEGRAM_BOT_TOKEN")),
     requiredEnv("ASSISTANT_SYSTEM_PROMPT"),
     {
@@ -65,6 +78,7 @@ async function telegramTurn(
       outputPricePerMillion: process.env.DEEPSEEK_OUTPUT_PRICE_PER_MILLION,
       thinkingEnabled: process.env.DEEPSEEK_THINKING_ENABLED !== "false",
     },
+    skills,
   );
   await turn.handle(input);
   return { terminal: true };

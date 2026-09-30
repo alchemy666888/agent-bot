@@ -17,6 +17,7 @@ import type { TelegramClient } from "../telegram/client";
 import type { TelegramInput } from "../../server/telegram/input";
 import { retryTransient } from "../model/retry";
 import type { UpdateState } from "../updates/state-machine";
+import type { SkillResolver } from "../skills/resolver";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -73,6 +74,7 @@ export class TelegramTurn {
       }): Promise<unknown>;
     },
     private accounting?: ModelAccounting,
+    private skills?: SkillResolver,
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -136,19 +138,40 @@ export class TelegramTurn {
         if (!answer) {
           let generated: ModelResponse | undefined;
           let latencyMs = 0;
+          let resolution: ReturnType<SkillResolver["resolve"]> | undefined;
           try {
             if (deterministic) answer = deterministic;
             else {
-              const started = Date.now();
-              generated = await retryTransient(
-                async () =>
-                  this.model.generate(
-                    await this.conversations.context(input.userId, this.prompt),
-                  ),
-                isTransient,
-              );
-              latencyMs = Date.now() - started;
-              answer = generated.content;
+              resolution = this.skills?.resolve(input.text);
+              if (resolution?.kind === "ambiguous") {
+                answer = `I found multiple relevant skills (${resolution.skillIds.join(", ")}). Please choose one with /skill <id>.`;
+              } else if (
+                resolution?.kind === "selected" &&
+                resolution.skill.prohibitedActions.some((restriction) =>
+                  input.text.toLowerCase().includes(restriction.toLowerCase()),
+                )
+              ) {
+                answer =
+                  "I can't perform that action because the selected skill prohibits it.";
+              } else {
+                const started = Date.now();
+                const context = await this.conversations.context(
+                  input.userId,
+                  this.prompt,
+                );
+                generated = await retryTransient(
+                  async () =>
+                    this.model.generate({
+                      ...context,
+                      ...(resolution?.kind === "selected"
+                        ? { skill: resolution.skill }
+                        : {}),
+                    }),
+                  isTransient,
+                );
+                latencyMs = Date.now() - started;
+                answer = generated.content;
+              }
             }
           } catch (error) {
             await this.observability?.recordFailure({
@@ -204,6 +227,17 @@ export class TelegramTurn {
                     ).estimatedCost
                   : null,
               latencyMs,
+              skillId:
+                resolution?.kind === "selected" ? resolution.skill.id : null,
+              skillVersion:
+                resolution?.kind === "selected"
+                  ? resolution.skill.version
+                  : null,
+              permittedCapabilities:
+                resolution?.kind === "selected"
+                  ? resolution.skill.capabilities.map((item) => item.id)
+                  : [],
+              capabilityAudit: generated.capabilityAudit ?? [],
               createdAt: new Date().toISOString(),
             });
           await this.checkpoint(input.userId, {
