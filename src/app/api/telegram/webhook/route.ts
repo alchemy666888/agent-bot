@@ -32,6 +32,15 @@ export async function POST(request: Request) {
     const response = await dispatchTelegramInput(input, correlationId);
     if (!response.ok) {
       const retryable = response.error?.classification === "transient";
+      await persistControllerLog({
+        correlationId,
+        component: "controller",
+        operation: "telegramWebhook",
+        stage: "worker",
+        result: "failure",
+        durationMs: Date.now() - started,
+        code: response.error?.code ?? "WORKER_FAILED",
+      });
       return NextResponse.json(
         { ok: false },
         {
