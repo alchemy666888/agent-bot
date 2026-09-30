@@ -46,12 +46,67 @@ const sandboxSchema = z.object({
   VERCEL_OIDC_TOKEN: requiredString.optional(),
 });
 
+const githubName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/);
+const gitBranch = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .refine(
+    (value) =>
+      !value.startsWith("-") &&
+      !value.startsWith("/") &&
+      !value.endsWith("/") &&
+      !value.endsWith(".") &&
+      !value.includes("..") &&
+      !value.includes("//") &&
+      !/[~^:?*[\\\]\s]/.test(value) &&
+      !value.includes("@{") &&
+      !value.endsWith(".lock"),
+    "Invalid Git branch name",
+  );
+const repositoryPrefix = z
+  .string()
+  .trim()
+  .max(1024)
+  .refine(
+    (value) =>
+      value === "" ||
+      (!value.startsWith("/") &&
+        !value.endsWith("/") &&
+        value
+          .split("/")
+          .every(
+            (segment) => segment !== "" && segment !== "." && segment !== "..",
+          )),
+    "Prefix must be a normalized repository-relative path",
+  )
+  .optional()
+  .transform((value) => value || undefined);
+
+const githubSchema = z.object({
+  GITHUB_CONNECTOR: z
+    .string()
+    .trim()
+    .regex(/^github\/[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/),
+  GITHUB_SKILLS_OWNER: githubName,
+  GITHUB_SKILLS_REPO: githubName,
+  GITHUB_SKILLS_BRANCH: gitBranch,
+  GITHUB_SKILLS_PREFIX: repositoryPrefix,
+});
+
 export type ModelConfig = z.infer<typeof modelSchema>;
 export type TelegramConfig = z.infer<typeof telegramSchema>;
 export type DashboardConfig = z.infer<typeof dashboardSchema>;
 export type SandboxConfig = z.infer<typeof sandboxSchema> & {
   region: typeof SANDBOX_REGION;
 };
+export type GitHubConfig = z.output<typeof githubSchema>;
 
 export function readModelConfig(
   env: Record<string, string | undefined> = process.env,
@@ -75,4 +130,11 @@ export function readSandboxConfig(
   env: Record<string, string | undefined> = process.env,
 ): SandboxConfig {
   return { ...sandboxSchema.parse(env), region: SANDBOX_REGION };
+}
+
+/** Server-only GitHub Connect settings; this module must never be imported by a client component. */
+export function readGitHubConfig(
+  env: Record<string, string | undefined> = process.env,
+): GitHubConfig {
+  return githubSchema.parse(env);
 }
