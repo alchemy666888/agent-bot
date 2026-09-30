@@ -11,5 +11,9 @@ session-pooler endpoint, use the provider's IPv4-compatible pooled endpoint for
 network with `ENETUNREACH`; changing application credentials, SSL options, or
 Vercel function regions does not make that endpoint reachable. Preserve any SSL
 query parameters supplied by the database provider when copying the pooled URL.
+The application normalizes the legacy `sslmode=require`, `prefer`, and
+`verify-ca` aliases to `sslmode=verify-full`, retaining node-postgres's strict
+certificate and hostname verification while avoiding its migration warning.
+URLs that explicitly set `uselibpqcompat=true` are left unchanged.
 
 Deploy with `pnpm build`, check `GET /api/health`, and register the Telegram webhook last. Health validates the connection-string format without opening a connection or exposing credentials.

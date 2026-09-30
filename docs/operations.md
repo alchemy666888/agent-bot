@@ -35,3 +35,8 @@ returned by the database hostname. This commonly occurs when `DATABASE_URL`
 uses an IPv6-only direct database endpoint. Replace it with the provider's
 IPv4-compatible pooled or session-pooler connection string, redeploy, and send a
 new Telegram message. Do not remove provider-required SSL query parameters.
+
+`persistence-sync` plus `causeCode: ENOTFOUND` is reported as
+`DATABASE_HOST_NOT_FOUND`. Database DNS failures are retried before the request
+fails. If the error persists, copy the hostname from the provider console into
+`DATABASE_URL`, without quotes or whitespace, and redeploy.
