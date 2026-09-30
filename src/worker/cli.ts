@@ -17,6 +17,13 @@ import { openPersistenceStore } from "../shared/postgres/controller-log";
 import { safeError } from "../shared/logger";
 import { bindPersistenceSession } from "./persistence/database-sync";
 import { writeWorkerLog } from "./observability/worker-log";
+import { readDatabaseConfig } from "../shared/postgres/config";
+import {
+  createPostgresSkillRepository,
+  type PostgresSkillRepository,
+} from "./skills/postgres-repository";
+import { DurableSkillDraftRepository } from "./skills/repository";
+import { SkillAuthoringService } from "./skills/service";
 
 const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/tmp/telegram-agent";
 
@@ -40,20 +47,53 @@ const queryPayloadSchema = z
 async function telegramTurn(
   payload: Record<string, unknown>,
   correlationId: string,
+  skills?: PostgresSkillRepository,
 ) {
   const input = telegramInputSchema.parse(payload.input);
   await initializeLayout(ROOT);
   const locks = new LockCoordinator(ROOT);
   const errors = new DurableErrorService(ROOT, locks);
+  const model = new DeepSeekProvider({
+    apiKey: requiredEnv("DEEPSEEK_API_KEY"),
+    baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
+    thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
+  });
+  const skillAuthoring = new SkillAuthoringService(
+    ROOT,
+    new DurableSkillDraftRepository(ROOT, locks),
+    {
+      async generateSkillDraft(draft, revisionFeedback) {
+        const response = await model.generate({
+          messages: [
+            {
+              role: "system",
+              content:
+                "Write a concise, production-ready SKILL.md. Return only the file content with YAML frontmatter containing only name and description. Use imperative instructions.",
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                skillName: draft.skillName,
+                intendedTasksDomain: draft.intendedTasksDomain,
+                mustDo: draft.mustDo,
+                mustNotDo: draft.mustNotDo,
+                betterToDo: draft.betterToDo,
+                requiredToolsFunctions: draft.requiredToolsFunctions,
+                priorDraft: draft.draftContent,
+                revisionFeedback,
+              }),
+            },
+          ],
+        });
+        return response.content;
+      },
+    },
+  );
   const turn = new TelegramTurn(
     locks,
     new UpdateRepository(ROOT),
     new DurableConversationService(ROOT, locks),
-    new DeepSeekProvider({
-      apiKey: requiredEnv("DEEPSEEK_API_KEY"),
-      baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
-      thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
-    }),
+    model,
     new TelegramClient(requiredEnv("TELEGRAM_BOT_TOKEN")),
     requiredEnv("ASSISTANT_SYSTEM_PROMPT"),
     {
@@ -65,6 +105,8 @@ async function telegramTurn(
       outputPricePerMillion: process.env.DEEPSEEK_OUTPUT_PRICE_PER_MILLION,
       thinkingEnabled: process.env.DEEPSEEK_THINKING_ENABLED !== "false",
     },
+    skills,
+    skillAuthoring,
   );
   await turn.handle(input);
   return { terminal: true };
@@ -113,13 +155,22 @@ async function main() {
   let failureStage = "bootstrap";
   try {
     const store = openPersistenceStore();
+    const skills = process.env.DATABASE_URL
+      ? (() => {
+          const database = readDatabaseConfig();
+          return createPostgresSkillRepository(
+            database.DATABASE_URL,
+            database.AIVEN_PG_CA,
+          );
+        })()
+      : undefined;
     failureStage = "persistence-sync";
     await bindPersistenceSession(ROOT, store, async () => {
       failureStage = "operation";
       try {
         data =
           request.operation === "telegramTurn"
-            ? await telegramTurn(request.payload, request.correlationId)
+            ? await telegramTurn(request.payload, request.correlationId, skills)
             : request.operation === "export"
               ? await createExport()
               : request.operation === "query"
