@@ -9,6 +9,7 @@ export const updateStages = [
 export const updateStateSchema = z
   .object({
     updateId: z.string().regex(/^\d+$/),
+    telegramUserId: z.string().regex(/^\d+$/).optional(),
     stage: z.enum(updateStages),
     promptId: z.string().optional(),
     assistantId: z.string().optional(),
@@ -21,12 +22,15 @@ export function advanceUpdate(
   current: UpdateState,
   next: UpdateState,
 ): UpdateState {
-  if (current.stage === "delivery_complete" || current.stage === "failed")
-    return current;
   if (
     current.updateId !== next.updateId ||
-    (rank.get(next.stage) ?? -1) < (rank.get(current.stage) ?? 0)
+    (current.telegramUserId !== undefined &&
+      current.telegramUserId !== next.telegramUserId)
   )
+    throw new Error("INVALID_UPDATE_TRANSITION");
+  if (current.stage === "delivery_complete" || current.stage === "failed")
+    return current;
+  if ((rank.get(next.stage) ?? -1) < (rank.get(current.stage) ?? 0))
     throw new Error("INVALID_UPDATE_TRANSITION");
   return updateStateSchema.parse(next);
 }
