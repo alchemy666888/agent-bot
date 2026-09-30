@@ -110,9 +110,12 @@ async function main() {
   const started = Date.now();
   let data: unknown;
   let failure: unknown;
+  let failureStage = "bootstrap";
   try {
     const store = openPersistenceStore();
+    failureStage = "persistence-sync";
     await bindPersistenceSession(ROOT, store, async () => {
+      failureStage = "operation";
       try {
         data =
           request.operation === "telegramTurn"
@@ -127,6 +130,7 @@ async function main() {
       } catch (error) {
         failure = error;
       }
+      if (!failure) failureStage = "worker-log";
       try {
         await writeWorkerLog(
           ROOT,
@@ -155,7 +159,7 @@ async function main() {
           contractVersion: 1,
           correlationId: request.correlationId,
           ok: false,
-          error: safeError(failure),
+          error: safeError(failure, "INTERNAL_ERROR", failureStage),
         }
       : {
           contractVersion: 1,

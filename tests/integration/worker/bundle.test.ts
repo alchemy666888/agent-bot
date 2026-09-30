@@ -82,6 +82,10 @@ describe("worker bundle", () => {
           code: "WORKER_CONFIGURATION_INVALID",
           classification: "permanent",
           message: "Operation failed",
+          diagnostic: {
+            stage: "operation",
+            kind: "Error",
+          },
         },
       });
     } finally {

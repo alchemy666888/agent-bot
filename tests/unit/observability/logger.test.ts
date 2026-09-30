@@ -41,4 +41,23 @@ describe("sanitized observability", () => {
       message: "Operation failed",
     });
   });
+
+  it("reports allowlisted diagnostics without including exception messages", () => {
+    const error = Object.assign(
+      new TypeError("postgres://user:secret@example.test/private"),
+      { code: "ECONNRESET", status: 503 },
+    );
+    expect(safeError(error, "INTERNAL_ERROR", "persistence-sync")).toEqual({
+      code: "INTERNAL_ERROR",
+      classification: "transient",
+      message: "Temporary operation failure",
+      diagnostic: {
+        stage: "persistence-sync",
+        kind: "TypeError",
+        causeCode: "ECONNRESET",
+        status: 503,
+      },
+    });
+    expect(JSON.stringify(safeError(error))).not.toContain("secret");
+  });
 });

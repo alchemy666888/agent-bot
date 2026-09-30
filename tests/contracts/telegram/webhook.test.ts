@@ -95,6 +95,11 @@ describe("Telegram webhook", () => {
         code: "WORKER_CONFIGURATION_INVALID",
         classification: "permanent",
         message: "Operation failed",
+        diagnostic: {
+          stage: "operation",
+          kind: "TypeError",
+          causeCode: "ERR_INVALID_ARG_TYPE",
+        },
       },
     });
     const response = await POST(request({ update_id: 2, edited_message: {} }));

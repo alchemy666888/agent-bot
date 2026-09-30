@@ -40,6 +40,9 @@ export async function POST(request: Request) {
         result: "failure",
         durationMs: Date.now() - started,
         code: response.error?.code ?? "WORKER_FAILED",
+        ...(response.error?.diagnostic
+          ? { metadata: response.error.diagnostic }
+          : {}),
       });
       return NextResponse.json(
         { ok: false },
