@@ -42,7 +42,6 @@ const queryPayloadSchema = z
 async function telegramTurn(
   payload: Record<string, unknown>,
   correlationId: string,
-  skills?: PostgresSkillRepository,
 ) {
   const input = telegramInputSchema.parse(payload.input);
   await initializeLayout(ROOT);
@@ -128,22 +127,13 @@ async function main() {
   let failureStage = "bootstrap";
   try {
     const store = openPersistenceStore();
-    const skills = process.env.DATABASE_URL
-      ? (() => {
-          const database = readDatabaseConfig();
-          return createPostgresSkillRepository(
-            database.DATABASE_URL,
-            database.AIVEN_PG_CA,
-          );
-        })()
-      : undefined;
     failureStage = "persistence-sync";
     await bindPersistenceSession(ROOT, store, async () => {
       failureStage = "operation";
       try {
         data =
           request.operation === "telegramTurn"
-            ? await telegramTurn(request.payload, request.correlationId, skills)
+            ? await telegramTurn(request.payload, request.correlationId)
             : request.operation === "export"
               ? await createExport()
               : request.operation === "query"

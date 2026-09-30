@@ -1,6 +1,4 @@
 import { redact } from "./redaction";
-import type { z } from "zod";
-import type { securityAuditEventSchema } from "../worker/persistence/schemas";
 
 export type LogResult = "success" | "failure" | "retry" | "degraded";
 export interface LogRecord {
@@ -58,8 +56,6 @@ export function logSecurityAudit(
     },
     sink,
   );
-  sink(line);
-  return line;
 }
 
 /** Emits one bounded, redacted JSON object. Callers must never pass raw bodies. */
@@ -70,18 +66,6 @@ export function logStructured(
   const line = JSON.stringify(
     redact({ timestamp: new Date().toISOString(), ...record }),
   );
-  sink(line);
-  return line;
-}
-
-/** Security audit records are schema-limited before logging: content, prompts,
- * tool output, credentials and free-form errors cannot enter the audit log. */
-export function logSkillAudit(
-  event: unknown,
-  sink: (line: string) => void = console.info,
-): string {
-  const safe = skillAuditEventSchema.parse(event);
-  const line = JSON.stringify(redact(safe));
   sink(line);
   return line;
 }

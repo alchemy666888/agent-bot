@@ -10,7 +10,7 @@ import type {
   Message,
   UserProfile,
 } from "../conversations/service";
-import { handleCommand, type InstalledSkill } from "../commands";
+import { handleCommand } from "../commands";
 import { LockCoordinator } from "../locks/coordinator";
 import { UpdateRepository } from "../updates/repository";
 import type { TelegramClient } from "../telegram/client";
@@ -111,7 +111,7 @@ export class TelegramTurn {
         languageCode: input.languageCode,
         at,
       });
-      const command = handleCommand(input.text, this.skills, input.userId);
+      const command = handleCommand(input.text, undefined, input.userId);
       const deterministic =
         command?.kind === "reply" ? command.text : undefined;
       if (input.text === "/new")

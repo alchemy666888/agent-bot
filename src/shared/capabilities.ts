@@ -5,22 +5,14 @@ export const allowedCapabilityIds = [
   "http.fetch",
   "network.http",
 ] as const;
+export type CapabilityId = (typeof allowedCapabilityIds)[number];
 
-export const capabilityIdentifierSchema = z.enum(capabilityIdentifiers);
-export type CapabilityIdentifier = z.infer<typeof capabilityIdentifierSchema>;
+export function isCapabilityId(value: string): value is CapabilityId {
+  return (allowedCapabilityIds as readonly string[]).includes(value);
+}
 
-export const sensitiveCapabilities = new Set<CapabilityIdentifier>([
-  "telegram.send",
-  "network.http",
-  "filesystem.read",
-  "filesystem.write",
-  "sandbox.execute",
-]);
-
-export function parseCapabilities(
-  value: readonly string[],
-): CapabilityIdentifier[] {
-  return [
-    ...new Set(value.map((item) => capabilityIdentifierSchema.parse(item))),
-  ];
+/** Adapters remain outside skill content and must be registered by the operator. */
+export interface CapabilityAdapter {
+  readonly id: CapabilityId;
+  invoke(input: unknown): Promise<unknown>;
 }
