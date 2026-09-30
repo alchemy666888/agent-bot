@@ -51,7 +51,8 @@ export const skillApprovalSchema = z
   })
   .strict();
 
-export const installedSkillSchema = z
+/** Durable approval/install record; adapt this to ExecutableSkill before execution. */
+export const installedSkillRecordSchema = z
   .object({
     skillId: z.uuid(),
     version: z.number().int().positive(),
@@ -149,6 +150,6 @@ export const eventSchema = z
 export type DurableEvent = z.infer<typeof eventSchema>;
 export type SkillDraft = z.infer<typeof skillDraftSchema>;
 export type SkillApproval = z.infer<typeof skillApprovalSchema>;
-export type InstalledSkill = z.infer<typeof installedSkillSchema>;
+export type InstalledSkillRecord = z.infer<typeof installedSkillRecordSchema>;
 export type CapabilityId = z.infer<typeof capabilityIdSchema>;
 export type AuditEvent = z.infer<typeof auditEventSchema>;

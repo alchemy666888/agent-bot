@@ -1,7 +1,9 @@
 import type { SkillContext } from "../../shared/contracts";
 import { CapabilityRegistry } from "../capabilities/registry";
+import type { ExecutableSkill } from "./schemas";
 
-export interface InstalledSkill {
+/** @deprecated Prefer ExecutableSkill. This compatibility shape is adapted at the boundary. */
+export interface LegacyInstalledSkill {
   id: string;
   version: string;
   instructions: string;
@@ -13,6 +15,7 @@ export interface InstalledSkill {
   tools: string[];
   prohibitedActions?: string[];
 }
+export type InstalledSkill = ExecutableSkill | LegacyInstalledSkill;
 export type SkillResolution =
   | { kind: "selected"; source: "explicit" | "automatic"; skill: SkillContext }
   | { kind: "ambiguous"; skillIds: string[] }
@@ -28,9 +31,12 @@ export class SkillResolver {
   }
   install(skill: InstalledSkill) {
     this.capabilities.requests(skill.tools); // installation-time allowlist validation
+    const version = "commitSha" in skill ? skill.commitSha : skill.version;
     if (
       this.skills.some(
-        (item) => item.id === skill.id && item.version === skill.version,
+        (item) =>
+          item.id === skill.id &&
+          ("commitSha" in item ? item.commitSha : item.version) === version,
       )
     )
       throw new Error("SKILL_ALREADY_INSTALLED");
@@ -94,7 +100,7 @@ export class SkillResolver {
     // Re-check the allowlist at execution time; a stale/uninstalled capability cannot run.
     return {
       id: skill.id,
-      version: skill.version,
+      version: "commitSha" in skill ? skill.commitSha : skill.version,
       instructions: skill.instructions,
       capabilities: this.capabilities.requests(skill.tools),
       prohibitedActions: skill.prohibitedActions ?? [],

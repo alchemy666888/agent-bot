@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 const safeIdentifier = z.string().trim().min(1).max(200);
+const telegramUserIdSchema = z.string().regex(/^\d+$/);
+const gitCommitShaSchema = z.string().regex(/^[a-f0-9]{40}$/i);
 
 export const skillTriggerSchema = z
   .object({
@@ -40,7 +42,7 @@ export const installedSkillStatusSchema = z.enum([
   "superseded",
 ]);
 
-export const installedSkillSchema = approvedSkillDraftSchema.extend({
+export const approvedSkillVersionSchema = approvedSkillDraftSchema.extend({
   versionId: z.uuid(),
   status: installedSkillStatusSchema,
   createdAt: z.iso.datetime(),
@@ -48,8 +50,62 @@ export const installedSkillSchema = approvedSkillDraftSchema.extend({
 });
 
 export type ApprovedSkillDraft = z.input<typeof approvedSkillDraftSchema>;
-export type InstalledSkill = z.output<typeof installedSkillSchema>;
-export type InstalledSkillStatus = z.infer<typeof installedSkillStatusSchema>;
+export type ApprovedSkillVersion = z.output<typeof approvedSkillVersionSchema>;
+export type ApprovedSkillVersionStatus = z.infer<
+  typeof installedSkillStatusSchema
+>;
+
+/** Repository manifest for an executable skill. `id` is immutable; `name` is not identity. */
+export const skillManifestSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: z.uuid(),
+    name: z.string().trim().min(1).max(120),
+    description: z.string().trim().max(2_000).optional(),
+    revision: z.number().int().positive().optional(),
+    visibility: z.enum(["private", "shared", "public"]),
+    ownerTelegramUserIds: z.array(telegramUserIdSchema).min(1),
+    allowedTelegramUserIds: z.array(telegramUserIdSchema).default([]),
+    triggers: z
+      .object({
+        phrases: z.array(safeIdentifier).max(100).default([]),
+        keywords: z.array(safeIdentifier).max(100).default([]),
+        minimumConfidence: z.number().min(0).max(1),
+      })
+      .strict(),
+    tools: z.array(safeIdentifier).max(100).default([]),
+    prohibitedActions: z.array(safeIdentifier).max(100).default([]),
+    status: z.enum(["active", "retired"]).default("active"),
+  })
+  .strict();
+
+export const skillMarkdownSchema = z
+  .string()
+  .min(1)
+  .max(1_000_000)
+  .refine((value) => value.trim().length > 0, "SKILL.md must not be blank");
+
+/** The single execution-time contract shared by repositories and the resolver. */
+export const executableSkillSchema = z
+  .object({
+    id: z.uuid(),
+    name: z.string().trim().min(1).max(120),
+    description: z.string().trim().max(2_000).optional(),
+    commitSha: gitCommitShaSchema,
+    manifestRevision: z.number().int().positive().optional(),
+    instructions: skillMarkdownSchema,
+    visibility: z.enum(["private", "shared", "public"]),
+    ownerTelegramUserIds: z.array(telegramUserIdSchema).min(1),
+    allowedTelegramUserIds: z.array(telegramUserIdSchema),
+    triggers: skillManifestSchema.shape.triggers,
+    tools: z.array(safeIdentifier).max(100),
+    prohibitedActions: z.array(safeIdentifier).max(100),
+    status: z.enum(["active", "retired"]),
+  })
+  .strict();
+
+export type SkillManifest = z.infer<typeof skillManifestSchema>;
+export type ExecutableSkill = z.infer<typeof executableSkillSchema>;
 
 export function normalizeSkillName(name: string): string {
   return name.trim().normalize("NFKC").toLocaleLowerCase("en-US");

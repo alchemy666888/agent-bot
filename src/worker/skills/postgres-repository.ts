@@ -3,10 +3,10 @@ import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { postgresPoolConfig } from "../../shared/postgres/client";
 import {
   approvedSkillDraftSchema,
-  installedSkillSchema,
+  approvedSkillVersionSchema,
   normalizeSkillName,
   type ApprovedSkillDraft,
-  type InstalledSkill,
+  type ApprovedSkillVersion,
 } from "./schemas";
 
 type Queryable = {
@@ -122,7 +122,7 @@ export class PostgresSkillRepository {
 
   async installApprovedDraft(
     input: ApprovedSkillDraft,
-  ): Promise<InstalledSkill> {
+  ): Promise<ApprovedSkillVersion> {
     const draft = approvedSkillDraftSchema.parse(input);
     await this.initialize();
     const client = await this.pool.connect();
@@ -196,33 +196,33 @@ export class PostgresSkillRepository {
   }
 
   /** Alias useful to callers that already establish approval in their service layer. */
-  install(input: ApprovedSkillDraft): Promise<InstalledSkill> {
+  install(input: ApprovedSkillDraft): Promise<ApprovedSkillVersion> {
     return this.installApprovedDraft(input);
   }
 
-  async getById(stableId: string): Promise<InstalledSkill | null> {
+  async getById(stableId: string): Promise<ApprovedSkillVersion | null> {
     await this.initialize();
     return this.findCurrent("s.id=$1", [stableId]);
   }
 
-  async getByName(name: string): Promise<InstalledSkill | null> {
+  async getByName(name: string): Promise<ApprovedSkillVersion | null> {
     await this.initialize();
     return this.findCurrent("s.normalized_name=$1", [normalizeSkillName(name)]);
   }
 
-  async get(stableIdOrName: string): Promise<InstalledSkill | null> {
+  async get(stableIdOrName: string): Promise<ApprovedSkillVersion | null> {
     const byId = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(stableIdOrName);
     return byId ? this.getById(stableIdOrName) : this.getByName(stableIdOrName);
   }
 
-  async listInstalled(): Promise<InstalledSkill[]> {
+  async listInstalled(): Promise<ApprovedSkillVersion[]> {
     await this.initialize();
     return this.listQuery("v.status='active'", []);
   }
 
   async listAvailableToTelegramUser(
     telegramUserId: string,
-  ): Promise<InstalledSkill[]> {
+  ): Promise<ApprovedSkillVersion[]> {
     if (!/^\d+$/.test(telegramUserId))
       throw new Error("INVALID_TELEGRAM_USER_ID");
     await this.initialize();
@@ -232,11 +232,13 @@ export class PostgresSkillRepository {
     );
   }
 
-  async retireVersion(versionId: string): Promise<InstalledSkill | null> {
+  async retireVersion(versionId: string): Promise<ApprovedSkillVersion | null> {
     return this.setStatus(versionId, "retired");
   }
 
-  async supersedeVersion(versionId: string): Promise<InstalledSkill | null> {
+  async supersedeVersion(
+    versionId: string,
+  ): Promise<ApprovedSkillVersion | null> {
     return this.setStatus(versionId, "superseded");
   }
 
@@ -252,7 +254,8 @@ export class PostgresSkillRepository {
   private async insertMetadata(
     client: Queryable,
     versionId: string,
-    draft: InstalledSkill | ReturnType<typeof approvedSkillDraftSchema.parse>,
+    draft:
+      ApprovedSkillVersion | ReturnType<typeof approvedSkillDraftSchema.parse>,
   ) {
     for (const owner of new Set(draft.ownerTelegramUserIds))
       await client.query("INSERT INTO skill_owners VALUES ($1,$2)", [
@@ -317,9 +320,9 @@ export class PostgresSkillRepository {
     ).rows;
   }
 
-  private parseRow(row: VersionRow): InstalledSkill {
+  private parseRow(row: VersionRow): ApprovedSkillVersion {
     const document = approvedSkillDraftSchema.parse(row.approved_document);
-    return installedSkillSchema.parse({
+    return approvedSkillVersionSchema.parse({
       ...document,
       stableId: row.stable_id,
       draftId: row.draft_id,
