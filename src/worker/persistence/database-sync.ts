@@ -7,16 +7,16 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { assertDriveRelativePath } from "../../shared/google-drive/paths";
-import { retryDrive } from "../../shared/google-drive/retry";
-import type { DriveStore } from "../../shared/google-drive/store";
+import { assertPersistencePath } from "../../shared/postgres/paths";
+import { retryPersistence } from "../../shared/postgres/retry";
+import type { PersistenceStore } from "../../shared/postgres/store";
 import { withCommitHook } from "./commit";
 
-const DIRTY = "runtime/drive-dirty";
+const DIRTY = "runtime/persistence-dirty";
 
-export async function bindDriveSession<T>(
+export async function bindPersistenceSession<T>(
   root: string,
-  store: DriveStore | null,
+  store: PersistenceStore | null,
   action: () => Promise<T>,
 ): Promise<T> {
   if (!store) return action();
@@ -40,14 +40,14 @@ export async function bindDriveSession<T>(
 
 export async function syncScratch(
   root: string,
-  store: DriveStore,
+  store: PersistenceStore,
 ): Promise<void> {
   if (await exists(join(root, "data", "manifest.json"))) {
     await flushDirtyScratch(root, store);
     return;
   }
   for (const file of await store.listFiles(["data/", "logs/worker/"])) {
-    assertDriveRelativePath(file.relativePath);
+    assertPersistencePath(file.relativePath);
     const destination = join(root, file.relativePath);
     await mkdir(dirname(destination), { recursive: true });
     await writeFile(destination, await store.download(file.relativePath), {
@@ -59,29 +59,29 @@ export async function syncScratch(
 export async function uploadCommitted(
   root: string,
   absolutePath: string,
-  store: DriveStore,
+  store: PersistenceStore,
 ): Promise<void> {
-  const relativePath = relativeDrivePath(root, absolutePath);
+  const relativePath = relativePersistencePath(root, absolutePath);
   if (!relativePath) return;
-  assertDriveRelativePath(relativePath);
+  assertPersistencePath(relativePath);
   const body = await readFile(absolutePath);
-  await retryDrive(() => store.upload(relativePath, body));
+  await retryPersistence(() => store.upload(relativePath, body));
 }
 
 export async function deleteCommitted(
   root: string,
   absolutePath: string,
-  store: DriveStore,
+  store: PersistenceStore,
 ): Promise<void> {
-  const relativePath = relativeDrivePath(root, absolutePath);
+  const relativePath = relativePersistencePath(root, absolutePath);
   if (!relativePath) return;
-  assertDriveRelativePath(relativePath);
-  await retryDrive(() => store.delete(relativePath));
+  assertPersistencePath(relativePath);
+  await retryPersistence(() => store.delete(relativePath));
 }
 
 async function flushDirtyScratch(
   root: string,
-  store: DriveStore,
+  store: PersistenceStore,
 ): Promise<void> {
   if (!(await exists(join(root, DIRTY)))) return;
   await uploadTree(root, join(root, "data"), store);
@@ -92,7 +92,7 @@ async function flushDirtyScratch(
 async function uploadTree(
   root: string,
   directory: string,
-  store: DriveStore,
+  store: PersistenceStore,
 ): Promise<void> {
   let entries: string[];
   try {
@@ -115,7 +115,10 @@ async function markDirty(root: string): Promise<void> {
   await writeFile(path, "1", { mode: 0o600 });
 }
 
-function relativeDrivePath(root: string, absolutePath: string): string | null {
+function relativePersistencePath(
+  root: string,
+  absolutePath: string,
+): string | null {
   const relativePath = relative(root, absolutePath).split("\\").join("/");
   if (
     !relativePath ||

@@ -12,7 +12,7 @@ import {
   invokeWorker,
   streamSandboxFile,
 } from "../sandbox/transport";
-import { googleDriveProcessEnv } from "../../shared/google-drive/config";
+import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
 
 const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
@@ -83,7 +83,7 @@ export async function prepareExport(
       operation: "export",
       payload: {},
     },
-    googleDriveProcessEnv(),
+    databaseProcessEnv(),
   );
   if (!response.ok) throw new Error("EXPORT_FAILED");
   const exported = exportSchema.parse(response.data);

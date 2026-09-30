@@ -2,7 +2,7 @@ import "server-only";
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { googleDriveProcessEnv } from "../../shared/google-drive/config";
+import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
 import { readSandboxConfig } from "../config";
 import { ensureSandbox } from "../sandbox/controller";
@@ -31,7 +31,7 @@ export async function loadDashboard(
       operation: "query",
       payload: { view, ...payload, ...(id ? { id } : {}) },
     },
-    googleDriveProcessEnv(),
+    databaseProcessEnv(),
   );
   if (!response.ok || !response.data) throw new Error("DASHBOARD_QUERY_FAILED");
   return response.data;

@@ -2,10 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
-export {
-  GOOGLE_DRIVE_FOLDER_ID,
-  readGoogleDriveConfig,
-} from "../../shared/google-drive/config";
+export { readDatabaseConfig } from "../../shared/postgres/config";
 
 export const SANDBOX_REGION = "sin1" as const;
 export const DEFAULT_SYSTEM_PROMPT =

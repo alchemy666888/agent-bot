@@ -1,14 +1,14 @@
 import { mkdir, open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { logStructured, type LogRecord } from "../../shared/logger";
-import type { DriveStore } from "../../shared/google-drive/store";
+import type { PersistenceStore } from "../../shared/postgres/store";
 import { LockCoordinator } from "../locks/coordinator";
 import { notifyCommit } from "../persistence/commit";
 
 export async function writeWorkerLog(
   root: string,
   record: LogRecord,
-  store: DriveStore | null,
+  store: PersistenceStore | null,
 ): Promise<void> {
   const line = logStructured(record);
   if (!store) return;
