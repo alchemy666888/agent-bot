@@ -16,4 +16,10 @@ The application normalizes the legacy `sslmode=require`, `prefer`, and
 certificate and hostname verification while avoiding its migration warning.
 URLs that explicitly set `uselibpqcompat=true` are left unchanged.
 
+For Aiven, copy the complete CA certificate (including the `BEGIN CERTIFICATE`
+and `END CERTIFICATE` lines) into the multiline `AIVEN_PG_CA` Vercel environment
+variable. When it is set, the application passes that CA directly to
+node-postgres with certificate verification enabled and removes URL-based SSL
+options before creating the pool so they cannot override the trusted CA.
+
 Deploy with `pnpm build`, check `GET /api/health`, and register the Telegram webhook last. Health validates the connection-string format without opening a connection or exposing credentials.

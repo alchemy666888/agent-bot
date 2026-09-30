@@ -19,7 +19,8 @@ export function openPersistenceStore(
   env: Record<string, string | undefined> = process.env,
 ): PersistenceStore | null {
   if (!env.DATABASE_URL) return null;
-  return createPostgresStore(readDatabaseConfig(env).DATABASE_URL);
+  const config = readDatabaseConfig(env);
+  return createPostgresStore(config.DATABASE_URL, config.AIVEN_PG_CA);
 }
 
 /** Creates one persistence record per controller event. Missing config does not change the HTTP result. */

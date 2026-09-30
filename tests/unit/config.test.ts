@@ -97,6 +97,20 @@ describe("entry-point configuration", () => {
     ).toEqual({ DATABASE_URL: "postgres://u:p@db.test/app" });
   });
 
+  it("passes a multiline Aiven CA certificate to the worker", () => {
+    const certificate =
+      "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----";
+    expect(
+      databaseProcessEnv({
+        DATABASE_URL: "postgres://u:p@db.test/app?sslmode=require",
+        AIVEN_PG_CA: certificate,
+      }),
+    ).toEqual({
+      DATABASE_URL: "postgres://u:p@db.test/app?sslmode=verify-full",
+      AIVEN_PG_CA: certificate,
+    });
+  });
+
   it.each(["prefer", "require", "verify-ca"])(
     "makes the legacy %s SSL mode explicitly strict",
     (sslmode) => {

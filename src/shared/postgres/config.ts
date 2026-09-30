@@ -6,6 +6,7 @@ const databaseSchema = z.object({
     .trim()
     .pipe(z.url({ protocol: /^postgres(ql)?$/ }))
     .transform(normalizePostgresUrl),
+  AIVEN_PG_CA: z.string().trim().min(1).optional(),
 });
 
 /**
