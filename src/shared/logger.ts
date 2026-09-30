@@ -28,12 +28,31 @@ export function logStructured(
 export function safeError(
   error: unknown,
   fallbackCode = "INTERNAL_ERROR",
+  stage?: string,
 ): {
   code: string;
   classification: "transient" | "permanent" | "internal";
   message: string;
+  diagnostic?: {
+    stage: string;
+    kind: string;
+    causeCode?: string;
+    status?: number;
+  };
 } {
   const status = (error as { status?: unknown })?.status;
+  const rawCauseCode =
+    (error as { code?: unknown })?.code ??
+    (error as { cause?: { code?: unknown } })?.cause?.code;
+  const causeCode =
+    typeof rawCauseCode === "string" &&
+    /^[A-Za-z0-9_.-]{1,64}$/.test(rawCauseCode)
+      ? rawCauseCode
+      : undefined;
+  const kind =
+    error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name)
+      ? error.name
+      : "UnknownError";
   const candidate = error instanceof Error ? error.message : fallbackCode;
   const code = /^[A-Z][A-Z0-9_]*$/.test(candidate) ? candidate : fallbackCode;
   const transient =
@@ -54,5 +73,17 @@ export function safeError(
         ? "permanent"
         : "internal",
     message: transient ? "Temporary operation failure" : "Operation failed",
+    ...(stage
+      ? {
+          diagnostic: {
+            stage,
+            kind,
+            ...(causeCode ? { causeCode } : {}),
+            ...(typeof status === "number" && status >= 100 && status <= 599
+              ? { status }
+              : {}),
+          },
+        }
+      : {}),
   };
 }

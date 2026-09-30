@@ -26,6 +26,18 @@ export const safeErrorSchema = z
       "internal",
     ]),
     message: z.string().max(256),
+    diagnostic: z
+      .object({
+        stage: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+        kind: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,63}$/),
+        causeCode: z
+          .string()
+          .regex(/^[A-Za-z0-9_.-]{1,64}$/)
+          .optional(),
+        status: z.number().int().min(100).max(599).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export const workerResponseSchema = z

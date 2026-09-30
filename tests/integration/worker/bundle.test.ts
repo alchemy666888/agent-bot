@@ -42,4 +42,54 @@ describe("worker bundle", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("returns a safe structured response when an operation fails", async () => {
+    await exec("pnpm", ["worker:build"]);
+    const root = await mkdtemp(join(tmpdir(), "worker-bundle-"));
+    const correlationId = uuidV7();
+    const requestPath = join(root, "request.json");
+    const responsePath = join(root, "response.json");
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        contractVersion: 1,
+        correlationId,
+        operation: "telegramTurn",
+        payload: { input: { kind: "ignored", updateId: "1" } },
+      }),
+    );
+    const env = { ...process.env };
+    for (const name of [
+      "DATABASE_URL",
+      "TELEGRAM_BOT_TOKEN",
+      "DEEPSEEK_API_KEY",
+      "DEEPSEEK_BASE_URL",
+      "DEEPSEEK_THINKING_ENABLED",
+      "ASSISTANT_SYSTEM_PROMPT",
+    ])
+      delete env[name];
+    try {
+      await exec(
+        process.execPath,
+        ["dist/worker.mjs", "telegramTurn", requestPath, responsePath],
+        { env },
+      );
+      expect(JSON.parse(await readFile(responsePath, "utf8"))).toEqual({
+        contractVersion: 1,
+        correlationId,
+        ok: false,
+        error: {
+          code: "WORKER_CONFIGURATION_INVALID",
+          classification: "permanent",
+          message: "Operation failed",
+          diagnostic: {
+            stage: "operation",
+            kind: "Error",
+          },
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
