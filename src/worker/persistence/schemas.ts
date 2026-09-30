@@ -4,12 +4,16 @@ import { safeErrorSchema } from "../../shared/contracts";
 const safePayload = z
   .record(z.string(), z.unknown())
   .superRefine((value, ctx) => {
-    const serialized = JSON.stringify(value);
-    if (
-      /first_name|last_name|authorization|cookie|secret|token|reasoning|raw(update|body|response)/i.test(
-        serialized,
-      )
-    )
+    const prohibited =
+      /first_name|last_name|authorization|cookie|secret|token|reasoning|raw(update|body|response)/i;
+    const hasProhibitedKey = (candidate: unknown): boolean => {
+      if (Array.isArray(candidate)) return candidate.some(hasProhibitedKey);
+      if (!candidate || typeof candidate !== "object") return false;
+      return Object.entries(candidate).some(
+        ([key, nested]) => prohibited.test(key) || hasProhibitedKey(nested),
+      );
+    };
+    if (hasProhibitedKey(value))
       ctx.addIssue({ code: "custom", message: "Prohibited durable field" });
   });
 export const eventSchema = z
@@ -24,6 +28,7 @@ export const eventSchema = z
       "updates",
       "model-runs",
       "errors",
+      "skill-drafts",
     ]),
     type: z.string().min(1),
     occurredAt: z.iso.datetime(),

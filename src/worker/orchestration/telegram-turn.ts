@@ -17,6 +17,7 @@ import type { TelegramClient } from "../telegram/client";
 import type { TelegramInput } from "../../server/telegram/input";
 import { retryTransient } from "../model/retry";
 import type { UpdateState } from "../updates/state-machine";
+import type { SkillAuthoringService } from "../skills/service";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -73,6 +74,10 @@ export class TelegramTurn {
       }): Promise<unknown>;
     },
     private accounting?: ModelAccounting,
+    private skillAuthoring?: Pick<
+      SkillAuthoringService,
+      "shouldHandle" | "handle"
+    >,
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -138,7 +143,16 @@ export class TelegramTurn {
           let latencyMs = 0;
           try {
             if (deterministic) answer = deterministic;
-            else {
+            else if (
+              this.skillAuthoring &&
+              (await this.skillAuthoring.shouldHandle(input.userId, input.text))
+            ) {
+              answer = await this.skillAuthoring.handle(
+                input.userId,
+                input.text,
+                input.updateId,
+              );
+            } else {
               const started = Date.now();
               generated = await retryTransient(
                 async () =>
