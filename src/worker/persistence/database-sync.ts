@@ -46,13 +46,18 @@ export async function syncScratch(
     await flushDirtyScratch(root, store);
     return;
   }
-  for (const file of await store.listFiles(["data/", "logs/worker/"])) {
+  const files = await retryPersistence(() =>
+    store.listFiles(["data/", "logs/worker/"]),
+  );
+  for (const file of files) {
     assertPersistencePath(file.relativePath);
     const destination = join(root, file.relativePath);
     await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, await store.download(file.relativePath), {
-      mode: 0o600,
-    });
+    await writeFile(
+      destination,
+      await retryPersistence(() => store.download(file.relativePath)),
+      { mode: 0o600 },
+    );
   }
 }
 

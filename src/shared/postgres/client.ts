@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { Pool, type PoolConfig } from "pg";
 import { assertPersistencePath } from "./paths";
 import type { PersistenceStore } from "./store";
 
@@ -6,10 +6,32 @@ const TABLE = "telegram_agent_files";
 
 export function createPostgresStore(
   connectionString: string,
+  certificateAuthority?: string,
 ): PersistenceStore {
   return new PostgresStore(
-    new Pool({ connectionString, max: 3, allowExitOnIdle: true }),
+    new Pool(postgresPoolConfig(connectionString, certificateAuthority)),
   );
+}
+
+/** Builds a TLS configuration without allowing URL SSL options to replace the CA. */
+export function postgresPoolConfig(
+  connectionString: string,
+  certificateAuthority?: string,
+): PoolConfig {
+  if (!certificateAuthority)
+    return { connectionString, max: 3, allowExitOnIdle: true };
+
+  const url = new URL(connectionString);
+  // node-postgres replaces an explicit `ssl` object when SSL query parameters
+  // are also present, which would silently discard the Aiven CA.
+  for (const parameter of ["sslmode", "sslcert", "sslkey", "sslrootcert"])
+    url.searchParams.delete(parameter);
+  return {
+    connectionString: url.toString(),
+    max: 3,
+    allowExitOnIdle: true,
+    ssl: { ca: certificateAuthority, rejectUnauthorized: true },
+  };
 }
 
 class PostgresStore implements PersistenceStore {

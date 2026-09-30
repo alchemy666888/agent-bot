@@ -5,8 +5,21 @@ export function persistenceStatus(error: unknown): number | undefined {
 
 export function isTransientPersistenceError(error: unknown): boolean {
   const status = persistenceStatus(error);
+  const code =
+    (error as { code?: unknown })?.code ??
+    (error as { cause?: { code?: unknown } })?.cause?.code;
   return (
-    status === 408 || status === 429 || (status !== undefined && status >= 500)
+    status === 408 ||
+    status === 429 ||
+    (status !== undefined && status >= 500) ||
+    (typeof code === "string" &&
+      [
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "ENETUNREACH",
+        "ENOTFOUND",
+        "ETIMEDOUT",
+      ].includes(code))
   );
 }
 
@@ -20,7 +33,7 @@ export async function retryPersistence<T>(
     } catch (error) {
       last = error;
       if (!isTransientPersistenceError(error) || attempt === 2) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+      await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
     }
   }
   throw last;

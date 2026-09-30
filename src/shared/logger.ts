@@ -55,8 +55,11 @@ export function safeError(
       : "UnknownError";
   const candidate = error instanceof Error ? error.message : fallbackCode;
   const code =
-    stage === "persistence-sync" && causeCode === "ENETUNREACH"
-      ? "DATABASE_NETWORK_UNREACHABLE"
+    stage === "persistence-sync" &&
+    ["ENETUNREACH", "ENOTFOUND"].includes(causeCode ?? "")
+      ? causeCode === "ENOTFOUND"
+        ? "DATABASE_HOST_NOT_FOUND"
+        : "DATABASE_NETWORK_UNREACHABLE"
       : /^[A-Z][A-Z0-9_]*$/.test(candidate)
         ? candidate
         : fallbackCode;
