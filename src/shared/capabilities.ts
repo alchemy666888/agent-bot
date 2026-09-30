@@ -1,18 +1,30 @@
 import { z } from "zod";
 
-/** The complete vocabulary understood by the worker. Skill prose is never parsed
- * to expand this list. Adding an entry is an operator/code change. */
-export const capabilityIds = [
-  "conversation.read",
-  "conversation.write",
+/** Capability names are platform-owned. Skill documents can request, but never define, them. */
+export const capabilityIdentifiers = [
+  "model.generate",
   "telegram.send",
-  "network.fetch",
+  "network.http",
+  "filesystem.read",
+  "filesystem.write",
+  "sandbox.execute",
 ] as const;
 
-export const capabilityIdSchema = z.enum(capabilityIds);
-export type CapabilityId = z.infer<typeof capabilityIdSchema>;
+export const capabilityIdentifierSchema = z.enum(capabilityIdentifiers);
+export type CapabilityIdentifier = z.infer<typeof capabilityIdentifierSchema>;
 
-export const sensitiveCapabilities = new Set<CapabilityId>([
+export const sensitiveCapabilities = new Set<CapabilityIdentifier>([
   "telegram.send",
-  "network.fetch",
+  "network.http",
+  "filesystem.read",
+  "filesystem.write",
+  "sandbox.execute",
 ]);
+
+export function parseCapabilities(
+  value: readonly string[],
+): CapabilityIdentifier[] {
+  return [
+    ...new Set(value.map((item) => capabilityIdentifierSchema.parse(item))),
+  ];
+}

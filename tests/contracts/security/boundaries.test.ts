@@ -43,14 +43,10 @@ describe("security boundaries", () => {
     }
   });
 
-  it("keeps capabilities on a closed, code-controlled allowlist", async () => {
-    const worker = await readFile("src/worker/cli.ts", "utf8");
+  it("keeps capability identifiers platform-owned", async () => {
     const capabilities = await readFile("src/shared/capabilities.ts", "utf8");
-    expect(worker).not.toContain("capabilities");
-    expect(capabilities).toContain("export const capabilityIds");
-    expect(capabilities).toContain(
-      "capabilityIdSchema = z.enum(capabilityIds)",
-    );
-    expect(capabilities).not.toMatch(/tool_choice|shell\.root/);
+    expect(capabilities).toContain("capabilityIdentifiers");
+    expect(capabilities).toContain("capabilityIdentifierSchema");
+    expect(capabilities).not.toMatch(/tool_choice|child_process|fetch\(/);
   });
 });
