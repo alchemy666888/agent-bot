@@ -1,22 +1,25 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  advanceUpdate,
-  type UpdateState,
-} from "../../../src/worker/updates/state-machine";
+import { UpdateRepository } from "../../../src/worker/updates/repository";
 
 describe("Telegram replay security contract", () => {
-  it("keeps a terminal update immutable when Telegram replays its update ID", () => {
-    const terminal: UpdateState = {
-      updateId: "8675309",
-      stage: "delivery_complete",
-      assistantId: "answer-1",
-      updatedAt: "2026-01-02T03:04:05.000Z",
+  it("does not move a terminal update back into processing", async () => {
+    const repository = new UpdateRepository(
+      await mkdtemp(join(tmpdir(), "replay-")),
+    );
+    const complete = {
+      updateId: "999",
+      stage: "delivery_complete" as const,
+      updatedAt: new Date().toISOString(),
     };
-    const replay: UpdateState = {
-      updateId: terminal.updateId,
+    await repository.save(complete);
+    const replay = await repository.save({
+      ...complete,
       stage: "received",
-      updatedAt: "2026-01-02T03:05:05.000Z",
-    };
-    expect(advanceUpdate(terminal, replay)).toBe(terminal);
+      updatedAt: new Date(Date.now() + 1_000).toISOString(),
+    });
+    expect(replay).toEqual(complete);
   });
 });

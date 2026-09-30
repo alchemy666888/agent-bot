@@ -1,17 +1,18 @@
-/** Capability names are code-owned. Skill documents cannot extend this list. */
-export const allowedCapabilityIds = [
-  "model.read",
-  "telegram.reply",
-  "http.fetch",
+import { z } from "zod";
+
+/** The complete vocabulary understood by the worker. Skill prose is never parsed
+ * to expand this list. Adding an entry is an operator/code change. */
+export const capabilityIds = [
+  "conversation.read",
+  "conversation.write",
+  "telegram.send",
+  "network.fetch",
 ] as const;
-export type CapabilityId = (typeof allowedCapabilityIds)[number];
 
-export function isCapabilityId(value: string): value is CapabilityId {
-  return (allowedCapabilityIds as readonly string[]).includes(value);
-}
+export const capabilityIdSchema = z.enum(capabilityIds);
+export type CapabilityId = z.infer<typeof capabilityIdSchema>;
 
-/** Adapters remain outside skill content and must be registered by the operator. */
-export interface CapabilityAdapter {
-  readonly id: CapabilityId;
-  invoke(input: unknown): Promise<unknown>;
-}
+export const sensitiveCapabilities = new Set<CapabilityId>([
+  "telegram.send",
+  "network.fetch",
+]);

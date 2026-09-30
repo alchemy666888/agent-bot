@@ -43,10 +43,14 @@ describe("security boundaries", () => {
     }
   });
 
-  it("keeps capability identifiers and adapters code-owned", async () => {
+  it("keeps capabilities on a closed, code-controlled allowlist", async () => {
+    const worker = await readFile("src/worker/cli.ts", "utf8");
     const capabilities = await readFile("src/shared/capabilities.ts", "utf8");
-    expect(capabilities).toContain("allowedCapabilityIds");
-    expect(capabilities).toContain("CapabilityAdapter");
-    expect(capabilities).not.toMatch(/eval\(|new Function/);
+    expect(worker).not.toContain("capabilities");
+    expect(capabilities).toContain("export const capabilityIds");
+    expect(capabilities).toContain(
+      "capabilityIdSchema = z.enum(capabilityIds)",
+    );
+    expect(capabilities).not.toMatch(/tool_choice|shell\.root/);
   });
 });
