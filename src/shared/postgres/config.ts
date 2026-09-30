@@ -7,6 +7,14 @@ const databaseSchema = z.object({
     .pipe(z.url({ protocol: /^postgres(ql)?$/ })),
 });
 
+const sandboxDatabaseSchema = z.object({
+  SANDBOX_DATABASE_URL: z
+    .string()
+    .trim()
+    .pipe(z.url({ protocol: /^postgres(ql)?$/ }))
+    .optional(),
+});
+
 export type DatabaseConfig = z.infer<typeof databaseSchema>;
 
 export function readDatabaseConfig(
@@ -19,5 +27,7 @@ export function readDatabaseConfig(
 export function databaseProcessEnv(
   env: Record<string, string | undefined> = process.env,
 ): Record<string, string> {
-  return readDatabaseConfig(env);
+  const controller = readDatabaseConfig(env).DATABASE_URL;
+  const sandbox = sandboxDatabaseSchema.parse(env).SANDBOX_DATABASE_URL;
+  return { DATABASE_URL: sandbox ?? controller };
 }

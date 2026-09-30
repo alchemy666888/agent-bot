@@ -86,6 +86,27 @@ describe("Telegram webhook", () => {
     expect(await response.json()).toEqual({ ok: false });
   });
 
+  it("returns a non-retryable failure reported by the worker", async () => {
+    dispatchTelegramInput.mockResolvedValueOnce({
+      contractVersion: 1,
+      correlationId: "0199-ignored-in-mock",
+      ok: false,
+      error: {
+        code: "WORKER_CONFIGURATION_INVALID",
+        classification: "permanent",
+        message: "Operation failed",
+        diagnostic: {
+          stage: "operation",
+          kind: "TypeError",
+          causeCode: "ERR_INVALID_ARG_TYPE",
+        },
+      },
+    });
+    const response = await POST(request({ update_id: 2, edited_message: {} }));
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ ok: false });
+  });
+
   it("rejects malformed JSON without dispatching", async () => {
     const response = await POST(request("{"));
     expect(response.status).toBe(400);

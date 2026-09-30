@@ -95,11 +95,25 @@ describe("entry-point configuration", () => {
     expect(
       databaseProcessEnv({ DATABASE_URL: "postgres://u:p@db.test/app" }),
     ).toEqual({ DATABASE_URL: "postgres://u:p@db.test/app" });
+    expect(
+      databaseProcessEnv({
+        DATABASE_URL: "postgres://u:p@direct.test/app",
+        SANDBOX_DATABASE_URL: "postgres://u:p@pooler.test/app?sslmode=require",
+      }),
+    ).toEqual({
+      DATABASE_URL: "postgres://u:p@pooler.test/app?sslmode=require",
+    });
   });
 
   it("rejects a non-PostgreSQL database URL", () => {
     expect(() =>
       readDatabaseConfig({ DATABASE_URL: "https://db.test" }),
+    ).toThrow();
+    expect(() =>
+      databaseProcessEnv({
+        DATABASE_URL: "postgres://u:p@db.test/app",
+        SANDBOX_DATABASE_URL: "https://db.test",
+      }),
     ).toThrow();
   });
 });

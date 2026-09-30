@@ -1,6 +1,6 @@
 import {
   readDashboardConfig,
-  readDatabaseConfig,
+  databaseProcessEnv,
   readModelConfig,
   readSandboxConfig,
   readTelegramConfig,
@@ -17,7 +17,7 @@ export function GET(): Response {
     telegram: valid(readTelegramConfig),
     dashboard: valid(readDashboardConfig),
     sandbox: valid(readSandboxConfig),
-    postgres: valid(readDatabaseConfig),
+    postgres: valid(databaseProcessEnv),
   } as const;
   const ready = Object.values(components).every((state) => state === "ready");
   return Response.json(

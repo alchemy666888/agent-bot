@@ -2,7 +2,10 @@ import "server-only";
 
 import { z } from "zod";
 
-export { readDatabaseConfig } from "../../shared/postgres/config";
+export {
+  databaseProcessEnv,
+  readDatabaseConfig,
+} from "../../shared/postgres/config";
 
 export const SANDBOX_REGION = "sin1" as const;
 export const DEFAULT_SYSTEM_PROMPT =

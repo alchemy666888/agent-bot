@@ -45,4 +45,12 @@ describe("health route", () => {
     expect(body).toContain('"status":"ready"');
     expect(body).not.toMatch(/secret|drive-name|sandbox-name|sin1/);
   });
+
+  it("rejects a malformed Sandbox database override", () => {
+    Object.assign(process.env, {
+      DATABASE_URL: "postgresql://user:pass@localhost:5432/app",
+      SANDBOX_DATABASE_URL: "https://not-postgres.test",
+    });
+    expect(GET().status).toBe(503);
+  });
 });
