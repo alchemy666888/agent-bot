@@ -1,5 +1,5 @@
 const forbiddenKey =
-  /authorization|cookie|token|secret|password|api.?key|reasoning|stack|raw(body|update|response)/i;
+  /authorization|cookie|token|secret|password|api.?key|reasoning|stack|(?:raw|tool).?(body|update|response|output)/i;
 const secretText = /(bearer\s+\S+|(?:sk|bot|oidc)[-_][A-Za-z0-9._-]{6,})/gi;
 
 export function redact(value: unknown): unknown {
