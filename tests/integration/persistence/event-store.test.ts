@@ -55,6 +55,41 @@ describe("append-only persistence", () => {
       }),
     ).rejects.toThrow();
   });
+  it("allows user content that mentions security-related field names", async () => {
+    root = await mkdtemp(join(tmpdir(), "agent-"));
+    const store = new EventStore(root);
+    const path = await store.append({
+      schemaVersion: 1,
+      eventId: uuidV7(),
+      entityId: "message-1",
+      kind: "messages",
+      type: "message.created",
+      occurredAt: new Date().toISOString(),
+      revision: 1,
+      payload: {
+        id: "message-1",
+        text: "How should I rotate an API key or password?",
+      },
+    });
+    expect(await readFile(path, "utf8")).toContain(
+      "How should I rotate an API key or password?",
+    );
+  });
+  it("rejects prohibited field names nested inside durable payloads", async () => {
+    root = await mkdtemp(join(tmpdir(), "agent-"));
+    await expect(
+      new EventStore(root).append({
+        schemaVersion: 1,
+        eventId: uuidV7(),
+        entityId: "x",
+        kind: "users",
+        type: "bad",
+        occurredAt: new Date().toISOString(),
+        revision: 1,
+        payload: { metadata: { apiKey: "private" } },
+      }),
+    ).rejects.toThrow();
+  });
   it("initializes and rebuilds the latest projection across months", async () => {
     root = await mkdtemp(join(tmpdir(), "agent-"));
     await initializeLayout(root);
