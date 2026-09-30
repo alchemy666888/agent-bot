@@ -13,6 +13,40 @@ export interface LogRecord {
   metadata?: Record<string, unknown>;
 }
 
+export type SecurityAuditOperation =
+  | "skill.draft.created"
+  | "skill.approved"
+  | "skill.installed"
+  | "skill.invoked"
+  | "skill.authorization_denied"
+  | "telegram.update.replayed";
+
+/** Security audit records deliberately accept identifiers and codes, never content or tool output. */
+export function logSecurityAudit(
+  operation: SecurityAuditOperation,
+  fields: {
+    correlationId: string;
+    actorTelegramUserId: string;
+    result: "success" | "failure";
+    code?: string;
+    skillId?: string;
+  },
+  sink: (line: string) => void = console.info,
+): string {
+  return logStructured(
+    {
+      correlationId: fields.correlationId,
+      component: "worker",
+      operation,
+      stage: "authorization",
+      result: fields.result,
+      ...(fields.code ? { code: fields.code } : {}),
+      metadata: {
+        actorTelegramUserId: /^\d+$/.test(fields.actorTelegramUserId)
+          ? fields.actorTelegramUserId
+          : "invalid",
+        ...(fields.skillId ? { skillId: fields.skillId.slice(0, 128) } : {}),
+      },
 export const securityAuditActions = [
   "skill.draft.created",
   "skill.approved",

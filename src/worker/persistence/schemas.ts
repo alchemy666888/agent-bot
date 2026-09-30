@@ -180,6 +180,7 @@ export const eventSchema = z
       "updates",
       "model-runs",
       "errors",
+      "skill-drafts",
     ]),
     type: z.string().min(1),
     occurredAt: z.iso.datetime(),
