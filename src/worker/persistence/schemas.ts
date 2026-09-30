@@ -73,81 +73,99 @@ export const toolOutputSchema = z
     "Tool output exceeds size limit",
   );
 
-/** Security limits are enforced before skill text reaches durable storage or a model. */
+/** Security limits are enforced before any skill document reaches a model. */
 export const MAX_SKILL_DOCUMENT_BYTES = 64 * 1024;
-export const capabilityIdSchema = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(/^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/);
+export const MAX_TOOL_OUTPUT_BYTES = 32 * 1024;
+export const capabilityIds = [
+  "network.http",
+  "telegram.send",
+  "storage.read",
+  "storage.write",
+] as const;
+export const capabilityIdSchema = z.enum(capabilityIds);
 export const skillRoleSchema = z.enum([
   "author",
   "approver",
   "owner",
   "consumer",
 ]);
-export const skillContentSchema = z
-  .string()
-  .refine(
-    (value) => Buffer.byteLength(value, "utf8") <= MAX_SKILL_DOCUMENT_BYTES,
-    "Skill document is too large",
-  );
+const telegramUserIdSchema = z.string().regex(/^\d+$/);
+const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+
+export const skillDraftSchema = z
+  .object({
+    draftId: z.uuid(),
+    revision: z.number().int().positive(),
+    authorTelegramUserId: telegramUserIdSchema,
+    ownerTelegramUserId: telegramUserIdSchema,
+    content: z.string().min(1).max(MAX_SKILL_DOCUMENT_BYTES),
+    contentDigest: digestSchema,
+    requestedCapabilities: z
+      .array(capabilityIdSchema)
+      .max(capabilityIds.length),
+    createdAt: z.iso.datetime(),
+  })
+  .strict();
+
+/** Approval is structured provenance, never text extracted from a chat or model. */
 export const skillApprovalSchema = z
   .object({
     draftId: z.uuid(),
     revision: z.number().int().positive(),
-    contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    telegramUserId: z.string().regex(/^\d+$/),
+    contentDigest: digestSchema,
+    approverTelegramUserId: telegramUserIdSchema,
     approvedAt: z.iso.datetime(),
   })
   .strict();
-export const installedSkillProvenanceSchema = z
+
+export const installedSkillSchema = z
   .object({
-    draftId: z.uuid(),
-    revision: z.number().int().positive(),
-    contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-    authorTelegramUserId: z.string().regex(/^\d+$/),
-    ownerTelegramUserId: z.string().regex(/^\d+$/),
+    skillId: z.uuid(),
+    version: z.number().int().positive(),
+    draft: skillDraftSchema,
     approval: skillApprovalSchema,
+    installedByTelegramUserId: telegramUserIdSchema,
     installedAt: z.iso.datetime(),
-    grantedCapabilities: z.array(capabilityIdSchema).max(64),
+    grantedCapabilities: z.array(capabilityIdSchema),
   })
   .strict();
-export const securityAuditEventSchema = z
+
+export const auditEventSchema = z
   .object({
-    type: z.enum([
+    eventId: z.uuid(),
+    occurredAt: z.iso.datetime(),
+    actorTelegramUserId: telegramUserIdSchema.optional(),
+    action: z.enum([
       "skill.draft.created",
+      "skill.draft.revised",
       "skill.approved",
       "skill.installed",
       "skill.invoked",
       "skill.authorization_denied",
       "telegram.update.replayed",
     ]),
-    occurredAt: z.iso.datetime(),
-    actorTelegramUserId: z.string().regex(/^\d+$/),
-    skillId: z.string().min(1).max(128).optional(),
-    draftId: z.uuid().optional(),
     result: z.enum(["success", "denied"]),
-    code: z
+    skillId: z.uuid().optional(),
+    draftId: z.uuid().optional(),
+    revision: z.number().int().positive().optional(),
+    contentDigest: digestSchema.optional(),
+    reasonCode: z
       .string()
-      .regex(/^[A-Z][A-Z0-9_]*$/)
+      .regex(/^[A-Z][A-Z0-9_]{0,63}$/)
       .optional(),
+    capabilities: z.array(capabilityIdSchema).optional(),
   })
   .strict();
 
 const safePayload = z
   .record(z.string(), z.unknown())
   .superRefine((value, ctx) => {
-    const prohibited =
-      /first_name|last_name|authorization|cookie|secret|token|reasoning|raw(update|body|response)/i;
-    const hasProhibitedKey = (candidate: unknown): boolean => {
-      if (Array.isArray(candidate)) return candidate.some(hasProhibitedKey);
-      if (!candidate || typeof candidate !== "object") return false;
-      return Object.entries(candidate).some(
-        ([key, nested]) => prohibited.test(key) || hasProhibitedKey(nested),
-      );
-    };
-    if (hasProhibitedKey(value))
+    const serialized = JSON.stringify(value);
+    if (
+      /first_name|last_name|authorization|cookie|secret|token|password|api.?key|reasoning|raw(update|body|response)|tool.?output/i.test(
+        serialized,
+      )
+    )
       ctx.addIssue({ code: "custom", message: "Prohibited durable field" });
   });
 export const eventSchema = z
@@ -172,3 +190,8 @@ export const eventSchema = z
   })
   .strict();
 export type DurableEvent = z.infer<typeof eventSchema>;
+export type SkillDraft = z.infer<typeof skillDraftSchema>;
+export type SkillApproval = z.infer<typeof skillApprovalSchema>;
+export type InstalledSkill = z.infer<typeof installedSkillSchema>;
+export type CapabilityId = z.infer<typeof capabilityIdSchema>;
+export type AuditEvent = z.infer<typeof auditEventSchema>;

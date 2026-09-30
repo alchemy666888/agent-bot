@@ -1,7 +1,6 @@
 const forbiddenKey =
-  /authorization|cookie|set-cookie|token|secret|password|passphrase|api.?key|private.?key|session|reasoning|stack|raw(body|update|response)|prompt/i;
-const secretText =
-  /(bearer\s+\S+|(?:sk|bot|oidc|ghp|github_pat|xox[baprs])[-_:][A-Za-z0-9._-]{6,}|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----)/gi;
+  /authorization|cookie|token|secret|password|api.?key|reasoning|stack|(?:raw|tool).?(body|update|response|output)/i;
+const secretText = /(bearer\s+\S+|(?:sk|bot|oidc)[-_][A-Za-z0-9._-]{6,})/gi;
 
 export function redact(value: unknown, depth = 0): unknown {
   if (depth > 8) return "[TRUNCATED]";
