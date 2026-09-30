@@ -43,13 +43,14 @@ describe("security boundaries", () => {
     }
   });
 
-  it("keeps the future capability seam inactive", async () => {
+  it("keeps capabilities on a closed, code-controlled allowlist", async () => {
     const worker = await readFile("src/worker/cli.ts", "utf8");
     const capabilities = await readFile("src/shared/capabilities.ts", "utf8");
     expect(worker).not.toContain("capabilities");
-    expect(capabilities).toContain("readonly enabled: false");
-    expect(capabilities).not.toMatch(
-      /tool_choice|export function|export class/,
+    expect(capabilities).toContain("export const capabilityIds");
+    expect(capabilities).toContain(
+      "capabilityIdSchema = z.enum(capabilityIds)",
     );
+    expect(capabilities).not.toMatch(/tool_choice|shell\.root/);
   });
 });
