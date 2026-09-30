@@ -20,7 +20,7 @@
     "test:integration": "vitest run --passWithNoTests tests/integration",
     "test:contracts": "vitest run --passWithNoTests tests/contracts",
     "test:e2e": "playwright test",
-    "worker:build": "esbuild src/worker/cli.ts --bundle --platform=node --format=esm --outfile=dist/worker.mjs"
+    "worker:build": "esbuild src/worker/cli.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/worker.mjs"
   },
   "dependencies": {
     "@vercel/sandbox": "^3.3.0",
