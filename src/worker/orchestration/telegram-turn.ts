@@ -10,13 +10,14 @@ import type {
   Message,
   UserProfile,
 } from "../conversations/service";
-import { commandReply } from "../commands";
+import { handleCommand, type InstalledSkill } from "../commands";
 import { LockCoordinator } from "../locks/coordinator";
 import { UpdateRepository } from "../updates/repository";
 import type { TelegramClient } from "../telegram/client";
 import type { TelegramInput } from "../../server/telegram/input";
 import { retryTransient } from "../model/retry";
 import type { UpdateState } from "../updates/state-machine";
+import type { PostgresSkillRepository } from "../skills/postgres-repository";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -73,6 +74,11 @@ export class TelegramTurn {
       }): Promise<unknown>;
     },
     private accounting?: ModelAccounting,
+    /** Installed-skill catalog is injected here rather than read from file blobs. */
+    readonly skills?: Pick<
+      PostgresSkillRepository,
+      "getById" | "getByName" | "listAvailableToTelegramUser"
+    >,
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -88,6 +94,8 @@ export class TelegramTurn {
     }
     await this.locks.withUser(input.userId, async () => {
       const existing = await this.updates.get(input.updateId);
+      if (existing?.telegramUserId && existing.telegramUserId !== input.userId)
+        throw new Error("UPDATE_ACTOR_MISMATCH");
       if (
         existing?.stage === "delivery_complete" ||
         existing?.stage === "failed"
@@ -97,6 +105,7 @@ export class TelegramTurn {
       if (!existing)
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
+          telegramUserId: input.userId,
           stage: "received",
           updatedAt: at,
         });
@@ -106,7 +115,9 @@ export class TelegramTurn {
         languageCode: input.languageCode,
         at,
       });
-      const deterministic = commandReply(input.text);
+      const command = handleCommand(input.text, this.skills, input.userId);
+      const deterministic =
+        command?.kind === "reply" ? command.text : undefined;
       if (input.text === "/new")
         await this.conversations.newConversation(input.userId);
       let requestMessageId: string | null = null;
@@ -120,6 +131,7 @@ export class TelegramTurn {
         requestMessageId = userMessage.id;
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
+          telegramUserId: input.userId,
           stage: "prompt_saved",
           updatedAt: at,
         });
@@ -138,12 +150,44 @@ export class TelegramTurn {
           let latencyMs = 0;
           try {
             if (deterministic) answer = deterministic;
-            else {
+            else if (
+              this.skillAuthoring &&
+              (await this.skillAuthoring.shouldHandle(input.userId, input.text))
+            ) {
+              answer = await this.skillAuthoring.handle(
+                input.userId,
+                input.text,
+                input.updateId,
+              );
+            } else {
               const started = Date.now();
               generated = await retryTransient(
                 async () =>
                   this.model.generate(
-                    await this.conversations.context(input.userId, this.prompt),
+                    command?.kind === "invoke"
+                      ? {
+                          messages: [
+                            {
+                              role: "system" as const,
+                              content: [
+                                this.prompt,
+                                `Explicitly selected skill: ${command.invocation.skill.displayName} (${command.invocation.skill.name}), version ${command.invocation.skill.version}.`,
+                                `Purpose: ${command.invocation.skill.purpose}`,
+                                `Supported tasks: ${command.invocation.skill.supportedTasks?.join("; ") || "not specified"}.`,
+                                `Operating constraints: ${command.invocation.skill.operatingConstraints || "none specified"}.`,
+                                "Follow these skill constraints and address only the explicit request below.",
+                              ].join("\n"),
+                            },
+                            {
+                              role: "user" as const,
+                              content: command.invocation.request,
+                            },
+                          ],
+                        }
+                      : await this.conversations.context(
+                          input.userId,
+                          this.prompt,
+                        ),
                   ),
                 isTransient,
               );
@@ -163,6 +207,7 @@ export class TelegramTurn {
             );
             await this.checkpoint(input.userId, {
               updateId: input.updateId,
+              telegramUserId: input.userId,
               stage: "failed",
               updatedAt: new Date().toISOString(),
             });
@@ -208,6 +253,7 @@ export class TelegramTurn {
             });
           await this.checkpoint(input.userId, {
             updateId: input.updateId,
+            telegramUserId: input.userId,
             stage: "model_complete",
             assistantId: assistant.id,
             updatedAt: new Date().toISOString(),
@@ -231,6 +277,7 @@ export class TelegramTurn {
         }
         await this.checkpoint(input.userId, {
           updateId: input.updateId,
+          telegramUserId: input.userId,
           stage: "delivery_complete",
           updatedAt: new Date().toISOString(),
         });

@@ -14,6 +14,72 @@ export interface LogRecord {
   metadata?: Record<string, unknown>;
 }
 
+export type SecurityAuditOperation =
+  | "skill.draft.created"
+  | "skill.approved"
+  | "skill.installed"
+  | "skill.invoked"
+  | "skill.authorization_denied"
+  | "telegram.update.replayed";
+
+/** Security audit records deliberately accept identifiers and codes, never content or tool output. */
+export function logSecurityAudit(
+  operation: SecurityAuditOperation,
+  fields: {
+    correlationId: string;
+    actorTelegramUserId: string;
+    result: "success" | "failure";
+    code?: string;
+    skillId?: string;
+  },
+  sink: (line: string) => void = console.info,
+): string {
+  return logStructured(
+    {
+      correlationId: fields.correlationId,
+      component: "worker",
+      operation,
+      stage: "authorization",
+      result: fields.result,
+      ...(fields.code ? { code: fields.code } : {}),
+      metadata: {
+        actorTelegramUserId: /^\d+$/.test(fields.actorTelegramUserId)
+          ? fields.actorTelegramUserId
+          : "invalid",
+        ...(fields.skillId ? { skillId: fields.skillId.slice(0, 128) } : {}),
+      },
+export const securityAuditActions = [
+  "skill.draft.created",
+  "skill.approved",
+  "skill.install.denied",
+  "skill.installed",
+  "skill.invoke.denied",
+  "skill.invoked",
+  "update.replay.denied",
+] as const;
+export type SecurityAuditAction = (typeof securityAuditActions)[number];
+
+/** Security audit metadata is passed through the same mandatory redaction path. */
+export function logSecurityAudit(
+  action: SecurityAuditAction,
+  actorTelegramUserId: string,
+  result: LogResult,
+  metadata: Record<string, unknown> = {},
+  sink?: (line: string) => void,
+): string {
+  return logStructured(
+    {
+      correlationId: `audit:${crypto.randomUUID()}`,
+      component: "worker",
+      operation: "skillAuthorization",
+      stage: action,
+      result,
+      metadata: { actorTelegramUserId, ...metadata },
+    },
+    sink,
+  );
+}
+
 /** Emits one sanitized JSON object. Callers must pass metadata, never raw bodies. */
 export function logStructured(
   record: LogRecord,
@@ -107,4 +173,46 @@ export function safeError(
         }
       : {}),
   };
+}
+
+export type SecurityAuditAction =
+  | "skill.draft.created"
+  | "skill.draft.revised"
+  | "skill.approved"
+  | "skill.installed"
+  | "skill.invoked"
+  | "skill.authorization_denied"
+  | "telegram.update.replayed";
+
+/** Security audit records use fixed actions/codes and pass through the same redactor. */
+export function logSecurityAudit(
+  event: {
+    correlationId: string;
+    action: SecurityAuditAction;
+    result: "success" | "denied";
+    actorTelegramUserId?: string;
+    code?: string;
+    metadata?: Record<string, unknown>;
+  },
+  sink: (line: string) => void = console.info,
+): string {
+  return logStructured(
+    {
+      correlationId: event.correlationId,
+      component: "worker",
+      operation: event.action,
+      stage: "authorization",
+      result: event.result === "success" ? "success" : "failure",
+      ...(event.code && /^[A-Z][A-Z0-9_]{0,63}$/.test(event.code)
+        ? { code: event.code }
+        : {}),
+      metadata: {
+        ...(event.actorTelegramUserId
+          ? { actorTelegramUserId: event.actorTelegramUserId }
+          : {}),
+        ...event.metadata,
+      },
+    },
+    sink,
+  );
 }
