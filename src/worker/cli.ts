@@ -108,49 +108,62 @@ async function main() {
   );
   if (request.operation !== operation) throw new Error("OPERATION_MISMATCH");
   const started = Date.now();
-  const store = openPersistenceStore();
   let data: unknown;
   let failure: unknown;
-  await bindPersistenceSession(ROOT, store, async () => {
-    try {
-      data =
-        request.operation === "telegramTurn"
-          ? await telegramTurn(request.payload, request.correlationId)
-          : request.operation === "export"
-            ? await createExport()
-            : request.operation === "query"
-              ? await query(request.payload)
-              : request.operation === "recover"
-                ? await recover(request.payload)
-                : {};
-    } catch (error) {
-      failure = error;
-    }
-    try {
-      await writeWorkerLog(
-        ROOT,
-        {
+  try {
+    const store = openPersistenceStore();
+    await bindPersistenceSession(ROOT, store, async () => {
+      try {
+        data =
+          request.operation === "telegramTurn"
+            ? await telegramTurn(request.payload, request.correlationId)
+            : request.operation === "export"
+              ? await createExport()
+              : request.operation === "query"
+                ? await query(request.payload)
+                : request.operation === "recover"
+                  ? await recover(request.payload)
+                  : {};
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        await writeWorkerLog(
+          ROOT,
+          {
+            correlationId: request.correlationId,
+            component: "worker",
+            operation: request.operation,
+            stage: "complete",
+            result: failure ? "failure" : "success",
+            durationMs: Date.now() - started,
+            ...(failure ? { code: safeError(failure).code } : {}),
+          },
+          store,
+        );
+      } catch (error) {
+        if (!failure) failure = error;
+      }
+      if (failure) throw failure;
+    });
+  } catch (error) {
+    failure = error;
+  }
+  const response = workerResponseSchema.parse(
+    failure
+      ? {
+          contractVersion: 1,
           correlationId: request.correlationId,
-          component: "worker",
-          operation: request.operation,
-          stage: "complete",
-          result: failure ? "failure" : "success",
-          durationMs: Date.now() - started,
-          ...(failure ? { code: safeError(failure).code } : {}),
+          ok: false,
+          error: safeError(failure),
+        }
+      : {
+          contractVersion: 1,
+          correlationId: request.correlationId,
+          ok: true,
+          data,
         },
-        store,
-      );
-    } catch (error) {
-      if (!failure) failure = error;
-    }
-    if (failure) throw failure;
-  });
-  const response = workerResponseSchema.parse({
-    contractVersion: 1,
-    correlationId: request.correlationId,
-    ok: true,
-    data,
-  });
+  );
   await mkdir(dirname(responsePath), { recursive: true });
   await writeFile(responsePath, JSON.stringify(response), { mode: 0o600 });
 }
