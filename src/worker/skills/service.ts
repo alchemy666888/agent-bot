@@ -344,12 +344,12 @@ import {
   MAX_TOOL_OUTPUT_BYTES,
   auditEventSchema,
   capabilityIdSchema,
-  installedSkillSchema,
+  installedSkillRecordSchema,
   skillApprovalSchema,
   skillDraftSchema,
   type AuditEvent,
   type CapabilityId,
-  type InstalledSkill,
+  type InstalledSkillRecord,
   type SkillApproval,
   type SkillDraft as AuthorizedSkillDraft,
 } from "../persistence/schemas";
@@ -372,7 +372,7 @@ export interface SkillStore {
     revision: number,
   ): Promise<SkillApproval | undefined>;
   saveApproval(value: SkillApproval): Promise<void>;
-  saveInstalled(value: InstalledSkill): Promise<void>;
+  saveInstalled(value: InstalledSkillRecord): Promise<void>;
   appendAudit(value: AuditEvent): Promise<void>;
 }
 
@@ -575,7 +575,7 @@ export class SkillService {
     draftId: string,
     approval: unknown,
     installerTelegramUserId: string,
-  ): Promise<InstalledSkill> {
+  ): Promise<InstalledSkillRecord> {
     if (!this.policy.installers.has(installerTelegramUserId))
       return this.denied(installerTelegramUserId, "INSTALLER_NOT_AUTHORIZED", {
         draftId,
@@ -611,7 +611,7 @@ export class SkillService {
         draftId,
         revision: draft.revision,
       });
-    const installed = installedSkillSchema.parse({
+    const installed = installedSkillRecordSchema.parse({
       skillId: randomUUID(),
       version: 1,
       draft,
@@ -635,11 +635,11 @@ export class SkillService {
   }
 
   async invocationPrompt(
-    skill: InstalledSkill,
+    skill: InstalledSkillRecord,
     consumerTelegramUserId: string,
     toolOutput?: string,
   ): Promise<string> {
-    const parsed = installedSkillSchema.parse(skill);
+    const parsed = installedSkillRecordSchema.parse(skill);
     const consumers = this.policy.consumers.get(parsed.skillId);
     if (
       consumerTelegramUserId !== parsed.draft.ownerTelegramUserId &&

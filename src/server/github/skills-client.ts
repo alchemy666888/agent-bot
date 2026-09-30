@@ -255,6 +255,14 @@ export class GitHubSkillsClient {
       throw new TypeError("Invalid skills prefix");
   }
 
+  get controlledPrefix(): string {
+    return this.prefix;
+  }
+
+  get defaultBranch(): string {
+    return this.config.branch;
+  }
+
   private repoUrl(path: string): string {
     return `${API_ROOT}/repos/${encodeURIComponent(this.config.owner)}/${encodeURIComponent(this.config.repository)}${path}`;
   }
