@@ -11,6 +11,7 @@ export const recordKinds = [
   "updates",
   "model-runs",
   "errors",
+  "skill-drafts",
 ] as const;
 export type RecordKind = (typeof recordKinds)[number];
 export const monthPartition = (date: Date) => date.toISOString().slice(0, 7);

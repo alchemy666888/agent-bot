@@ -1,10 +1,17 @@
-import type { ModelRequest, ModelResponse } from "./contracts";
+/** Capability names are code-owned. Skill documents cannot extend this list. */
+export const allowedCapabilityIds = [
+  "model.read",
+  "telegram.reply",
+  "http.fetch",
+] as const;
+export type CapabilityId = (typeof allowedCapabilityIds)[number];
 
-/** Reserved extension seam. No capability is registered or executable in this release. */
-export interface FutureCapabilityBoundary {
-  readonly enabled: false;
-  afterModel(
-    request: Readonly<ModelRequest>,
-    response: Readonly<ModelResponse>,
-  ): Promise<ModelResponse>;
+export function isCapabilityId(value: string): value is CapabilityId {
+  return (allowedCapabilityIds as readonly string[]).includes(value);
+}
+
+/** Adapters remain outside skill content and must be registered by the operator. */
+export interface CapabilityAdapter {
+  readonly id: CapabilityId;
+  invoke(input: unknown): Promise<unknown>;
 }
