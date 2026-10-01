@@ -70,7 +70,13 @@ export const routingDecisionSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("ambiguous"),
-      candidateIds: z.array(routingIdentifierSchema).min(2).max(10),
+      candidateIds: z
+        .array(routingIdentifierSchema)
+        .min(2)
+        .max(10)
+        .refine((ids) => new Set(ids).size === ids.length, {
+          message: "Candidate IDs must be unique",
+        }),
       ...routingCommon,
     })
     .strict(),
@@ -94,7 +100,21 @@ export const routingRequestSchema = z
     availableTools: z.array(availableToolDescriptorSchema).max(200),
     signal: z.instanceof(AbortSignal).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((request, context) => {
+    for (const [field, values] of [
+      ["authorizedSkills", request.authorizedSkills],
+      ["availableTools", request.availableTools],
+    ] as const) {
+      const ids = values.map(({ id }) => id);
+      if (new Set(ids).size !== ids.length)
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} IDs must be unique`,
+        });
+    }
+  });
 export const skillContextSchema = z
   .object({
     id: z.string().min(1),

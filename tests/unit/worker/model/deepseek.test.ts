@@ -424,4 +424,115 @@ describe("model adapter", () => {
       outputRecovery: { triggered: true, succeeded: true },
     });
   });
+
+  it("extracts only final message text and never reasoning", async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            output: [
+              {
+                type: "reasoning",
+                content: [{ type: "reasoning_text", text: "hidden rationale" }],
+              },
+              {
+                type: "message",
+                content: [
+                  { type: "output_text", text: "First. " },
+                  { type: "output_text", text: "Second." },
+                ],
+              },
+            ],
+          }),
+        ),
+    );
+    const result = await new DeepSeekProvider(
+      { apiKey: "x", baseUrl: "https://example.test", thinking: true },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "direct",
+      messages: [{ role: "user", content: "answer" }],
+    });
+    expect(result.content).toBe("First. Second.");
+    expect(result.content).not.toContain("hidden rationale");
+  });
+
+  it("bounds repeated native web-search iterations and recovers to final text", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            output: [
+              { type: "web_search_call", id: "one", status: "completed" },
+            ],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            output: [
+              { type: "web_search_call", id: "two", status: "completed" },
+            ],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            output_text: "Search could not be completed safely.",
+          }),
+        ),
+      );
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "x",
+        baseUrl: "https://example.test",
+        thinking: false,
+        maxToolCalls: 1,
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "latest" }],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({
+      content: "Search could not be completed safely.",
+      outputRecovery: { triggered: true, succeeded: true },
+    });
+    const first = JSON.parse(
+      String((fetcher.mock.calls[0]![1] as RequestInit).body),
+    );
+    expect(first.tool_choice).toEqual({ type: "web_search" });
+    const recovery = JSON.parse(
+      String((fetcher.mock.calls[2]![1] as RequestInit).body),
+    );
+    expect(recovery.tools).toBeUndefined();
+  });
+
+  it("forwards caller aborts to the provider request", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn(
+      (_url: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        }),
+    );
+    const pending = new DeepSeekProvider(
+      { apiKey: "x", baseUrl: "https://example.test", thinking: false },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "direct",
+      messages: [{ role: "user", content: "x" }],
+      signal: controller.signal,
+    });
+    controller.abort(new Error("cancelled"));
+    await expect(pending).rejects.toThrow("cancelled");
+  });
 });
