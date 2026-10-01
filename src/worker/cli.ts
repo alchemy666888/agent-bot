@@ -48,7 +48,10 @@ async function telegramTurn(
   await initializeLayout(ROOT);
   const locks = new LockCoordinator(ROOT);
   const errors = new DurableErrorService(ROOT, locks);
-  const capabilities = createCapabilityRegistry();
+  const capabilities = createCapabilityRegistry(fetch, {
+    apiKey: requiredEnv("DEEPSEEK_API_KEY"),
+    baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
+  });
   const catalog = skillCatalogSnapshotSchema.parse(payload.skillCatalog);
   const skills = new SkillResolver(
     capabilities,
