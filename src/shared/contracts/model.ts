@@ -26,6 +26,7 @@ export const modelRequestSchema = z
   .object({
     messages: z.array(modelMessageSchema).min(1),
     skill: skillContextSchema.optional(),
+    generalCapabilities: z.array(capabilityRequestSchema).optional(),
     signal: z.instanceof(AbortSignal).optional(),
   })
   .strict();
@@ -40,6 +41,13 @@ export const modelResponseSchema = z
     content: z.string().min(1),
     usage: modelUsageSchema.optional(),
     requestId: z.string().min(1).optional(),
+    outputRecovery: z
+      .object({
+        triggered: z.boolean(),
+        succeeded: z.boolean(),
+      })
+      .strict()
+      .optional(),
     capabilityAudit: z
       .array(
         z.object({

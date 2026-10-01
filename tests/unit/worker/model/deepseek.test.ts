@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { DeepSeekProvider } from "../../../../src/worker/model/deepseek";
 import { retryTransient } from "../../../../src/worker/model/retry";
 import { calculateCost } from "../../../../src/worker/model/usage";
@@ -38,11 +39,10 @@ describe("model adapter", () => {
       requestId: "r",
       usage: { inputTokens: 2, outputTokens: 3 },
     });
-    expect(
-      JSON.parse(
-        String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
-      ),
-    ).toEqual({
+    const body = JSON.parse(
+      String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
+    );
+    expect(body).toMatchObject({
       model: "deepseek-v4-pro",
       stream: false,
       reasoning: { effort: "medium" },
@@ -52,6 +52,8 @@ describe("model adapter", () => {
         "be helpful\n\nFor questions that depend on current or local facts, such as weather, news, prices, or schedules, use web search before answering. Answer from the search results and include source links. Say that a search returned nothing only when the tool result is actually empty.",
       input: [{ role: "user", content: "hi" }],
     });
+    expect(body.instructions).toContain("be helpful");
+    expect(body.instructions).toContain("Never invent");
   });
   it("continues after a server-side web_search_call until the answer arrives", async () => {
     const searchCall = {
@@ -202,52 +204,143 @@ describe("model adapter", () => {
       calculateCost(1_000_000, 500_000, "1.25", "2.00").estimatedCost,
     ).toBe("2.250000"));
 
-  it("rejects malformed tool calls", async () => {
-    const fetcher = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            output: [
-              {
-                type: "function_call",
-                name: "lookup",
-                call_id: "1",
-                arguments: "{",
-              },
-            ],
-          }),
-        ),
-    );
+  it("recovers from malformed tool calls without exposing protocol", async () => {
+    let calls = 0;
+    const fetcher = vi.fn(async () => {
+      calls++;
+      return calls === 1
+        ? new Response(
+            JSON.stringify({
+              output: [
+                {
+                  type: "function_call",
+                  name: "lookup",
+                  call_id: "1",
+                  arguments: "{",
+                },
+              ],
+            }),
+          )
+        : new Response(
+            JSON.stringify({
+              output_text: "A direct, safe answer",
+            }),
+          );
+    });
     await expect(
       new DeepSeekProvider(
         { apiKey: "x", baseUrl: "https://example.test", thinking: false },
         fetcher as typeof fetch,
       ).generate({ messages: [{ role: "user", content: "x" }] }),
-    ).rejects.toThrow("MALFORMED_TOOL_CALL");
+    ).resolves.toMatchObject({
+      content: "A direct, safe answer",
+      outputRecovery: { triggered: true, succeeded: true },
+    });
   });
 
-  it("denies tool calls not declared by the resolved skill", async () => {
-    const fetcher = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            output: [
-              {
-                type: "function_call",
-                name: "lookup",
-                call_id: "1",
-                arguments: "{}",
-              },
-            ],
-          }),
-        ),
-    );
+  it("denies undeclared tool calls and recovers without tools", async () => {
+    let calls = 0;
+    const fetcher = vi.fn(async () => {
+      calls++;
+      return calls === 1
+        ? new Response(
+            JSON.stringify({
+              output: [
+                {
+                  type: "function_call",
+                  name: "lookup",
+                  call_id: "1",
+                  arguments: "{}",
+                },
+              ],
+            }),
+          )
+        : new Response(JSON.stringify({ output_text: "No-tool answer" }));
+    });
     await expect(
       new DeepSeekProvider(
         { apiKey: "x", baseUrl: "https://example.test", thinking: false },
         fetcher as typeof fetch,
         new CapabilityRegistry(),
       ).generate({ messages: [{ role: "user", content: "x" }] }),
-    ).rejects.toThrow("CAPABILITY_DENIED");
+    ).resolves.toMatchObject({
+      content: "No-tool answer",
+      capabilityAudit: [{ capabilityId: "lookup", outcome: "denied" }],
+      outputRecovery: { triggered: true, succeeded: true },
+    });
+    const recoveryBody = JSON.parse(
+      String((fetcher.mock.calls[1]?.[1] as RequestInit | undefined)?.body),
+    );
+    expect(recoveryBody.tools).toBeUndefined();
+  });
+
+  it("uses a safe general capability and returns the tool-informed answer", async () => {
+    const registry = new CapabilityRegistry([
+      {
+        request: {
+          id: "lookup",
+          description: "Lookup",
+          inputSchema: { type: "object" },
+        },
+        input: z.object({}),
+        execute: async () => ({ temperature: 28 }),
+      },
+    ]);
+    let calls = 0;
+    const fetcher = vi.fn(async () => {
+      calls++;
+      return calls === 1
+        ? new Response(
+            JSON.stringify({
+              output: [
+                {
+                  type: "function_call",
+                  name: "lookup",
+                  call_id: "1",
+                  arguments: "{}",
+                },
+              ],
+            }),
+          )
+        : new Response(JSON.stringify({ output_text: "It is 28°C." }));
+    });
+    await expect(
+      new DeepSeekProvider(
+        { apiKey: "x", baseUrl: "https://example.test", thinking: false },
+        fetcher as typeof fetch,
+        registry,
+      ).generate({
+        messages: [{ role: "user", content: "weather?" }],
+        generalCapabilities: registry.requests(["lookup"]),
+      }),
+    ).resolves.toMatchObject({
+      content: "It is 28°C.",
+      capabilityAudit: [{ capabilityId: "lookup", outcome: "success" }],
+    });
+  });
+
+  it("retries once when final text leaks raw tool protocol", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            output_text:
+              '<tool_calls><invoke name="search"></invoke></tool_calls>',
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ output_text: "Clean answer" })),
+      );
+    await expect(
+      new DeepSeekProvider(
+        { apiKey: "x", baseUrl: "https://example.test", thinking: false },
+        fetcher as typeof fetch,
+      ).generate({ messages: [{ role: "user", content: "x" }] }),
+    ).resolves.toMatchObject({
+      content: "Clean answer",
+      outputRecovery: { triggered: true, succeeded: true },
+    });
   });
 });
