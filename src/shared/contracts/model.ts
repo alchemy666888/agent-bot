@@ -13,6 +13,86 @@ export const capabilityRequestSchema = z
     inputSchema: z.record(z.string(), z.unknown()),
   })
   .strict();
+
+const routingIdentifierSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
+const routingTextSchema = z.string().trim().min(1).max(2_000);
+
+/** Metadata that is safe to disclose to the classifier. Skill instructions are deliberately absent. */
+export const authorizedSkillDescriptorSchema = z
+  .object({
+    id: routingIdentifierSchema,
+    name: z.string().trim().min(1).max(120),
+    description: routingTextSchema,
+    supportedTasks: z.array(z.string().trim().min(1).max(200)).max(100),
+    triggerHints: z.array(z.string().trim().min(1).max(200)).max(100),
+    permittedCapabilityIds: z.array(routingIdentifierSchema).max(100),
+  })
+  .strict();
+
+/** An operator-approved capability. This is descriptive only and contains no arguments. */
+export const availableToolDescriptorSchema = z
+  .object({
+    id: routingIdentifierSchema,
+    description: routingTextSchema,
+    inputSchema: z.record(z.string().max(128), z.unknown()),
+  })
+  .strict();
+
+const routingCommon = {
+  confidence: z.number().min(0).max(1),
+  rationale: z.string().trim().min(1).max(500),
+};
+export const routingDecisionSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("skill"),
+      selectedSkillId: routingIdentifierSchema,
+      ...routingCommon,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("tool"),
+      selectedToolId: routingIdentifierSchema,
+      ...routingCommon,
+    })
+    .strict(),
+  z
+    .object({ kind: z.literal("web_search_fallback"), ...routingCommon })
+    .strict(),
+  z.object({ kind: z.literal("direct"), ...routingCommon }).strict(),
+  z
+    .object({
+      kind: z.literal("ambiguous"),
+      candidateIds: z.array(routingIdentifierSchema).min(2).max(10),
+      ...routingCommon,
+    })
+    .strict(),
+  z.object({ kind: z.literal("refuse"), ...routingCommon }).strict(),
+]);
+
+export const routingRequestSchema = z
+  .object({
+    request: z.string().trim().min(1).max(10_000),
+    conversationContext: z
+      .array(
+        z
+          .object({
+            role: z.enum(["user", "assistant"]),
+            content: z.string().min(1).max(10_000),
+          })
+          .strict(),
+      )
+      .max(20),
+    authorizedSkills: z.array(authorizedSkillDescriptorSchema).max(200),
+    availableTools: z.array(availableToolDescriptorSchema).max(200),
+    signal: z.instanceof(AbortSignal).optional(),
+  })
+  .strict();
 export const skillContextSchema = z
   .object({
     id: z.string().min(1),
@@ -69,6 +149,14 @@ export type ModelRequest = z.infer<typeof modelRequestSchema>;
 export type ModelResponse = z.infer<typeof modelResponseSchema>;
 export type CapabilityRequest = z.infer<typeof capabilityRequestSchema>;
 export type SkillContext = z.infer<typeof skillContextSchema>;
+export type AuthorizedSkillDescriptor = z.infer<
+  typeof authorizedSkillDescriptorSchema
+>;
+export type AvailableToolDescriptor = z.infer<
+  typeof availableToolDescriptorSchema
+>;
+export type RoutingRequest = z.infer<typeof routingRequestSchema>;
+export type RoutingDecision = z.infer<typeof routingDecisionSchema>;
 
 export interface ModelProvider {
   generate(request: ModelRequest): Promise<ModelResponse>;
