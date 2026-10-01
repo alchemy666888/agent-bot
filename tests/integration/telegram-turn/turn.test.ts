@@ -166,7 +166,10 @@ describe("Telegram turn", () => {
   it("uses general capabilities when no skill matches", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const model = {
-      generate: vi.fn(async (_request: unknown) => ({ content: "general" })),
+      generate: vi.fn(async (request: unknown) => {
+        void request;
+        return { content: "general" };
+      }),
     };
     const telegram = {
       typing: vi.fn(async () => {}),
