@@ -14,6 +14,8 @@ import type {
   SkillApproval,
   SkillDraft,
 } from "../../../src/worker/persistence/schemas";
+import { CapabilityRegistry } from "../../../src/worker/capabilities/registry";
+import { SkillResolver } from "../../../src/worker/skills/resolver";
 
 const users = {
   author: "100",
@@ -70,6 +72,64 @@ async function draft(
 }
 
 describe("skill authorization security contract", () => {
+  it("gives routing all and only the current user's authorized skills and denies a selected private skill", () => {
+    const base = {
+      commitSha: "a".repeat(40),
+      name: "Skill",
+      description: "Safe description",
+      instructions: "private instructions",
+      triggers: { phrases: [], minimumConfidence: 1 },
+      tools: [],
+      prohibitedActions: [],
+      allowedTelegramUserIds: [],
+      status: "active" as const,
+    };
+    const resolver = new SkillResolver(new CapabilityRegistry(), [
+      {
+        ...base,
+        id: "public",
+        visibility: "public",
+        ownerTelegramUserIds: [users.owner],
+      },
+      {
+        ...base,
+        id: "owned",
+        visibility: "private",
+        ownerTelegramUserIds: [users.consumer],
+      },
+      {
+        ...base,
+        id: "foreign",
+        visibility: "private",
+        ownerTelegramUserIds: [users.stranger],
+      },
+      {
+        ...base,
+        id: "shared",
+        visibility: "shared",
+        ownerTelegramUserIds: [users.owner],
+        allowedTelegramUserIds: [users.consumer],
+      },
+    ]);
+    expect(resolver.routingCatalog(users.consumer).map(({ id }) => id)).toEqual(
+      ["owned", "public", "shared"],
+    );
+    expect(resolver.resolveRouted("foreign", users.consumer)).toEqual({
+      kind: "none",
+    });
+  });
+
+  it("denies a model-selected capability that was not declared", async () => {
+    const registry = new CapabilityRegistry();
+    const audit: { capabilityId: string; outcome: string }[] = [];
+    await expect(
+      registry.invoke("shell.exec", {}, [], (record) => audit.push(record)),
+    ).rejects.toThrow("CAPABILITY_DENIED");
+    expect(audit).toMatchObject([
+      { capabilityId: "shell.exec", outcome: "denied" },
+    ]);
+  });
+
   it("isolates owners and rejects stale or forged approvals", async () => {
     const { service } = fixture();
     const original = await draft(service);
