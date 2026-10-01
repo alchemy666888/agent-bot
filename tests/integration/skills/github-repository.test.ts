@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GitHubSkillRepository } from "../../../src/server/github/skill-repository";
-import {
-  GitHubSkillsClient,
-  GitHubSkillsError,
-} from "../../../src/server/github/skills-client";
+import { GitHubSkillsClient } from "../../../src/server/github/skills-client";
 
 const FIRST = "1".repeat(40);
 const SECOND = "2".repeat(40);
@@ -148,8 +145,18 @@ function repository(mock: ReturnType<typeof githubMock>) {
     },
     { fetch: mock.fetch as typeof fetch, tokenProvider, maxReadRetries: 0 },
   );
-  return new GitHubSkillRepository(client);
+  return new GitHubSkillRepository(client, {
+    policy: {
+      authors: new Set(["123"]),
+      approvers: new Set(["123"]),
+      retirees: new Set(["123"]),
+      capabilityGrants: new Map([["123", new Set(["weather.lookup"])]]),
+    },
+  });
 }
+
+const owner = { telegramUserId: "123" };
+const stranger = { telegramUserId: "999" };
 
 describe("GitHubSkillRepository contract", () => {
   beforeEach(() => tokenProvider.mockClear());
@@ -157,33 +164,66 @@ describe("GitHubSkillRepository contract", () => {
   it("loads repeated and concurrent reads idempotently", async () => {
     const repo = repository(githubMock());
     const results = await Promise.all(
-      Array.from({ length: 5 }, () => repo.getById(SKILL_ID)),
+      Array.from({ length: 5 }, () => repo.getById(owner, SKILL_ID)),
     );
     expect(results).toEqual(Array(5).fill(results[0]));
-    expect((await repo.getById(SKILL_ID))?.commitSha).toBe(FIRST);
+    expect((await repo.getById(owner, SKILL_ID))?.commitSha).toBe(FIRST);
   });
 
   it("filters active catalog entries by ownership", async () => {
     const repo = repository(githubMock());
-    expect(await repo.listAvailableToTelegramUser("999")).toEqual([]);
-    expect(await repo.listAvailableToTelegramUser("123")).toEqual([
+    expect(await repo.listAvailableToTelegramUser(stranger)).toEqual([]);
+    expect(await repo.listAvailableToTelegramUser(owner)).toEqual([
       expect.objectContaining({ id: SKILL_ID, name: "Weather" }),
     ]);
+  });
+
+  it("makes missing and unauthorized reads indistinguishable", async () => {
+    const repo = repository(githubMock());
+    expect(await repo.getById(stranger, SKILL_ID)).toBeNull();
+    expect(await repo.getById(owner, randomUUID())).toBeNull();
+    await expect(
+      repo.authorizeInvocation({ actor: stranger, skillId: SKILL_ID }),
+    ).rejects.toMatchObject({ code: "SKILL_NOT_FOUND" });
+  });
+
+  it("validates invocation capabilities against operator policy", async () => {
+    const mock = githubMock();
+    const client = new GitHubSkillsClient(
+      {
+        connector: "github/test",
+        owner: "owner",
+        repository: "catalog",
+        branch: "main",
+      },
+      { fetch: mock.fetch as typeof fetch, tokenProvider, maxReadRetries: 0 },
+    );
+    const repo = new GitHubSkillRepository(client, {
+      policy: {
+        authors: new Set(),
+        approvers: new Set(),
+        retirees: new Set(),
+        capabilityGrants: new Map([["123", new Set()]]),
+      },
+    });
+    await expect(
+      repo.authorizeInvocation({ actor: owner, skillId: SKILL_ID }),
+    ).rejects.toMatchObject({ code: "SKILL_NOT_FOUND" });
   });
 
   it("pins immutable versions even after the default branch advances", async () => {
     const mock = githubMock();
     const repo = repository(mock);
-    const oldVersion = await repo.getById(SKILL_ID, FIRST);
+    const oldVersion = await repo.getById(owner, SKILL_ID, FIRST);
     mock.setHead(SECOND);
-    const current = await repo.getById(SKILL_ID);
+    const current = await repo.getById(owner, SKILL_ID);
     expect(oldVersion).toEqual(
       expect.objectContaining({ commitSha: FIRST, manifestRevision: 1 }),
     );
     expect(current).toEqual(
       expect.objectContaining({ commitSha: SECOND, manifestRevision: 2 }),
     );
-    expect(await repo.getById(SKILL_ID, FIRST)).toEqual(oldVersion);
+    expect(await repo.getById(owner, SKILL_ID, FIRST)).toEqual(oldVersion);
   });
 
   it("surfaces optimistic write conflicts without retrying", async () => {
@@ -191,15 +231,14 @@ describe("GitHubSkillRepository contract", () => {
     mock.rejectWrites();
     await expect(
       repository(mock).retire({
+        actor: owner,
         skillId: SKILL_ID,
         branch: "main",
-        actorTelegramUserId: "123",
+        expectedBranchSha: FIRST,
+        expectedManifestSha: "manifest-1",
       }),
     ).rejects.toEqual(
-      expect.objectContaining<Partial<GitHubSkillsError>>({
-        kind: "conflict",
-        retryable: false,
-      }),
+      expect.objectContaining({ code: "SKILL_REVISION_CONFLICT" }),
     );
     expect(mock.writes).toBe(0);
   });
@@ -208,17 +247,22 @@ describe("GitHubSkillRepository contract", () => {
     const mock = githubMock();
     const repo = repository(mock);
     await repo.retire({
+      actor: owner,
       skillId: SKILL_ID,
       branch: "main",
-      actorTelegramUserId: "123",
+      expectedBranchSha: FIRST,
+      expectedManifestSha: "manifest-1",
     });
     expect(mock.writes).toBe(1);
-    expect(await repo.listAvailableToTelegramUser("123", "main")).toEqual([]);
+    expect(await repo.listAvailableToTelegramUser(owner, "main")).toEqual([]);
   });
 
   it("rejects malformed repository documents", async () => {
     await expect(
-      repository(githubMock({ malformedManifest: true })).getById(SKILL_ID),
+      repository(githubMock({ malformedManifest: true })).getById(
+        owner,
+        SKILL_ID,
+      ),
     ).rejects.toThrow();
   });
 });
