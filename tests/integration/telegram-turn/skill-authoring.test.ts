@@ -29,6 +29,10 @@ describe("Telegram skill authoring", () => {
       getBranchHead: vi.fn(async () => head),
       createBranch: vi.fn(async (_branch: string, base: string) => base),
       readFile: vi.fn(async (path: string) => files.get(path)!),
+      compareCommits: vi.fn(async () => ({
+        status: "ahead",
+        files: [...files.keys()].map((path) => ({ path, status: "added" })),
+      })),
       putFile: vi.fn(
         async ({ path, content }: { path: string; content: string }) => {
           const sha = (sequence++).toString(16).padStart(40, "0");
@@ -41,6 +45,7 @@ describe("Telegram skill authoring", () => {
         number: 1,
         html_url: "https://example.test/pull/1",
       })),
+      listPullRequests: vi.fn(async () => []),
     };
     const generator = {
       generateSkillDraft: vi.fn(
@@ -50,7 +55,10 @@ describe("Telegram skill authoring", () => {
     };
     const skills = new SkillAuthoringService(
       root,
-      new DurableSkillDraftRepository(root, locks, git),
+      new DurableSkillDraftRepository(root, locks, git, {
+        authorTelegramUserIds: new Set(["3"]),
+        capabilityIds: new Set(),
+      }),
       generator,
     );
     const telegram = {

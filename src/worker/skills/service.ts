@@ -162,6 +162,7 @@ export class SkillAuthoringService {
         lastProcessedUpdateId: null,
         lastResponse: null,
         branch: "",
+        baseCommitSha: "",
         latestCommitSha: "",
         skillBlobSha: null,
         manifestBlobSha: null,
@@ -174,7 +175,10 @@ export class SkillAuthoringService {
     // Installation is an idempotent write, so finish that transition first.
     if (draft.status === "approved") {
       const published = await this.repository.publish(draft);
-      const response = `Opened pull request #${published.number} to publish skill “${draft.skillName}” at revision ${draft.revisionNumber}: ${published.url}`;
+      const response =
+        published.state === "merged"
+          ? `Installed skill “${draft.skillName}” revision ${draft.revisionNumber}: pull request #${published.number} is merged into the configured base branch.`
+          : `Installed skill “${draft.skillName}” revision ${draft.revisionNumber} by successfully creating pull request #${published.number}: ${published.url}. An operator must merge it into the configured base branch.`;
       await this.repository.save(
         {
           ...draft,
@@ -190,11 +194,7 @@ export class SkillAuthoringService {
       return response;
     }
 
-    const approve = text
-      .trim()
-      .match(
-        /^\/skill_approve\s+(\S+)\s+(\d+)\s+([a-f0-9]{40})\s+(sha256:[a-f0-9]{64})$/i,
-      );
+    const approve = text.trim().match(/^\/skill_approve\s+(\d+)$/i);
     if (/^\/skill_cancel$/i.test(text.trim())) {
       const response =
         "Skill draft cancelled. Start again whenever you are ready.";
@@ -211,7 +211,7 @@ export class SkillAuthoringService {
       return response;
     }
     if (/^\/skill_approve\b/i.test(text.trim()) && !approve) {
-      const response = `Approval must name the exact draft, revision, commit, and digest: /skill_approve ${draft.id} ${draft.revisionNumber} ${draft.latestCommitSha} ${draft.contentDigest}`;
+      const response = `Approval must name the displayed revision: /skill_approve ${draft.revisionNumber}`;
       await this.repository.save(
         {
           ...draft,
@@ -224,15 +224,13 @@ export class SkillAuthoringService {
       return response;
     }
     if (approve) {
-      const [, requestedId, revision, requestedCommit, requestedDigest] =
-        approve;
+      const [, revision] = approve;
       const requested = Number(revision);
       if (
         draft.status !== "awaiting_approval" ||
-        requestedId !== draft.id ||
         requested !== draft.revisionNumber ||
-        requestedCommit !== draft.latestCommitSha ||
-        requestedDigest !== draft.contentDigest
+        !draft.latestCommitSha ||
+        !draft.contentDigest
       ) {
         const response = `That approval is stale or not applicable. Review the current draft ${draft.id}, revision ${draft.revisionNumber}, commit ${draft.latestCommitSha}, digest ${draft.contentDigest}.`;
         await this.repository.save(
@@ -256,8 +254,30 @@ export class SkillAuthoringService {
         },
         "skill_draft.approved",
       );
-      const published = await this.repository.publish(draft);
-      const response = `Opened pull request #${published.number} to publish skill “${draft.skillName}” at revision ${draft.revisionNumber}: ${published.url}`;
+      let published;
+      try {
+        published = await this.repository.publish(draft);
+      } catch (error) {
+        if ((error as Error).message === "SKILL_REVISION_REQUIRED") {
+          const response = `Revision required: the approved branch or commit conflicts with the reviewed revision. Create and approve a new revision; remote changes were not overwritten.`;
+          await this.repository.save(
+            {
+              ...draft,
+              status: "revision_requested",
+              updatedAt: now,
+              lastProcessedUpdateId: updateId,
+              lastResponse: response,
+            },
+            "skill_draft.revision_required",
+          );
+          return response;
+        }
+        throw error;
+      }
+      const response =
+        published.state === "merged"
+          ? `Installed skill “${draft.skillName}” revision ${draft.revisionNumber}: pull request #${published.number} is merged into the configured base branch.`
+          : `Installed skill “${draft.skillName}” revision ${draft.revisionNumber} by successfully creating pull request #${published.number}: ${published.url}. An operator must merge it into the configured base branch.`;
       await this.repository.save(
         {
           ...draft,
@@ -323,7 +343,7 @@ export class SkillAuthoringService {
       },
       "skill_draft.draft_ready",
     );
-    const response = `${content}\n\nDraft ${draft.id}, revision ${revisionNumber}.\nCommit: ${draft.latestCommitSha}\nDigest: ${draft.contentDigest}\nApprove: /skill_approve ${draft.id} ${revisionNumber} ${draft.latestCommitSha} ${draft.contentDigest}\nRevise: send comments (or /skill_revise ${revisionNumber} <comments>)\nCancel: /skill_cancel`;
+    const response = `${content}\n\nDraft ${draft.id}, revision ${revisionNumber}.\nCommit: ${draft.latestCommitSha}\nDigest: ${draft.contentDigest}\nApprove: /skill_approve ${revisionNumber}\nRevise: send comments (or /skill_revise ${revisionNumber} <comments>)\nCancel: /skill_cancel`;
     await this.repository.save(
       {
         ...draft,
