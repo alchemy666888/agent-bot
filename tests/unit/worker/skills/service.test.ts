@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +19,39 @@ async function fixture() {
   root = await mkdtemp(join(tmpdir(), "skill-authoring-"));
   await initializeLayout(root);
   const locks = new LockCoordinator(root);
-  const repository = new DurableSkillDraftRepository(root, locks);
+  const files = new Map<string, { content: string; sha: string }>();
+  let sequence = 1;
+  let head = "0".repeat(40);
+  const sha = () => (sequence++).toString(16).padStart(40, "0");
+  const git = {
+    controlledPrefix: "skills",
+    defaultBranch: "main",
+    getBranchHead: vi.fn(async () => head),
+    createBranch: vi.fn(async (_branch: string, base: string) => base),
+    readFile: vi.fn(async (path: string) => files.get(path)!),
+    putFile: vi.fn(
+      async ({
+        path,
+        content,
+        expectedSha,
+      }: {
+        path: string;
+        content: string;
+        expectedSha: string | null;
+      }) => {
+        expect(files.get(path)?.sha ?? null).toBe(expectedSha);
+        const fileSha = sha();
+        head = sha();
+        files.set(path, { content, sha: fileSha });
+        return { sha: fileSha, commitSha: head };
+      },
+    ),
+    openPullRequest: vi.fn(async () => ({
+      number: 17,
+      html_url: "https://example.test/pull/17",
+    })),
+  };
+  const repository = new DurableSkillDraftRepository(root, locks, git);
   const generator = {
     generateSkillDraft: vi.fn(
       async (draft) =>
@@ -31,6 +63,7 @@ async function fixture() {
     repository,
     generator,
     service: new SkillAuthoringService(root, repository, generator),
+    git,
   };
 }
 
@@ -66,11 +99,11 @@ describe("skill authoring domain", () => {
     const first = await locks.withUser("42", () =>
       service.handle("42", initial, "1"),
     );
-    expect(first).toContain("/skill_approve 1");
+    expect(first).toContain("/skill_approve ");
     const revised = await locks.withUser("42", () =>
       service.handle("42", "Also check provenance", "2"),
     );
-    expect(revised).toContain("/skill_approve 2");
+    expect(revised).toContain("revision 2");
     expect(generator.generateSkillDraft).toHaveBeenLastCalledWith(
       expect.anything(),
       "Also check provenance",
@@ -78,26 +111,23 @@ describe("skill authoring domain", () => {
     const revisedAgain = await locks.withUser("42", () =>
       service.handle("42", "Use a compact result table", "20"),
     );
-    expect(revisedAgain).toContain("/skill_approve 3");
+    expect(revisedAgain).toContain("revision 3");
     const stale = await locks.withUser("42", () =>
       service.handle("42", "/skill_approve 1", "3"),
     );
-    expect(stale).toContain("stale");
+    expect(stale).toContain("exact draft");
+    const current = await repository.activeForOwner("42");
+    const command = `/skill_approve ${current!.id} ${current!.revisionNumber} ${current!.latestCommitSha} ${current!.contentDigest}`;
     const installed = await locks.withUser("42", () =>
-      service.handle("42", "/skill_approve 3", "4"),
+      service.handle("42", command, "4"),
     );
-    expect(installed).toContain("Installed");
+    expect(installed).toContain("pull request");
     expect(await repository.activeForOwner("42")).toBeUndefined();
-    expect(
-      await readFile(join(root, "skills/release-auditor/SKILL.md"), "utf8"),
-    ).toContain("name: release-auditor");
     // A fresh worker replaying the same update returns the durable response
     // instead of creating a second installation.
     const recovered = new SkillAuthoringService(root, repository, generator);
     expect(
-      await locks.withUser("42", () =>
-        recovered.handle("42", "/skill_approve 3", "4"),
-      ),
+      await locks.withUser("42", () => recovered.handle("42", command, "4")),
     ).toBe(installed);
   });
 

@@ -1,7 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { uuidV7 } from "../../shared/ids";
-import { atomicJson } from "../persistence/atomic-json";
 import type { SkillDraft, SkillDraftGenerator } from "./types";
 import { DurableSkillDraftRepository } from "./repository";
 
@@ -145,8 +142,9 @@ export class SkillAuthoringService {
     if (!draft) {
       if (!isSkillCreationRequest(text))
         throw new Error("SKILL_DRAFT_NOT_ACTIVE");
-      draft = {
+      draft = await this.repository.begin({
         id: uuidV7(),
+        stableId: uuidV7(),
         ownerTelegramUserId: userId,
         skillName: null,
         intendedTasksDomain: null,
@@ -163,19 +161,26 @@ export class SkillAuthoringService {
         installedAt: null,
         lastProcessedUpdateId: null,
         lastResponse: null,
-      };
+        branch: "",
+        latestCommitSha: "",
+        skillBlobSha: null,
+        manifestBlobSha: null,
+        contentDigest: null,
+        pullRequestNumber: null,
+      });
     }
 
     // An approval event may have been committed just before a worker crash.
     // Installation is an idempotent write, so finish that transition first.
     if (draft.status === "approved") {
-      await this.install(draft);
-      const response = `Installed skill “${draft.skillName}” at revision ${draft.revisionNumber}.`;
+      const published = await this.repository.publish(draft);
+      const response = `Opened pull request #${published.number} to publish skill “${draft.skillName}” at revision ${draft.revisionNumber}: ${published.url}`;
       await this.repository.save(
         {
           ...draft,
           status: "installed",
           installedAt: now,
+          pullRequestNumber: published.number,
           updatedAt: now,
           lastProcessedUpdateId: updateId,
           lastResponse: response,
@@ -185,7 +190,11 @@ export class SkillAuthoringService {
       return response;
     }
 
-    const approve = text.trim().match(/^\/skill_approve\s+(\d+)$/i);
+    const approve = text
+      .trim()
+      .match(
+        /^\/skill_approve\s+(\S+)\s+(\d+)\s+([a-f0-9]{40})\s+(sha256:[a-f0-9]{64})$/i,
+      );
     if (/^\/skill_cancel$/i.test(text.trim())) {
       const response =
         "Skill draft cancelled. Start again whenever you are ready.";
@@ -202,7 +211,7 @@ export class SkillAuthoringService {
       return response;
     }
     if (/^\/skill_approve\b/i.test(text.trim()) && !approve) {
-      const response = `Approval must name the current revision exactly: /skill_approve ${draft.revisionNumber}`;
+      const response = `Approval must name the exact draft, revision, commit, and digest: /skill_approve ${draft.id} ${draft.revisionNumber} ${draft.latestCommitSha} ${draft.contentDigest}`;
       await this.repository.save(
         {
           ...draft,
@@ -215,12 +224,17 @@ export class SkillAuthoringService {
       return response;
     }
     if (approve) {
-      const requested = Number(approve[1]);
+      const [, requestedId, revision, requestedCommit, requestedDigest] =
+        approve;
+      const requested = Number(revision);
       if (
         draft.status !== "awaiting_approval" ||
-        requested !== draft.revisionNumber
+        requestedId !== draft.id ||
+        requested !== draft.revisionNumber ||
+        requestedCommit !== draft.latestCommitSha ||
+        requestedDigest !== draft.contentDigest
       ) {
-        const response = `That approval is stale or not applicable. The current draft is revision ${draft.revisionNumber} (${draft.status}). Use /skill_approve ${draft.revisionNumber} only after reviewing it.`;
+        const response = `That approval is stale or not applicable. Review the current draft ${draft.id}, revision ${draft.revisionNumber}, commit ${draft.latestCommitSha}, digest ${draft.contentDigest}.`;
         await this.repository.save(
           {
             ...draft,
@@ -242,13 +256,14 @@ export class SkillAuthoringService {
         },
         "skill_draft.approved",
       );
-      await this.install(draft);
-      const response = `Installed skill “${draft.skillName}” at revision ${draft.revisionNumber}.`;
+      const published = await this.repository.publish(draft);
+      const response = `Opened pull request #${published.number} to publish skill “${draft.skillName}” at revision ${draft.revisionNumber}: ${published.url}`;
       await this.repository.save(
         {
           ...draft,
           status: "installed",
           installedAt: now,
+          pullRequestNumber: published.number,
           updatedAt: now,
           lastProcessedUpdateId: updateId,
           lastResponse: response,
@@ -297,18 +312,18 @@ export class SkillAuthoringService {
       "skill_draft.analysis_started",
     );
     const content = await this.generator.generateSkillDraft(draft, feedback);
-    const revisionNumber = draft.revisionNumber + 1;
+    draft = await this.repository.commitRevision(draft, content);
+    const revisionNumber = draft.revisionNumber;
     draft = await this.repository.save(
       {
         ...draft,
-        draftContent: content,
-        revisionNumber,
+        draftContent: null,
         status: "draft_ready",
         updatedAt: now,
       },
       "skill_draft.draft_ready",
     );
-    const response = `${content}\n\nDraft revision ${revisionNumber}.\nApprove: /skill_approve ${revisionNumber}\nRevise: send comments (or /skill_revise ${revisionNumber} <comments>)\nCancel: /skill_cancel`;
+    const response = `${content}\n\nDraft ${draft.id}, revision ${revisionNumber}.\nCommit: ${draft.latestCommitSha}\nDigest: ${draft.contentDigest}\nApprove: /skill_approve ${draft.id} ${revisionNumber} ${draft.latestCommitSha} ${draft.contentDigest}\nRevise: send comments (or /skill_revise ${revisionNumber} <comments>)\nCancel: /skill_cancel`;
     await this.repository.save(
       {
         ...draft,
@@ -320,21 +335,6 @@ export class SkillAuthoringService {
       "skill_draft.awaiting_approval",
     );
     return response;
-  }
-
-  private async install(draft: SkillDraft): Promise<void> {
-    if (!draft.skillName || !draft.draftContent)
-      throw new Error("SKILL_DRAFT_INCOMPLETE");
-    const directory = join(this.root, "skills", draft.skillName);
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, "SKILL.md"), draft.draftContent, {
-      mode: 0o600,
-    });
-    await atomicJson(join(directory, ".installation.json"), {
-      draftId: draft.id,
-      revisionNumber: draft.revisionNumber,
-      ownerTelegramUserId: draft.ownerTelegramUserId,
-    });
   }
 }
 
