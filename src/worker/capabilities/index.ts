@@ -90,7 +90,10 @@ export function createCapabilityRegistry(
 ) {
   return new CapabilityRegistry([
     {
-      scope: "general",
+      // This compatibility capability is only exposed to installed skills that
+      // explicitly declare it. General fallback uses the provider-native tool
+      // in the answer request, avoiding a redundant model call.
+      scope: "skill",
       request: {
         id: "web_search",
         description:

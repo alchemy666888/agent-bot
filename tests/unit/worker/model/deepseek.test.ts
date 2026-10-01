@@ -29,6 +29,7 @@ describe("model adapter", () => {
       { apiKey: "fixture", baseUrl: "https://example.test", thinking: true },
       fetcher as typeof fetch,
     ).generate({
+      executionMode: "direct",
       messages: [
         { role: "system", content: "be helpful" },
         { role: "user", content: "hi" },
@@ -46,10 +47,8 @@ describe("model adapter", () => {
       model: "deepseek-v4-pro",
       stream: false,
       reasoning: { effort: "medium" },
-      tools: [{ type: "web_search" }],
-      tool_choice: "auto",
       instructions:
-        "be helpful\n\nIf no specialized skill is active, answer helpfully using general knowledge and the available general tools. For current or uncertain facts, use an available tool when useful and state material uncertainty. Never invent, describe, or expose tool-call XML, JSON, function-call syntax, hidden reasoning, or other internal protocol.\n\nFor questions that depend on current or local facts, such as weather, news, prices, or schedules, use web search before answering. Answer from the search results and include source links. Say that a search returned nothing only when the tool result is actually empty.",
+        "be helpful\n\nIf no specialized skill is active, answer helpfully using general knowledge and the available general tools. For current or uncertain facts, use an available tool when useful and state material uncertainty. Never invent, describe, or expose tool-call XML, JSON, function-call syntax, hidden reasoning, or other internal protocol.",
       input: [{ role: "user", content: "hi" }],
     });
     expect(body.instructions).toContain("be helpful");
@@ -85,7 +84,14 @@ describe("model adapter", () => {
     const result = await new DeepSeekProvider(
       { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
       fetcher as typeof fetch,
-    ).generate({ messages: [{ role: "user", content: "weather" }] });
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "weather" }],
+    });
+    const initial = JSON.parse(
+      String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
+    );
+    expect(initial.tool_choice).toEqual({ type: "web_search" });
     expect(result.content).toBe("Hong Kong is sunny.");
     expect(result.capabilityAudit).toEqual([
       {
@@ -95,6 +101,43 @@ describe("model adapter", () => {
       },
     ]);
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it("turns a failed forced search into a safe final limitation", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            output: [{ type: "web_search_call", id: "ws1", status: "failed" }],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            output_text: "I couldn't verify current information right now.",
+          }),
+        ),
+      );
+    const result = await new DeepSeekProvider(
+      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "latest news" }],
+    });
+    expect(result).toMatchObject({
+      content: "I couldn't verify current information right now.",
+      outputRecovery: { triggered: true, succeeded: true },
+      capabilityAudit: [{ capabilityId: "web_search", outcome: "failure" }],
+    });
+    const recoveryBody = JSON.parse(
+      String((fetcher.mock.calls[1]?.[1] as RequestInit | undefined)?.body),
+    );
+    expect(recoveryBody.tools).toBeUndefined();
+    expect(recoveryBody.instructions).toContain(
+      "failed or produced no useful results",
+    );
   });
   it("uses DeepSeek web_search instead of a client function with the same name", async () => {
     const fetcher = vi.fn(
@@ -110,6 +153,7 @@ describe("model adapter", () => {
       { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
       fetcher as typeof fetch,
     ).generate({
+      executionMode: "selected_skill",
       messages: [{ role: "user", content: "news" }],
       skill: {
         id: "news",
@@ -158,6 +202,7 @@ describe("model adapter", () => {
       { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
       fetcher as typeof fetch,
     ).generate({
+      executionMode: "selected_skill",
       messages: [{ role: "user", content: "news" }],
       skill: {
         id: "calc",
@@ -231,7 +276,10 @@ describe("model adapter", () => {
       new DeepSeekProvider(
         { apiKey: "x", baseUrl: "https://example.test", thinking: false },
         fetcher as typeof fetch,
-      ).generate({ messages: [{ role: "user", content: "x" }] }),
+      ).generate({
+        executionMode: "direct",
+        messages: [{ role: "user", content: "x" }],
+      }),
     ).resolves.toMatchObject({
       content: "A direct, safe answer",
       outputRecovery: { triggered: true, succeeded: true },
@@ -262,7 +310,10 @@ describe("model adapter", () => {
         { apiKey: "x", baseUrl: "https://example.test", thinking: false },
         fetcher as typeof fetch,
         new CapabilityRegistry(),
-      ).generate({ messages: [{ role: "user", content: "x" }] }),
+      ).generate({
+        executionMode: "direct",
+        messages: [{ role: "user", content: "x" }],
+      }),
     ).resolves.toMatchObject({
       content: "No-tool answer",
       capabilityAudit: [{ capabilityId: "lookup", outcome: "denied" }],
@@ -310,6 +361,7 @@ describe("model adapter", () => {
         fetcher as typeof fetch,
         registry,
       ).generate({
+        executionMode: "selected_tools",
         messages: [{ role: "user", content: "weather?" }],
         generalCapabilities: registry.requests(["lookup"]),
       }),
@@ -337,7 +389,10 @@ describe("model adapter", () => {
       new DeepSeekProvider(
         { apiKey: "x", baseUrl: "https://example.test", thinking: false },
         fetcher as typeof fetch,
-      ).generate({ messages: [{ role: "user", content: "x" }] }),
+      ).generate({
+        executionMode: "direct",
+        messages: [{ role: "user", content: "x" }],
+      }),
     ).resolves.toMatchObject({
       content: "Clean answer",
       outputRecovery: { triggered: true, succeeded: true },

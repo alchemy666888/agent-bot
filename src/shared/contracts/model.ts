@@ -66,6 +66,7 @@ export const routingDecisionSchema = z.discriminatedUnion("kind", [
     .object({ kind: z.literal("web_search_fallback"), ...routingCommon })
     .strict(),
   z.object({ kind: z.literal("direct"), ...routingCommon }).strict(),
+  z.object({ kind: z.literal("unavailable"), ...routingCommon }).strict(),
   z
     .object({
       kind: z.literal("ambiguous"),
@@ -103,9 +104,17 @@ export const skillContextSchema = z
     prohibitedActions: z.array(z.string().min(1)).default([]),
   })
   .strict();
+export const modelExecutionModeSchema = z.enum([
+  "direct",
+  "selected_skill",
+  "selected_tools",
+  "forced_web_search",
+]);
 export const modelRequestSchema = z
   .object({
     messages: z.array(modelMessageSchema).min(1),
+    /** Chosen by trusted orchestration; model providers must not infer or broaden it. */
+    executionMode: modelExecutionModeSchema,
     skill: skillContextSchema.optional(),
     generalCapabilities: z.array(capabilityRequestSchema).optional(),
     signal: z.instanceof(AbortSignal).optional(),
@@ -147,6 +156,7 @@ export const modelResponseSchema = z
   })
   .strict();
 export type ModelRequest = z.infer<typeof modelRequestSchema>;
+export type ModelExecutionMode = z.infer<typeof modelExecutionModeSchema>;
 export type ModelResponse = z.infer<typeof modelResponseSchema>;
 export type CapabilityRequest = z.infer<typeof capabilityRequestSchema>;
 export type SkillContext = z.infer<typeof skillContextSchema>;

@@ -169,6 +169,7 @@ export class DurableConversationService {
     }
     const latest = messages.at(-1);
     return {
+      executionMode: "direct",
       messages: [
         { role: "system", content: systemPrompt },
         ...pairs

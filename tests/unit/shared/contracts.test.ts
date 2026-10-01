@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   modelResponseSchema,
+  modelRequestSchema,
   pageInputSchema,
   workerRequestSchema,
   workerResponseSchema,
@@ -50,6 +51,17 @@ describe("shared boundaries", () => {
       modelResponseSchema.parse({ content: "ok", reasoning_content: "hidden" }),
     ).toThrow();
     expect(() => pageInputSchema.parse({ page: 0 })).toThrow();
+    expect(() =>
+      modelRequestSchema.parse({
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    ).toThrow();
+    expect(
+      modelRequestSchema.parse({
+        executionMode: "forced_web_search",
+        messages: [{ role: "user", content: "latest news" }],
+      }).executionMode,
+    ).toBe("forced_web_search");
   });
   it("creates UUIDv7 and decimal Telegram ids", () => {
     expect(uuidV7()).toMatch(

@@ -67,7 +67,7 @@ export class DeepSeekRouter implements RequestRouter {
         stream: false,
         reasoning: { effort: this.config.thinking ? "medium" : "none" },
         instructions:
-          "Classify the current request only. Decide whether it needs an authorized skill or operator-approved tool. Select only IDs present in the supplied lists and prefer explicit user intent. Return only JSON matching the routing schema. Never propose arguments, executable instructions, or tool calls. Use web_search_fallback only when current external facts are required; use direct when no capability is needed; use ambiguous when clarification is necessary; use refuse for unsafe requests.",
+          "Classify the current request only. Select only IDs present in the supplied lists and prefer explicit user intent. Return only JSON matching the routing schema; never propose arguments, executable instructions, or tool calls. Use direct exactly when neither a skill nor external/current information is needed. Use a skill or tool when an authorized match applies. Use web_search_fallback only when no authorized skill or non-search tool applies and public web information can help answer. Use unavailable when the request requires an action that no authorized capability can perform and web search cannot perform it. Use ambiguous when clarification is necessary, and refuse only for unsafe requests.",
         input: [
           {
             role: "user",
@@ -117,7 +117,12 @@ export class DeepSeekRouter implements RequestRouter {
                   ],
                   additionalProperties: false,
                 },
-                ...["web_search_fallback", "direct", "refuse"].map((kind) => ({
+                ...[
+                  "web_search_fallback",
+                  "direct",
+                  "unavailable",
+                  "refuse",
+                ].map((kind) => ({
                   properties: {
                     kind: { const: kind },
                     confidence: { type: "number" },
