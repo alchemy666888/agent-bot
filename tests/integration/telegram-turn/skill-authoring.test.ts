@@ -20,6 +20,28 @@ describe("Telegram skill authoring", () => {
     root = await mkdtemp(join(tmpdir(), "telegram-skill-"));
     await initializeLayout(root);
     const locks = new LockCoordinator(root);
+    let head = "0".repeat(40);
+    let sequence = 1;
+    const files = new Map<string, { content: string; sha: string }>();
+    const git = {
+      controlledPrefix: "skills",
+      defaultBranch: "main",
+      getBranchHead: vi.fn(async () => head),
+      createBranch: vi.fn(async (_branch: string, base: string) => base),
+      readFile: vi.fn(async (path: string) => files.get(path)!),
+      putFile: vi.fn(
+        async ({ path, content }: { path: string; content: string }) => {
+          const sha = (sequence++).toString(16).padStart(40, "0");
+          head = (sequence++).toString(16).padStart(40, "0");
+          files.set(path, { content, sha });
+          return { sha, commitSha: head };
+        },
+      ),
+      openPullRequest: vi.fn(async () => ({
+        number: 1,
+        html_url: "https://example.test/pull/1",
+      })),
+    };
     const generator = {
       generateSkillDraft: vi.fn(
         async () =>
@@ -28,7 +50,7 @@ describe("Telegram skill authoring", () => {
     };
     const skills = new SkillAuthoringService(
       root,
-      new DurableSkillDraftRepository(root, locks),
+      new DurableSkillDraftRepository(root, locks, git),
       generator,
     );
     const telegram = {
@@ -60,7 +82,7 @@ describe("Telegram skill authoring", () => {
     expect(telegram.send).toHaveBeenCalledTimes(1);
     expect(telegram.send).toHaveBeenCalledWith(
       "2",
-      expect.stringContaining("/skill_approve 1"),
+      expect.stringContaining("/skill_approve "),
     );
   });
 });

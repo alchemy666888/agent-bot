@@ -30,6 +30,13 @@ export interface SkillDraft {
   installedAt: string | null;
   lastProcessedUpdateId: string | null;
   lastResponse: string | null;
+  stableId: string;
+  branch: string;
+  latestCommitSha: string;
+  skillBlobSha: string | null;
+  manifestBlobSha: string | null;
+  contentDigest: string | null;
+  pullRequestNumber: number | null;
 }
 
 export interface SkillDraftGenerator {
