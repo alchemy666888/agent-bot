@@ -6,12 +6,17 @@ import {
   readModelConfig,
   readSandboxConfig,
   readTelegramConfig,
+  readGitHubConfig,
 } from "../config";
 import { ensureSandbox } from "../sandbox/controller";
 import { installWorker, invokeWorker } from "../sandbox/transport";
 import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
 import type { TelegramInput } from "./input";
+import { createGitHubSkillsClient } from "../github/skills-client";
+import { GitHubSkillRepository } from "../github/skill-repository";
+
+const MAX_SKILL_CATALOG_BYTES = 4 * 1024 * 1024;
 
 const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
 
@@ -22,6 +27,21 @@ export async function dispatchTelegramInput(
 ) {
   const telegram = readTelegramConfig();
   const model = readModelConfig();
+  const github = readGitHubConfig();
+  const skillCatalog = await new GitHubSkillRepository(
+    createGitHubSkillsClient({
+      connector: github.GITHUB_CONNECTOR,
+      owner: github.GITHUB_SKILLS_OWNER,
+      repository: github.GITHUB_SKILLS_REPO,
+      branch: github.GITHUB_SKILLS_BRANCH,
+      prefix: github.GITHUB_SKILLS_PREFIX,
+    }),
+  ).loadCatalogSnapshot();
+  if (
+    Buffer.byteLength(JSON.stringify(skillCatalog), "utf8") >
+    MAX_SKILL_CATALOG_BYTES
+  )
+    throw new Error("SKILL_CATALOG_TOO_LARGE");
   const sandbox = await ensureSandbox(readSandboxConfig());
   const workerPath = await installWorker(
     sandbox,
@@ -34,7 +54,7 @@ export async function dispatchTelegramInput(
       contractVersion: 1,
       correlationId,
       operation: "telegramTurn",
-      payload: { input },
+      payload: { input, skillCatalog },
     },
     {
       TELEGRAM_BOT_TOKEN: telegram.TELEGRAM_BOT_TOKEN,

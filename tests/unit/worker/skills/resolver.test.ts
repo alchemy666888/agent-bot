@@ -18,17 +18,29 @@ const registry = () =>
 const skills = [
   {
     id: "weather",
-    version: "1",
+    commitSha: "a".repeat(40),
+    name: "Weather",
     instructions: "weather",
     triggers: { keywords: ["weather", "forecast"], minimumConfidence: 0.5 },
     tools: ["lookup"],
+    prohibitedActions: [],
+    visibility: "public" as const,
+    ownerTelegramUserIds: ["1"],
+    allowedTelegramUserIds: [],
+    status: "active" as const,
   },
   {
     id: "travel",
-    version: "2",
+    commitSha: "a".repeat(40),
+    name: "Travel",
     instructions: "travel",
     triggers: { keywords: ["travel", "forecast"], minimumConfidence: 0.5 },
     tools: ["lookup"],
+    prohibitedActions: [],
+    visibility: "public" as const,
+    ownerTelegramUserIds: ["1"],
+    allowedTelegramUserIds: [],
+    status: "active" as const,
   },
 ];
 
@@ -37,6 +49,7 @@ describe("skill resolver", () => {
     expect(
       new SkillResolver(registry(), skills).resolve(
         "/skill travel weather forecast",
+        "9",
       ),
     ).toMatchObject({
       kind: "selected",
@@ -47,6 +60,7 @@ describe("skill resolver", () => {
     expect(
       new SkillResolver(registry(), skills).resolve(
         "weather forecast tomorrow",
+        "9",
       ),
     ).toMatchObject({
       kind: "selected",
@@ -55,15 +69,28 @@ describe("skill resolver", () => {
     }));
   it("falls back for unrelated messages", () =>
     expect(
-      new SkillResolver(registry(), skills).resolve("tell me a joke"),
+      new SkillResolver(registry(), skills).resolve("tell me a joke", "9"),
     ).toEqual({ kind: "none" }));
   it("reports ambiguity rather than selecting", () =>
     expect(
-      new SkillResolver(registry(), skills).resolve("forecast"),
+      new SkillResolver(registry(), skills).resolve("forecast", "9"),
     ).toMatchObject({ kind: "ambiguous" }));
   it("denies undeclared installations", () =>
     expect(
       () =>
         new SkillResolver(registry(), [{ ...skills[0]!, tools: ["shell"] }]),
     ).toThrow("CAPABILITY_NOT_APPROVED"));
+  it("does not reveal private skills through explicit or automatic resolution", () => {
+    const privateSkill = {
+      ...skills[0]!,
+      visibility: "private" as const,
+      ownerTelegramUserIds: ["1"],
+    };
+    const resolver = new SkillResolver(registry(), [privateSkill]);
+    expect(resolver.resolve("/skill weather", "2")).toEqual({ kind: "none" });
+    expect(resolver.resolve("weather forecast", "2")).toEqual({ kind: "none" });
+    expect(resolver.resolve("weather forecast", "1")).toMatchObject({
+      kind: "selected",
+    });
+  });
 });

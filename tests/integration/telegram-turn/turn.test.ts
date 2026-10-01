@@ -77,11 +77,16 @@ describe("Telegram turn", () => {
     const skills = new SkillResolver(new CapabilityRegistry(), [
       {
         id: "safe-files",
-        version: "1",
+        commitSha: "a".repeat(40),
+        name: "Safe files",
         instructions: "Help with files.",
         triggers: { keywords: ["files"], minimumConfidence: 1 },
         tools: [],
         prohibitedActions: ["delete files"],
+        visibility: "public",
+        ownerTelegramUserIds: ["4"],
+        allowedTelegramUserIds: [],
+        status: "active",
       },
     ]);
     await new TelegramTurn(
