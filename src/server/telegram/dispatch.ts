@@ -15,13 +15,50 @@ import { uuidV7 } from "../../shared/ids";
 import type { TelegramInput } from "./input";
 import { createGitHubSkillsClient } from "../github/skills-client";
 import { GitHubSkillRepository } from "../github/skill-repository";
-import { logStructured } from "../../shared/logger";
+import { logStructured, safeError } from "../../shared/logger";
 import type { GitHubClientEvent } from "../github/skills-client";
 import type { SkillRepositoryEvent } from "../github/skill-repository";
 
 const MAX_SKILL_CATALOG_BYTES = 4 * 1024 * 1024;
 
 const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
+
+type SkillCatalog = Awaited<
+  ReturnType<GitHubSkillRepository["loadCatalogSnapshot"]>
+>;
+
+const EMPTY_SKILL_CATALOG: SkillCatalog = {
+  commitSha: "0".repeat(40),
+  skills: [],
+};
+
+/**
+ * Skills are an optional enhancement to an ordinary Telegram conversation.
+ * Fail closed (with no skills) when GitHub Connect is unavailable so a
+ * connector outage cannot prevent the bot from answering normal messages.
+ */
+export async function loadSkillCatalogOrEmpty(
+  load: () => Promise<SkillCatalog>,
+  correlationId: string,
+): Promise<SkillCatalog> {
+  const started = Date.now();
+  try {
+    return await load();
+  } catch (error) {
+    const failure = safeError(error, "GITHUB_CATALOG_UNAVAILABLE", "catalog");
+    logStructured({
+      correlationId,
+      component: "controller",
+      operation: "skill.catalog_load",
+      stage: "skill-repository",
+      result: "degraded",
+      durationMs: Date.now() - started,
+      code: "GITHUB_CATALOG_UNAVAILABLE",
+      ...(failure.diagnostic ? { metadata: failure.diagnostic } : {}),
+    });
+    return EMPTY_SKILL_CATALOG;
+  }
+}
 
 function auditGitHubEvent(
   correlationId: string,
@@ -68,20 +105,24 @@ export async function dispatchTelegramInput(
   // authenticated Telegram identity available for text turns.
   const skillCatalog =
     input.kind === "text"
-      ? await new GitHubSkillRepository(
-          createGitHubSkillsClient(
-            {
-              connector: github.GITHUB_CONNECTOR,
-              owner: github.GITHUB_SKILLS_OWNER,
-              repository: github.GITHUB_SKILLS_REPO,
-              branch: github.GITHUB_SKILLS_BRANCH,
-              prefix: github.GITHUB_SKILLS_PREFIX,
-            },
-            { audit: (event) => auditGitHubEvent(correlationId, event) },
-          ),
-          { audit: (event) => auditGitHubEvent(correlationId, event) },
-        ).loadCatalogSnapshot({ telegramUserId: input.userId })
-      : { commitSha: "0".repeat(40), skills: [] };
+      ? await loadSkillCatalogOrEmpty(
+          () =>
+            new GitHubSkillRepository(
+              createGitHubSkillsClient(
+                {
+                  connector: github.GITHUB_CONNECTOR,
+                  owner: github.GITHUB_SKILLS_OWNER,
+                  repository: github.GITHUB_SKILLS_REPO,
+                  branch: github.GITHUB_SKILLS_BRANCH,
+                  prefix: github.GITHUB_SKILLS_PREFIX,
+                },
+                { audit: (event) => auditGitHubEvent(correlationId, event) },
+              ),
+              { audit: (event) => auditGitHubEvent(correlationId, event) },
+            ).loadCatalogSnapshot({ telegramUserId: input.userId }),
+          correlationId,
+        )
+      : EMPTY_SKILL_CATALOG;
   if (
     Buffer.byteLength(JSON.stringify(skillCatalog), "utf8") >
     MAX_SKILL_CATALOG_BYTES
