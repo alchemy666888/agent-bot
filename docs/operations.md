@@ -6,6 +6,32 @@
 
 Useful operator questions include: skills/runs by owner and state; current/version pointer consistency; grants whose capability is disabled; expired processing leases; unknown-outcome tool calls; and audit events by actor, target, capability, execution, and UTC interval. Access these through read-only views/tooling, not ad-hoc mutation.
 
+## Router telemetry and acceptance thresholds
+
+The model-runs dashboard labels `runKind=router` classification cost separately
+from `runKind=answer` final-answer cost. Router records contain only outcome,
+selected skill/tool identifiers, confidence, latency, token counts, estimated
+cost, provider request ID, schema-validation result, routing mode, reroute
+count, fallback reason, and shadow disagreement. They must not contain the
+routing prompt, catalog descriptions, rationale, credentials, or raw tool
+arguments.
+
+Evaluate rolling 15-minute windows and the corresponding 24-hour baseline.
+Pause promotion—or roll enforced mode back to shadow—if any threshold is met:
+
+| Signal                       | Threshold                                                 |
+| ---------------------------- | --------------------------------------------------------- |
+| Router failure rate          | > 1% of routing attempts                                  |
+| p95 added router latency     | > 1,000 ms or > 20% above the accepted shadow baseline    |
+| Schema-invalid response rate | > 0.5%                                                    |
+| Forced-search rate           | > 10% or > 2x the accepted shadow baseline                |
+| Unexpected token cost        | Router plus answer cost > 10% above the per-turn baseline |
+
+Also require zero unauthorized selections/executions and zero protocol leaks.
+Treat missing usage or request IDs as unavailable telemetry, not zero cost.
+Investigate disagreement and fallback reason distributions without persisting
+the private catalog or model rationale.
+
 ## Capability and incident controls
 
 Set `SKILLS_ENABLED=false` to stop new skill runs. Disable a registry capability to stop its new dispatches; authorization checks the kill switch again immediately before a side effect. Do not edit a grant or approved version to contain an incident—revoke/disable it and create a new explicitly approved revision.

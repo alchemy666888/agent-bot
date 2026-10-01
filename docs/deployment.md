@@ -54,6 +54,23 @@ Each `create` flow opens or provides the GitHub App installation flow. On GitHub
 
 ## Ordered rollout
 
+## DeepSeek routing rollout
+
+Routing is off by default. Deploy the same artifact with
+`DEEPSEEK_ROUTING_ENABLED=true` and `DEEPSEEK_ROUTING_MODE=shadow` first. In
+shadow mode the worker obtains and validates a bounded classifier decision,
+but the established skill resolver/capability route remains authoritative; a
+shadow-selected skill or tool is never executed. Compare safe routing records
+for at least one representative peak window.
+
+Promotion to `DEEPSEEK_ROUTING_MODE=enforced` requires named operator approval
+and evidence that authorization tests pass, p95 added latency and cost remain
+within the thresholds in `docs/operations.md`, fallback and invalid-response
+rates are acceptable, and no internal protocol leaks reach Telegram. Configure
+the 250–30000 ms timeout and optional 0–1 minimum confidence before promotion;
+the server and worker reject out-of-range settings. Canary enforced routing
+with non-effectful capabilities before widening traffic.
+
 The transition used a temporary server-only `SKILL_STORE` selector with
 `postgres` as its initial default, `github-shadow` for comparison, and `github`
 for cutover. It was never sent to the browser or Sandbox. That selector and the

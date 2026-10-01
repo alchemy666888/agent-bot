@@ -21,6 +21,12 @@ export type RouterRunMetadata = {
   selectedToolId?: string;
   candidateIds?: string[];
   validationOutcome?: "valid" | "invalid";
+  confidence?: number;
+  fallbackReason?:
+    "timeout" | "provider_error" | "invalid_response" | "low_confidence";
+  rerouteCount?: number;
+  routingMode?: "shadow" | "enforced";
+  disagreement?: boolean;
 };
 
 export interface RequestRouter {
@@ -48,6 +54,7 @@ export class DeepSeekRouter implements RequestRouter {
       apiKey: string;
       baseUrl: string;
       thinking?: boolean;
+      timeoutMs?: number;
     },
     private readonly request: typeof fetch = fetch,
   ) {}
@@ -61,106 +68,134 @@ export class DeepSeekRouter implements RequestRouter {
   ): Promise<{ decision: RoutingDecision; run: RouterRunMetadata }> {
     const input = routingRequestSchema.parse(rawRequest);
     const started = Date.now();
-    const response = await this.request(`${this.config.baseUrl}/responses`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.config.apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "deepseek-v4-pro",
-        stream: false,
-        reasoning: { effort: this.config.thinking ? "medium" : "none" },
-        instructions:
-          "Classify the current request only. Select only IDs present in the supplied lists and prefer explicit user intent. Return only JSON matching the routing schema; never propose arguments, executable instructions, or tool calls. Use direct exactly when neither a skill nor external/current information is needed. Use a skill or tool when an authorized match applies. Use web_search_fallback only when no authorized skill or non-search tool applies and public web information can help answer. Use unavailable when the request requires an action that no authorized capability can perform and web search cannot perform it. Use ambiguous when clarification is necessary, and refuse only for unsafe requests.",
-        input: [
-          {
-            role: "user",
-            content: JSON.stringify({
-              request: input.request,
-              conversationContext: input.conversationContext,
-              authorizedSkills: input.authorizedSkills,
-              availableTools: input.availableTools,
-            }),
-          },
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "routing_decision",
-            strict: true,
-            schema: {
-              type: "object",
-              oneOf: [
-                {
-                  properties: {
-                    kind: { const: "skill" },
-                    selectedSkillId: { type: "string" },
-                    confidence: { type: "number" },
-                    rationale: { type: "string" },
-                  },
-                  required: [
-                    "kind",
-                    "selectedSkillId",
-                    "confidence",
-                    "rationale",
-                  ],
-                  additionalProperties: false,
-                },
-                {
-                  properties: {
-                    kind: { const: "tool" },
-                    selectedToolId: { type: "string" },
-                    confidence: { type: "number" },
-                    rationale: { type: "string" },
-                  },
-                  required: [
-                    "kind",
-                    "selectedToolId",
-                    "confidence",
-                    "rationale",
-                  ],
-                  additionalProperties: false,
-                },
-                ...[
-                  "web_search_fallback",
-                  "direct",
-                  "unavailable",
-                  "refuse",
-                ].map((kind) => ({
-                  properties: {
-                    kind: { const: kind },
-                    confidence: { type: "number" },
-                    rationale: { type: "string" },
-                  },
-                  required: ["kind", "confidence", "rationale"],
-                  additionalProperties: false,
-                })),
-                {
-                  properties: {
-                    kind: { const: "ambiguous" },
-                    candidateIds: {
-                      type: "array",
-                      items: { type: "string" },
-                      minItems: 2,
-                      maxItems: 10,
+    const timeout = AbortSignal.timeout(this.config.timeoutMs ?? 3_000);
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, timeout])
+      : timeout;
+    let response: Response;
+    try {
+      response = await this.request(`${this.config.baseUrl}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.config.apiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "deepseek-v4-pro",
+          stream: false,
+          reasoning: { effort: this.config.thinking ? "medium" : "none" },
+          instructions:
+            "Classify the current request only. Select only IDs present in the supplied lists and prefer explicit user intent. Return only JSON matching the routing schema; never propose arguments, executable instructions, or tool calls. Use direct exactly when neither a skill nor external/current information is needed. Use a skill or tool when an authorized match applies. Use web_search_fallback only when no authorized skill or non-search tool applies and public web information can help answer. Use unavailable when the request requires an action that no authorized capability can perform and web search cannot perform it. Use ambiguous when clarification is necessary, and refuse only for unsafe requests.",
+          input: [
+            {
+              role: "user",
+              content: JSON.stringify({
+                request: input.request,
+                conversationContext: input.conversationContext,
+                authorizedSkills: input.authorizedSkills,
+                availableTools: input.availableTools,
+              }),
+            },
+          ],
+          text: {
+            format: {
+              type: "json_schema",
+              name: "routing_decision",
+              strict: true,
+              schema: {
+                type: "object",
+                oneOf: [
+                  {
+                    properties: {
+                      kind: { const: "skill" },
+                      selectedSkillId: { type: "string" },
+                      confidence: { type: "number" },
+                      rationale: { type: "string" },
                     },
-                    confidence: { type: "number" },
-                    rationale: { type: "string" },
+                    required: [
+                      "kind",
+                      "selectedSkillId",
+                      "confidence",
+                      "rationale",
+                    ],
+                    additionalProperties: false,
                   },
-                  required: ["kind", "candidateIds", "confidence", "rationale"],
-                  additionalProperties: false,
-                },
-              ],
+                  {
+                    properties: {
+                      kind: { const: "tool" },
+                      selectedToolId: { type: "string" },
+                      confidence: { type: "number" },
+                      rationale: { type: "string" },
+                    },
+                    required: [
+                      "kind",
+                      "selectedToolId",
+                      "confidence",
+                      "rationale",
+                    ],
+                    additionalProperties: false,
+                  },
+                  ...[
+                    "web_search_fallback",
+                    "direct",
+                    "unavailable",
+                    "refuse",
+                  ].map((kind) => ({
+                    properties: {
+                      kind: { const: kind },
+                      confidence: { type: "number" },
+                      rationale: { type: "string" },
+                    },
+                    required: ["kind", "confidence", "rationale"],
+                    additionalProperties: false,
+                  })),
+                  {
+                    properties: {
+                      kind: { const: "ambiguous" },
+                      candidateIds: {
+                        type: "array",
+                        items: { type: "string" },
+                        minItems: 2,
+                        maxItems: 10,
+                      },
+                      confidence: { type: "number" },
+                      rationale: { type: "string" },
+                    },
+                    required: [
+                      "kind",
+                      "candidateIds",
+                      "confidence",
+                      "rationale",
+                    ],
+                    additionalProperties: false,
+                  },
+                ],
+              },
             },
           },
+        }),
+        signal,
+      });
+    } catch (error) {
+      throw Object.assign(
+        new Error("DEEPSEEK_ROUTING_FAILED", { cause: error }),
+        {
+          run: {
+            latencyMs: Date.now() - started,
+            validationOutcome: "invalid",
+            fallbackReason: timeout.aborted ? "timeout" : "provider_error",
+          } satisfies RouterRunMetadata,
         },
-      }),
-      signal: input.signal,
-    });
+      );
+    }
     if (!response.ok)
       throw Object.assign(new Error("DEEPSEEK_ROUTING_FAILED"), {
         status: response.status,
+        run: {
+          latencyMs: Date.now() - started,
+          validationOutcome: "invalid",
+          fallbackReason: "provider_error",
+        } satisfies RouterRunMetadata,
       });
 
     let body: ResponsesBody | undefined;
@@ -191,6 +226,7 @@ export class DeepSeekRouter implements RequestRouter {
             ? { candidateIds: decision.candidateIds }
             : {}),
           validationOutcome: "valid",
+          confidence: decision.confidence,
         },
       };
     } catch (error) {
@@ -209,6 +245,7 @@ export class DeepSeekRouter implements RequestRouter {
             : undefined,
           latencyMs: Date.now() - started,
           validationOutcome: "invalid",
+          fallbackReason: "invalid_response",
         } satisfies RouterRunMetadata,
       });
       throw invalid;
