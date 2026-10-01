@@ -10,6 +10,37 @@ Useful operator questions include: skills/runs by owner and state; current/versi
 
 Set `SKILLS_ENABLED=false` to stop new skill runs. Disable a registry capability to stop its new dispatches; authorization checks the kill switch again immediately before a side effect. Do not edit a grant or approved version to contain an incident—revoke/disable it and create a new explicitly approved revision.
 
+## GitHub connector, rate limits, and cache
+
+Monitor safe event counts and latency for `github.read`,
+`skill.catalog_refreshed`, `github.rate_limited`, validation failures, and
+bounded stale-cache use. Alert before the installation's remaining request
+budget can fall below forecast peak demand; correlate by deployment and UTC
+window, never by logging response headers or tokens. A sustained rate-limit,
+authentication, or validation error pauses authoring and approval. Only
+transient reads may use an already validated snapshot within the documented
+stale deadline.
+
+Cache keys include the resolved commit. A protected-branch merge becomes
+visible after the normal TTL; for an urgent refresh, redeploy/restart all server
+instances so their in-memory caches are empty, then verify the resolved commit
+and catalog refresh event. Never mutate a cached object, delete repository files
+to force refresh, or serve a snapshot validated for another ref.
+
+For a GitHub outage, disable new skill execution when the bounded stale window
+cannot cover the incident, leave Telegram general conversation available if it
+is healthy, and fail all skill mutations closed. Do not restore PostgreSQL
+definition rows or copy GitHub data into application tables. Resume only after
+authentication, branch resolution, schema validation, rate-limit headroom, and
+a canary invocation pass.
+
+Rotate a connector by creating a new least-privilege GitHub connection, attaching
+it only to Preview, deploying and completing read plus authoring smoke tests,
+then attaching it to Production and deploying. Confirm catalog commit and audit
+events before detaching and revoking the old connector. Record connector IDs,
+environment scopes, deployment IDs, and UTC times—but never tokens—in
+`docs/acceptance-evidence.md`.
+
 ## Skill authoring pull requests
 
 `/skill_approve <revision>` approves the exact commit and digest recorded for that

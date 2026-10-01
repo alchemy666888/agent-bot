@@ -81,6 +81,20 @@ function assertUnique(values, label) {
   return values;
 }
 
+export function createMismatchMetrics(reasons) {
+  return {
+    total: reasons.length,
+    byReason: Object.fromEntries(
+      [...new Set(reasons)]
+        .sort()
+        .map((reason) => [
+          reason,
+          reasons.filter((candidate) => candidate === reason).length,
+        ]),
+    ),
+  };
+}
+
 export function convertRow(input) {
   const row = rowSchema.parse(input);
   uuid.parse(row.stable_id);
@@ -391,14 +405,15 @@ async function main() {
     };
     await saveJson(STATE_PATH, state);
   }
-  const unresolved = [];
+  // Reconciliation output is deliberately aggregate-only. Individual source
+  // IDs, repository paths, owners, and document data belong in the two
+  // authoritative systems, not in an operator report that may be attached to
+  // a deployment ticket.
+  const mismatchReasons = [];
   for (const item of converted) {
     const mapped = state.versions[item.row.version_id];
     if (!mapped) {
-      unresolved.push({
-        sourceVersionId: item.row.version_id,
-        reason: "missing_commit",
-      });
+      mismatchReasons.push("missing_commit");
       continue;
     }
     const archive = `skills/${item.row.stable_id}/versions/${item.row.version_number}-${item.row.version_id}`;
@@ -414,27 +429,23 @@ async function main() {
         "utf8",
       );
       if (
+        target.id !== item.row.stable_id ||
+        target.migration?.sourceVersionId !== item.row.version_id ||
+        target.migration?.sourceStatus !== item.row.status ||
+        target.status !==
+          (item.row.status === "active" ? "active" : "retired") ||
         target.migration?.sourceContentDigest !== item.digest ||
         sha(targetBody) !== item.digest
       )
-        unresolved.push({
-          sourceVersionId: item.row.version_id,
-          reason: "content_mismatch",
-        });
+        mismatchReasons.push("identity_status_or_content_mismatch");
       if (
         canonical(target.ownerTelegramUserIds) !== canonical(item.row.owners) ||
         canonical(target.migration?.capabilities) !==
           canonical(item.row.capabilities)
       )
-        unresolved.push({
-          sourceVersionId: item.row.version_id,
-          reason: "owner_capability_mismatch",
-        });
+        mismatchReasons.push("owner_or_capability_mismatch");
     } catch {
-      unresolved.push({
-        sourceVersionId: item.row.version_id,
-        reason: "archive_unreadable",
-      });
+      mismatchReasons.push("archive_unreadable");
     }
   }
   for (const [stableId, expected] of pointerBySkill) {
@@ -453,11 +464,12 @@ async function main() {
         target.status !==
           (expected.row.status === "active" ? "active" : "retired")
       )
-        unresolved.push({ stableId, reason: "current_pointer_mismatch" });
+        mismatchReasons.push("current_pointer_mismatch");
     } catch {
-      unresolved.push({ stableId, reason: "current_pointer_unreadable" });
+      mismatchReasons.push("current_pointer_unreadable");
     }
   }
+  const mismatchMetrics = createMismatchMetrics(mismatchReasons);
   const current = [...converted].filter((x) => x.row.status === "active");
   const report = {
     schemaVersion: 1,
@@ -481,10 +493,10 @@ async function main() {
         })),
       ),
     ),
-    unresolved,
+    mismatchMetrics,
   };
   await saveJson(REPORT_PATH, report);
-  if (unresolved.length) throw new Error("RECONCILIATION_FAILED");
+  if (mismatchMetrics.total) throw new Error("RECONCILIATION_FAILED");
   const existing = await api.call(
     `/pulls?state=all&head=${encodeURIComponent(`${OWNER}:${BRANCH}`)}&base=${encodeURIComponent(BASE)}`,
   );

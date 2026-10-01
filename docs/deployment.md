@@ -54,16 +54,22 @@ Each `create` flow opens or provides the GitHub App installation flow. On GitHub
 
 ## Ordered rollout
 
+The transition used a temporary server-only `SKILL_STORE` selector with
+`postgres` as its initial default, `github-shadow` for comparison, and `github`
+for cutover. It was never sent to the browser or Sandbox. That selector and the
+PostgreSQL skill-definition repository have now been removed: current releases
+always read definitions from GitHub. The sequence below documents the required
+deployment history and must not be recreated by adding a client-visible flag.
+
 1. Disable or leave disabled Telegram delivery and set `SKILLS_ENABLED=false`; disable effectful capability registry entries.
 2. Create a provider-consistent backup and record its ID, schema version, UTC time, and encryption/retention location.
-3. Run `DATABASE_URL="$DATABASE_MIGRATOR_URL" pnpm migrate` from the trusted deployment job. Apply expand/migrate/contract migrations only after old code compatibility is proven.
-   Before the legacy skill-definition cleanup migration, attest the completed GitHub copy and reconciliation as described in `migrations/README.md`; the cleanup is never run by application startup.
-4. Run the migration acceptance suite against an empty database and an upgraded copy: `pnpm test -- tests/acceptance/skills/migration-restore.test.ts`.
-5. Deploy with `pnpm build`. Configure all `.env.example` values; keep capability credentials server-side and adapter-scoped.
-6. Check `/api/health` for schema compatibility, then exercise create → clarify → revise → approve → install → list → discover → select with capability execution still disabled.
-7. Verify a second user cannot find/select the private skill. Verify an unregistered/ungranted capability is denied and audited before dispatch.
-8. Run all acceptance suites and an isolated backup restoration. Link outputs/correlation IDs in `docs/acceptance-evidence.md`.
-9. After operator sign-off, enable approved registry entries, set `SKILLS_ENABLED=true`, redeploy, perform one low-risk canary execution, and register/re-enable the Telegram webhook last.
+3. On the historical transition release, deploy `postgres`, run the resumable operator migration, and require an aggregate reconciliation report with zero mismatches across IDs, owners, status, capabilities, and content digests.
+4. Deploy `github-shadow` to Preview. Keep PostgreSQL authoritative; load GitHub out of band and emit only aggregate safe reason/count metrics. Exercise the entire two-user workflow in `docs/acceptance-evidence.md`.
+5. Merge the migration PR after review, deploy Preview GitHub reads pinned to the merged commit, invalidate old process caches by redeploying, and repeat the workflow against the protected default branch.
+6. Switch Production reads to `github` by changing only the server environment and deploying the same artifact. Do not write back, dual-write, or copy deltas during cutover. Keep legacy definition tables read-only and retain the named pre-cutover backup for the operator-defined observation window.
+7. During that window, monitor GitHub authentication/validation failures, rate-limit headroom, stale-cache use, authorization denials, latency, and invocation results. Roll back using the selector and a deployment; never copy a partially migrated catalog during an incident.
+8. After the recorded observation window and approvals, attest the merged commit and zero-mismatch reconciliation as described in `migrations/README.md`, apply `20261001_drop_legacy_skill_definition_tables.sql`, and deploy this post-transition release, which contains no selector or PostgreSQL definition repository.
+9. Check `/api/health`, run the automated suites and isolated restore rehearsal, enable approved registry entries, set `SKILLS_ENABLED=true`, perform one low-risk canary invocation, and register/re-enable the Telegram webhook last.
 
 ```bash
 pnpm install --frozen-lockfile

@@ -1,5 +1,22 @@
 # Rollback and recovery
 
+## Skill-store cutover rollback
+
+During the defined pre-cleanup observation window, rollback changes the
+server-only selector from `github` to `postgres` and redeploys the last
+compatible artifact. The retained legacy tables are read-only throughout the
+window. Freeze authoring first, preserve the GitHub branch and audit evidence,
+and reconcile later under normal migration controls. Never copy a partially
+migrated GitHub catalog into PostgreSQL, replay uncertain writes, or dual-write
+during an incident.
+
+After the observation window, the selector, PostgreSQL definition repository,
+and dedicated tables no longer exist. Rollback is therefore a forward fix of
+GitHub access/configuration or deployment of a schema-compatible release; it is
+not a backend toggle. Restoring the retired backend requires a separately
+reviewed recovery migration from the named pre-cutover backup and must not occur
+inside incident response.
+
 ## Safe code rollback
 
 1. Disable the Telegram webhook, set `SKILLS_ENABLED=false`, and disable effectful capabilities so no new external side effects begin.
