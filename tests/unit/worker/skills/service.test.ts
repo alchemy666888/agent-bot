@@ -29,6 +29,10 @@ async function fixture() {
     getBranchHead: vi.fn(async () => head),
     createBranch: vi.fn(async (_branch: string, base: string) => base),
     readFile: vi.fn(async (path: string) => files.get(path)!),
+    compareCommits: vi.fn(async () => ({
+      status: "ahead",
+      files: [...files.keys()].map((path) => ({ path, status: "added" })),
+    })),
     putFile: vi.fn(
       async ({
         path,
@@ -50,8 +54,12 @@ async function fixture() {
       number: 17,
       html_url: "https://example.test/pull/17",
     })),
+    listPullRequests: vi.fn(async () => []),
   };
-  const repository = new DurableSkillDraftRepository(root, locks, git);
+  const repository = new DurableSkillDraftRepository(root, locks, git, {
+    authorTelegramUserIds: new Set(["42", "7"]),
+    capabilityIds: new Set(["shell"]),
+  });
   const generator = {
     generateSkillDraft: vi.fn(
       async (draft) =>
@@ -115,9 +123,9 @@ describe("skill authoring domain", () => {
     const stale = await locks.withUser("42", () =>
       service.handle("42", "/skill_approve 1", "3"),
     );
-    expect(stale).toContain("exact draft");
+    expect(stale).toContain("stale or not applicable");
     const current = await repository.activeForOwner("42");
-    const command = `/skill_approve ${current!.id} ${current!.revisionNumber} ${current!.latestCommitSha} ${current!.contentDigest}`;
+    const command = `/skill_approve ${current!.revisionNumber}`;
     const installed = await locks.withUser("42", () =>
       service.handle("42", command, "4"),
     );
@@ -143,5 +151,51 @@ describe("skill authoring domain", () => {
     ).toContain("cancelled");
     expect(await repository.activeForOwner("7")).toBeUndefined();
     expect(generator.generateSkillDraft).not.toHaveBeenCalled();
+  });
+
+  it("treats a pull request for the exact approved commit as idempotent", async () => {
+    const { locks, repository, service, git } = await fixture();
+    await locks.withUser("42", () =>
+      service.handle(
+        "42",
+        "Create a skill\nName: reports\nTasks: report\nMUST DO: cite\nMUST NOT DO: invent\nBETTER TO DO: summarize\nTools: shell",
+        "30",
+      ),
+    );
+    const draft = await repository.activeForOwner("42");
+    git.listPullRequests.mockResolvedValueOnce([
+      {
+        number: 99,
+        html_url: "https://example.test/pull/99",
+        head: { sha: draft!.latestCommitSha },
+        merged: true,
+      },
+    ]);
+    const response = await locks.withUser("42", () =>
+      service.handle("42", `/skill_approve ${draft!.revisionNumber}`, "31"),
+    );
+    expect(response).toContain("is merged into the configured base branch");
+    expect(git.openPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("requires a new revision when the approved branch moves", async () => {
+    const { locks, repository, service, git } = await fixture();
+    await locks.withUser("42", () =>
+      service.handle(
+        "42",
+        "Create a skill\nName: reports\nTasks: report\nMUST DO: cite\nMUST NOT DO: invent\nBETTER TO DO: summarize\nTools: shell",
+        "40",
+      ),
+    );
+    const draft = await repository.activeForOwner("42");
+    git.getBranchHead.mockResolvedValueOnce("f".repeat(40));
+    const response = await locks.withUser("42", () =>
+      service.handle("42", `/skill_approve ${draft!.revisionNumber}`, "41"),
+    );
+    expect(response).toContain("Revision required");
+    expect(git.openPullRequest).not.toHaveBeenCalled();
+    expect(await repository.activeForOwner("42")).toMatchObject({
+      status: "revision_requested",
+    });
   });
 });

@@ -76,6 +76,17 @@ export const skillManifestSchema = z
     tools: z.array(safeIdentifier).max(100).default([]),
     prohibitedActions: z.array(safeIdentifier).max(100).default([]),
     status: z.enum(["active", "retired"]).default("active"),
+    /** Service-authored authorization metadata. PR prose is never authoritative. */
+    authoring: z
+      .object({
+        draftId: z.uuid(),
+        approvedRevision: z.number().int().positive(),
+        contentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+        ownerTelegramUserId: telegramUserIdSchema,
+        requestedCapabilities: z.array(safeIdentifier).max(100),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

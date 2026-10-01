@@ -32,6 +32,8 @@ export interface SkillDraft {
   lastResponse: string | null;
   stableId: string;
   branch: string;
+  /** Immutable base used to validate the complete draft diff before publishing. */
+  baseCommitSha: string;
   latestCommitSha: string;
   skillBlobSha: string | null;
   manifestBlobSha: string | null;

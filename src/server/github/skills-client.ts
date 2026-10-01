@@ -43,6 +43,19 @@ const pullRequestSchema = z.object({
   base: z.object({ ref: z.string(), sha: z.string() }),
   merged: z.boolean().optional(),
 });
+const comparisonSchema = z.object({
+  status: z.enum(["ahead", "behind", "diverged", "identical"]),
+  files: z
+    .array(
+      z.object({
+        filename: z.string(),
+        status: z.string(),
+        changes: z.number().int().nonnegative().optional(),
+      }),
+    )
+    .optional()
+    .default([]),
+});
 
 export interface SkillsGitHubConfig {
   connector: string;
@@ -401,6 +414,26 @@ export class GitHubSkillsClient {
     });
     const ref = this.parse(branchSchema, await response.json());
     return ref.object.sha;
+  }
+
+  async compareCommits(base: string, head: string) {
+    const token = await this.token();
+    const response = await this.request(
+      token,
+      this.repoUrl(
+        `/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+      ),
+      {},
+      true,
+    );
+    const comparison = this.parse(comparisonSchema, await response.json());
+    return {
+      status: comparison.status,
+      files: comparison.files.map((file) => ({
+        path: file.filename,
+        status: file.status,
+      })),
+    };
   }
 
   async putFile(input: {
