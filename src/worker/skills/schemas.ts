@@ -87,6 +87,21 @@ export const skillManifestSchema = z
       })
       .strict()
       .optional(),
+    /** Immutable provenance written by the one-time PostgreSQL-to-Git migration. */
+    migration: z
+      .object({
+        sourceVersionId: z.uuid(),
+        sourceVersionNumber: z.number().int().positive(),
+        sourceStatus: installedSkillStatusSchema,
+        sourceContentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+        sourceTriggers: z.array(skillTriggerSchema).max(100),
+        capabilities: z.array(safeIdentifier).max(100),
+        approval: skillApprovalSchema,
+        createdAt: z.iso.datetime(),
+        updatedAt: z.iso.datetime(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((manifest, ctx) => {
