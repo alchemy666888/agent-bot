@@ -1,4 +1,7 @@
-import type { SkillContext } from "../../shared/contracts";
+import type {
+  AuthorizedSkillDescriptor,
+  SkillContext,
+} from "../../shared/contracts";
 import { CapabilityRegistry } from "../capabilities/registry";
 import type { InstalledSkill as CommandSkill } from "../commands";
 import type { ExecutableSkill } from "./schemas";
@@ -62,6 +65,26 @@ export class SkillResolver {
             ? `Prohibited: ${skill.prohibitedActions.join("; ")}`
             : undefined,
       }));
+  }
+  routingCatalog(userId: string): AuthorizedSkillDescriptor[] {
+    return this.skills
+      .filter((skill) => this.available(skill, userId))
+      .map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description ?? "No description provided",
+        supportedTasks: skill.triggers.phrases ?? [],
+        triggerHints: skill.triggers.keywords ?? [],
+        permittedCapabilityIds: [...skill.tools],
+      }));
+  }
+
+  /** Execution-time lookup for a classifier-selected, user-authorized skill. */
+  resolveRouted(skillId: string, userId: string): SkillResolution {
+    const resolution = this.resolve("", userId, skillId);
+    return resolution.kind === "selected"
+      ? { ...resolution, source: "automatic" }
+      : resolution;
   }
   resolve(text: string, userId: string, explicitId?: string): SkillResolution {
     const started = Date.now();

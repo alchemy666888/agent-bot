@@ -19,6 +19,7 @@ import type { TelegramInput } from "../../server/telegram/input";
 import { retryTransient } from "../model/retry";
 import type { UpdateState } from "../updates/state-machine";
 import type { SkillResolver } from "../skills/resolver";
+import type { RequestRouter } from "../model/deepseek-router";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -77,6 +78,7 @@ export class TelegramTurn {
     private accounting?: ModelAccounting,
     private skills?: SkillResolver,
     private generalCapabilities: CapabilityRequest[] = [],
+    private router?: RequestRouter,
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -157,6 +159,8 @@ export class TelegramTurn {
           let generated: ModelResponse | undefined;
           let latencyMs = 0;
           let resolution: ReturnType<SkillResolver["resolve"]> | undefined;
+          let routedCapabilities = this.generalCapabilities;
+          let preparedContext: ModelRequest | undefined;
           let fallbackReason:
             | "no_skill_match"
             | "skill_not_found"
@@ -166,23 +170,65 @@ export class TelegramTurn {
           try {
             if (deterministic) answer = deterministic;
             else {
-              resolution =
-                command?.kind === "fallback"
-                  ? { kind: "none" as const }
-                  : this.skills?.resolve(
-                      routedText,
-                      input.userId,
-                      command?.kind === "invoke"
-                        ? (command.invocation.skill.id ??
-                            command.invocation.skill.name)
-                        : undefined,
-                    );
+              if (command?.kind === "fallback") {
+                resolution = { kind: "none" as const };
+              } else if (command?.kind === "invoke") {
+                resolution = this.skills?.resolve(
+                  routedText,
+                  input.userId,
+                  command.invocation.skill.id ?? command.invocation.skill.name,
+                );
+              } else if (this.router) {
+                preparedContext = await this.conversations.context(
+                  input.userId,
+                  this.prompt,
+                );
+                const messages = preparedContext.messages.filter(
+                  (
+                    message,
+                  ): message is typeof message & {
+                    role: "user" | "assistant";
+                  } => message.role !== "system",
+                );
+                const decision = await this.router.route({
+                  request: routedText,
+                  conversationContext: messages.slice(0, -1).slice(-20),
+                  authorizedSkills:
+                    this.skills?.routingCatalog(input.userId) ?? [],
+                  availableTools: this.generalCapabilities,
+                });
+                if (decision.kind === "skill")
+                  resolution = this.skills?.resolveRouted(
+                    decision.selectedSkillId,
+                    input.userId,
+                  );
+                else resolution = { kind: "none" as const };
+
+                if (decision.kind === "tool")
+                  routedCapabilities = this.generalCapabilities.filter(
+                    ({ id }) => id === decision.selectedToolId,
+                  );
+                else if (decision.kind === "web_search_fallback")
+                  routedCapabilities = this.generalCapabilities.filter(
+                    ({ id }) => id === "web_search",
+                  );
+                else routedCapabilities = [];
+
+                if (decision.kind === "ambiguous")
+                  answer = `I need clarification. Possible choices: ${decision.candidateIds.join(", ")}.`;
+                else if (decision.kind === "refuse")
+                  answer = "I can’t help with that request.";
+              } else {
+                resolution = this.skills?.resolve(routedText, input.userId);
+              }
               if (!resolution || resolution.kind === "none")
                 fallbackReason =
                   command?.kind === "fallback"
                     ? command.reason
                     : "no_skill_match";
-              if (resolution?.kind === "ambiguous") {
+              if (answer) {
+                // The router produced a deterministic clarification or refusal.
+              } else if (resolution?.kind === "ambiguous") {
                 answer = `I found multiple relevant skills (${resolution.skillIds.join(", ")}). Please choose one with /skill <id>.`;
               } else if (
                 resolution?.kind === "selected" &&
@@ -194,15 +240,14 @@ export class TelegramTurn {
                   "I can't perform that action because the selected skill prohibits it.";
               } else {
                 const started = Date.now();
-                const context = await this.conversations.context(
-                  input.userId,
-                  this.prompt,
-                );
+                const context =
+                  preparedContext ??
+                  (await this.conversations.context(input.userId, this.prompt));
                 generated = await retryTransient(
                   async () =>
                     this.model.generate({
                       ...context,
-                      generalCapabilities: this.generalCapabilities,
+                      generalCapabilities: routedCapabilities,
                       ...(resolution?.kind === "selected"
                         ? { skill: resolution.skill }
                         : {}),

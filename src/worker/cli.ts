@@ -7,6 +7,7 @@ import { LockCoordinator } from "./locks/coordinator";
 import { UpdateRepository } from "./updates/repository";
 import { DurableConversationService } from "./conversations/durable-service";
 import { DeepSeekProvider } from "./model/deepseek";
+import { DeepSeekRouter } from "./model/deepseek-router";
 import { TelegramClient } from "./telegram/client";
 import { TelegramTurn } from "./orchestration/telegram-turn";
 import { initializeLayout } from "./persistence/layout";
@@ -84,6 +85,14 @@ async function telegramTurn(
     },
     skills,
     capabilities.requests(["web_search"]),
+    new DeepSeekRouter(
+      {
+        apiKey: requiredEnv("DEEPSEEK_API_KEY"),
+        baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
+        thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
+      },
+      fetch,
+    ),
   );
   await turn.handle(input);
   return { terminal: true };
