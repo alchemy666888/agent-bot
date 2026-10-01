@@ -88,7 +88,7 @@ describe("skill commands", () => {
     expect(reply("/skills", catalog)).toContain("unavailable");
   });
 
-  it("returns detail and distinguishes unavailable and retired skills", () => {
+  it("returns detail and gracefully falls back for unavailable skills", () => {
     const catalog = [
       skill("slow", { availability: "unavailable" }),
       skill("old", {
@@ -96,10 +96,26 @@ describe("skill commands", () => {
         supportedTasks: ["legacy reports"],
       }),
     ];
-    expect(reply("/use slow work", catalog)).toMatch(/currently unavailable/i);
-    expect(reply("/use old work", catalog)).toMatch(/retired/i);
+    expect(handleCommand("/use slow work", catalog, "7")).toMatchObject({
+      kind: "fallback",
+      request: "work",
+      reason: "skill_unavailable",
+    });
+    expect(handleCommand("/use old work", catalog, "7")).toMatchObject({
+      kind: "fallback",
+      request: "work",
+      reason: "skill_unavailable",
+    });
     expect(reply("/skill old", catalog)).toContain(
       "Supported tasks: legacy reports",
     );
+  });
+
+  it("preserves the request when an explicitly requested skill is missing", () => {
+    expect(handleCommand("/use missing explain this", [], "7")).toMatchObject({
+      kind: "fallback",
+      request: "explain this",
+      reason: "skill_not_found",
+    });
   });
 });

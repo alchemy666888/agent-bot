@@ -1,4 +1,5 @@
 import type {
+  CapabilityRequest,
   ModelProvider,
   ModelRequest,
   ModelResponse,
@@ -75,6 +76,7 @@ export class TelegramTurn {
     },
     private accounting?: ModelAccounting,
     private skills?: SkillResolver,
+    private generalCapabilities: CapabilityRequest[] = [],
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -111,9 +113,19 @@ export class TelegramTurn {
         languageCode: input.languageCode,
         at,
       });
-      const command = handleCommand(input.text, undefined, input.userId);
+      const command = handleCommand(
+        input.text,
+        this.skills?.commandCatalog(input.userId),
+        input.userId,
+      );
       const deterministic =
         command?.kind === "reply" ? command.text : undefined;
+      const routedText =
+        command?.kind === "invoke"
+          ? command.invocation.request
+          : command?.kind === "fallback"
+            ? command.request
+            : input.text;
       if (input.text === "/new")
         await this.conversations.newConversation(input.userId);
       let requestMessageId: string | null = null;
@@ -121,7 +133,7 @@ export class TelegramTurn {
         const userMessage = await this.conversations.add(
           input.userId,
           "user",
-          input.text,
+          routedText,
           at,
         );
         requestMessageId = userMessage.id;
@@ -145,10 +157,31 @@ export class TelegramTurn {
           let generated: ModelResponse | undefined;
           let latencyMs = 0;
           let resolution: ReturnType<SkillResolver["resolve"]> | undefined;
+          let fallbackReason:
+            | "no_skill_match"
+            | "skill_not_found"
+            | "skill_unavailable"
+            | "model_output_recovery"
+            | undefined;
           try {
             if (deterministic) answer = deterministic;
             else {
-              resolution = this.skills?.resolve(input.text, input.userId);
+              resolution =
+                command?.kind === "fallback"
+                  ? { kind: "none" as const }
+                  : this.skills?.resolve(
+                      routedText,
+                      input.userId,
+                      command?.kind === "invoke"
+                        ? (command.invocation.skill.id ??
+                            command.invocation.skill.name)
+                        : undefined,
+                    );
+              if (!resolution || resolution.kind === "none")
+                fallbackReason =
+                  command?.kind === "fallback"
+                    ? command.reason
+                    : "no_skill_match";
               if (resolution?.kind === "ambiguous") {
                 answer = `I found multiple relevant skills (${resolution.skillIds.join(", ")}). Please choose one with /skill <id>.`;
               } else if (
@@ -169,6 +202,7 @@ export class TelegramTurn {
                   async () =>
                     this.model.generate({
                       ...context,
+                      generalCapabilities: this.generalCapabilities,
                       ...(resolution?.kind === "selected"
                         ? { skill: resolution.skill }
                         : {}),
@@ -176,7 +210,12 @@ export class TelegramTurn {
                   isTransient,
                 );
                 latencyMs = Date.now() - started;
-                answer = generated.content;
+                if (generated.outputRecovery?.triggered)
+                  fallbackReason = "model_output_recovery";
+                answer =
+                  command?.kind === "fallback"
+                    ? `${command.note}\n\n${generated.content}`
+                    : generated.content;
               }
             }
           } catch (error) {
@@ -245,6 +284,14 @@ export class TelegramTurn {
                   ? resolution.skill.capabilities.map((item) => item.id)
                   : [],
               capabilityAudit: generated.capabilityAudit ?? [],
+              routingOutcome:
+                resolution?.kind === "selected"
+                  ? "skill"
+                  : resolution?.kind === "ambiguous"
+                    ? "ambiguous"
+                    : "general",
+              fallbackReason: fallbackReason ?? null,
+              outputRecovery: generated.outputRecovery ?? null,
               createdAt: new Date().toISOString(),
             });
           await this.checkpoint(input.userId, {

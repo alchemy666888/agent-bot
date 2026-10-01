@@ -71,6 +71,13 @@ describe("skill resolver", () => {
     expect(
       new SkillResolver(registry(), skills).resolve("tell me a joke", "9"),
     ).toEqual({ kind: "none" }));
+  it("includes a confidence score exactly at the configured boundary", () =>
+    expect(
+      new SkillResolver(registry(), skills).resolve("weather today", "9"),
+    ).toMatchObject({
+      kind: "selected",
+      skill: { id: "weather" },
+    }));
   it("reports ambiguity rather than selecting", () =>
     expect(
       new SkillResolver(registry(), skills).resolve("forecast", "9"),
@@ -92,5 +99,19 @@ describe("skill resolver", () => {
     expect(resolver.resolve("weather forecast", "1")).toMatchObject({
       kind: "selected",
     });
+  });
+  it("adapts authorized executable skills for discovery and invocation", () => {
+    const resolver = new SkillResolver(registry(), [
+      { ...skills[0]!, description: "Current weather" },
+    ]);
+    expect(resolver.commandCatalog("9")).toEqual([
+      expect.objectContaining({
+        id: "weather",
+        name: "weather",
+        displayName: "Weather",
+        purpose: "Current weather",
+        availability: "available",
+      }),
+    ]);
   });
 });
