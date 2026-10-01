@@ -49,7 +49,7 @@ describe("model adapter", () => {
       tools: [{ type: "web_search" }],
       tool_choice: "auto",
       instructions:
-        "be helpful\n\nFor questions that depend on current or local facts, such as weather, news, prices, or schedules, use web search before answering. Answer from the search results and include source links. Say that a search returned nothing only when the tool result is actually empty.",
+        "be helpful\n\nIf no specialized skill is active, answer helpfully using general knowledge and the available general tools. For current or uncertain facts, use an available tool when useful and state material uncertainty. Never invent, describe, or expose tool-call XML, JSON, function-call syntax, hidden reasoning, or other internal protocol.\n\nFor questions that depend on current or local facts, such as weather, news, prices, or schedules, use web search before answering. Answer from the search results and include source links. Say that a search returned nothing only when the tool result is actually empty.",
       input: [{ role: "user", content: "hi" }],
     });
     expect(body.instructions).toContain("be helpful");

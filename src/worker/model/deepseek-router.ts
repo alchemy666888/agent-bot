@@ -6,18 +6,24 @@ import {
 } from "../../shared/contracts";
 
 type ResponsesBody = {
+  id?: string;
   output_text?: string;
   output?: { type?: string; content?: { type?: string; text?: string }[] }[];
+  usage?: { input_tokens: number; output_tokens: number };
 };
 
-const SAFE_ROUTING_FALLBACK: RoutingDecision = {
-  kind: "direct",
-  confidence: 0,
-  rationale: "Router output was invalid; use the safe no-capability path.",
+export type RouterRunMetadata = {
+  requestId?: string;
+  usage?: { inputTokens: number; outputTokens: number };
+  latencyMs: number;
 };
 
 export interface RequestRouter {
   route(request: RoutingRequest): Promise<RoutingDecision>;
+  /** Optional instrumented form used to account for the classifier request. */
+  routeWithMetadata?(
+    request: RoutingRequest,
+  ): Promise<{ decision: RoutingDecision; run: RouterRunMetadata }>;
 }
 
 function responseText(body: ResponsesBody): string | undefined {
@@ -42,7 +48,14 @@ export class DeepSeekRouter implements RequestRouter {
   ) {}
 
   async route(rawRequest: RoutingRequest): Promise<RoutingDecision> {
+    return (await this.routeWithMetadata(rawRequest)).decision;
+  }
+
+  async routeWithMetadata(
+    rawRequest: RoutingRequest,
+  ): Promise<{ decision: RoutingDecision; run: RouterRunMetadata }> {
     const input = routingRequestSchema.parse(rawRequest);
+    const started = Date.now();
     const response = await this.request(`${this.config.baseUrl}/responses`, {
       method: "POST",
       headers: {
@@ -140,28 +153,43 @@ export class DeepSeekRouter implements RequestRouter {
         status: response.status,
       });
 
+    let body: ResponsesBody | undefined;
     try {
-      const text = responseText((await response.json()) as ResponsesBody);
-      if (!text) return structuredClone(SAFE_ROUTING_FALLBACK);
+      body = (await response.json()) as ResponsesBody;
+      const text = responseText(body);
+      if (!text) throw new Error("ROUTER_OUTPUT_INVALID");
       const decision = routingDecisionSchema.parse(JSON.parse(text));
-      const skillIds = new Set(input.authorizedSkills.map(({ id }) => id));
-      const toolIds = new Set(input.availableTools.map(({ id }) => id));
-      if (decision.kind === "skill" && !skillIds.has(decision.selectedSkillId))
-        return structuredClone(SAFE_ROUTING_FALLBACK);
-      if (decision.kind === "tool" && !toolIds.has(decision.selectedToolId))
-        return structuredClone(SAFE_ROUTING_FALLBACK);
-      if (decision.kind === "web_search_fallback" && !toolIds.has("web_search"))
-        return structuredClone(SAFE_ROUTING_FALLBACK);
-      if (
-        decision.kind === "ambiguous" &&
-        decision.candidateIds.some(
-          (id) => !skillIds.has(id) && !toolIds.has(id),
-        )
-      )
-        return structuredClone(SAFE_ROUTING_FALLBACK);
-      return decision;
-    } catch {
-      return structuredClone(SAFE_ROUTING_FALLBACK);
+      return {
+        decision,
+        run: {
+          requestId: body.id,
+          usage: body.usage
+            ? {
+                inputTokens: body.usage.input_tokens,
+                outputTokens: body.usage.output_tokens,
+              }
+            : undefined,
+          latencyMs: Date.now() - started,
+        },
+      };
+    } catch (error) {
+      const invalid =
+        error instanceof Error && error.message === "ROUTER_OUTPUT_INVALID"
+          ? error
+          : new Error("ROUTER_OUTPUT_INVALID", { cause: error });
+      Object.assign(invalid, {
+        run: {
+          requestId: body?.id,
+          usage: body?.usage
+            ? {
+                inputTokens: body.usage.input_tokens,
+                outputTokens: body.usage.output_tokens,
+              }
+            : undefined,
+          latencyMs: Date.now() - started,
+        } satisfies RouterRunMetadata,
+      });
+      throw invalid;
     }
   }
 }

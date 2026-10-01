@@ -93,6 +93,8 @@ async function telegramTurn(
       },
       fetch,
     ),
+    capabilities,
+    optionalPositiveInteger("SKILL_EXECUTION_TIMEOUT_MS") ?? 60_000,
   );
   await turn.handle(input);
   return { terminal: true };
