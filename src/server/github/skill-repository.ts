@@ -9,6 +9,7 @@ import type {
 } from "../../worker/skills/skill-repository";
 import {
   executableSkillSchema,
+  skillCatalogSnapshotSchema,
   skillManifestSchema,
   skillMarkdownSchema,
   type ExecutableSkill,
@@ -144,6 +145,13 @@ export class GitHubSkillRepository implements SkillRepository {
       skills,
     });
     return skills;
+  }
+
+  /** Resolves a branch once, then reads and validates the complete catalog at that immutable SHA. */
+  async loadCatalogSnapshot(ref?: string) {
+    const commitSha = await this.resolveRef(ref);
+    const skills = await this.catalog(commitSha);
+    return skillCatalogSnapshotSchema.parse({ commitSha, skills });
   }
 
   async getById(

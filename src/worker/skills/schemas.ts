@@ -88,7 +88,51 @@ export const skillManifestSchema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((manifest, ctx) => {
+    if (
+      new Set(manifest.ownerTelegramUserIds).size !==
+      manifest.ownerTelegramUserIds.length
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["ownerTelegramUserIds"],
+        message: "Skill owners must be unique",
+      });
+    if (
+      new Set(manifest.allowedTelegramUserIds).size !==
+      manifest.allowedTelegramUserIds.length
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["allowedTelegramUserIds"],
+        message: "Allowed users must be unique",
+      });
+    if (
+      manifest.authoring &&
+      !manifest.ownerTelegramUserIds.includes(
+        manifest.authoring.ownerTelegramUserId,
+      )
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["authoring", "ownerTelegramUserId"],
+        message: "The authoring owner must own the skill",
+      });
+    if (
+      manifest.authoring &&
+      (new Set(manifest.authoring.requestedCapabilities).size !==
+        manifest.tools.length ||
+        manifest.tools.some(
+          (tool) => !manifest.authoring!.requestedCapabilities.includes(tool),
+        ))
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["authoring", "requestedCapabilities"],
+        message: "Approved capabilities must match executable tools",
+      });
+  });
 
 export const skillMarkdownSchema = z
   .string()
@@ -113,10 +157,68 @@ export const executableSkillSchema = z
     prohibitedActions: z.array(safeIdentifier).max(100),
     status: z.enum(["active", "retired"]),
   })
-  .strict();
+  .strict()
+  .superRefine((skill, ctx) => {
+    if (
+      new Set(skill.ownerTelegramUserIds).size !==
+      skill.ownerTelegramUserIds.length
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["ownerTelegramUserIds"],
+        message: "Skill owners must be unique",
+      });
+    if (
+      new Set(skill.allowedTelegramUserIds).size !==
+      skill.allowedTelegramUserIds.length
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["allowedTelegramUserIds"],
+        message: "Allowed users must be unique",
+      });
+    if (new Set(skill.tools).size !== skill.tools.length)
+      ctx.addIssue({
+        code: "custom",
+        path: ["tools"],
+        message: "Skill capabilities must be unique",
+      });
+    if (skill.visibility === "private" && skill.allowedTelegramUserIds.length)
+      ctx.addIssue({
+        code: "custom",
+        path: ["allowedTelegramUserIds"],
+        message: "Private skills cannot grant shared access",
+      });
+  });
+
+export const skillCatalogSnapshotSchema = z
+  .object({
+    commitSha: gitCommitShaSchema,
+    skills: z.array(executableSkillSchema).max(10_000),
+  })
+  .strict()
+  .superRefine((snapshot, ctx) => {
+    const ids = new Set<string>();
+    snapshot.skills.forEach((skill, index) => {
+      if (skill.commitSha !== snapshot.commitSha)
+        ctx.addIssue({
+          code: "custom",
+          path: ["skills", index, "commitSha"],
+          message: "Skill version does not match catalog snapshot",
+        });
+      if (ids.has(skill.id))
+        ctx.addIssue({
+          code: "custom",
+          path: ["skills", index, "id"],
+          message: "Duplicate skill ID",
+        });
+      ids.add(skill.id);
+    });
+  });
 
 export type SkillManifest = z.infer<typeof skillManifestSchema>;
 export type ExecutableSkill = z.infer<typeof executableSkillSchema>;
+export type SkillCatalogSnapshot = z.infer<typeof skillCatalogSnapshotSchema>;
 
 export function normalizeSkillName(name: string): string {
   return name.trim().normalize("NFKC").toLocaleLowerCase("en-US");

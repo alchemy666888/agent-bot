@@ -148,7 +148,7 @@ export class TelegramTurn {
           try {
             if (deterministic) answer = deterministic;
             else {
-              resolution = this.skills?.resolve(input.text);
+              resolution = this.skills?.resolve(input.text, input.userId);
               if (resolution?.kind === "ambiguous") {
                 answer = `I found multiple relevant skills (${resolution.skillIds.join(", ")}). Please choose one with /skill <id>.`;
               } else if (

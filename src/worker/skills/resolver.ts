@@ -2,20 +2,7 @@ import type { SkillContext } from "../../shared/contracts";
 import { CapabilityRegistry } from "../capabilities/registry";
 import type { ExecutableSkill } from "./schemas";
 
-/** @deprecated Prefer ExecutableSkill. This compatibility shape is adapted at the boundary. */
-export interface LegacyInstalledSkill {
-  id: string;
-  version: string;
-  instructions: string;
-  triggers: {
-    phrases?: string[];
-    keywords?: string[];
-    minimumConfidence: number;
-  };
-  tools: string[];
-  prohibitedActions?: string[];
-}
-export type InstalledSkill = ExecutableSkill | LegacyInstalledSkill;
+export type InstalledSkill = ExecutableSkill;
 export type SkillResolution =
   | { kind: "selected"; source: "explicit" | "automatic"; skill: SkillContext }
   | { kind: "ambiguous"; skillIds: string[] }
@@ -31,22 +18,22 @@ export class SkillResolver {
   }
   install(skill: InstalledSkill) {
     this.capabilities.requests(skill.tools); // installation-time allowlist validation
-    const version = "commitSha" in skill ? skill.commitSha : skill.version;
+    const version = skill.commitSha;
     if (
       this.skills.some(
-        (item) =>
-          item.id === skill.id &&
-          ("commitSha" in item ? item.commitSha : item.version) === version,
+        (item) => item.id === skill.id && item.commitSha === version,
       )
     )
       throw new Error("SKILL_ALREADY_INSTALLED");
     this.skills.push(structuredClone(skill));
   }
-  resolve(text: string, explicitId?: string): SkillResolution {
+  resolve(text: string, userId: string, explicitId?: string): SkillResolution {
     const command = text.match(/^\/skill\s+([a-z0-9_.-]+)(?:\s|$)/i)?.[1];
     const selectedId = explicitId ?? command;
     if (selectedId) {
-      const skill = this.skills.find((item) => item.id === selectedId);
+      const skill = this.skills.find(
+        (item) => item.id === selectedId && this.available(item, userId),
+      );
       if (!skill) return { kind: "none" };
       return {
         kind: "selected",
@@ -56,6 +43,7 @@ export class SkillResolver {
     }
     const normalized = text.toLowerCase();
     const candidates = this.skills
+      .filter((skill) => this.available(skill, userId))
       .map((skill) => {
         const phrases = skill.triggers.phrases ?? [];
         const keywords = skill.triggers.keywords ?? [];
@@ -100,11 +88,20 @@ export class SkillResolver {
     // Re-check the allowlist at execution time; a stale/uninstalled capability cannot run.
     return {
       id: skill.id,
-      version: "commitSha" in skill ? skill.commitSha : skill.version,
+      version: skill.commitSha,
       instructions: skill.instructions,
       capabilities: this.capabilities.requests(skill.tools),
       prohibitedActions: skill.prohibitedActions ?? [],
     };
+  }
+  private available(skill: InstalledSkill, userId: string): boolean {
+    return (
+      skill.status === "active" &&
+      (skill.visibility === "public" ||
+        skill.ownerTelegramUserIds.includes(userId) ||
+        (skill.visibility === "shared" &&
+          skill.allowedTelegramUserIds.includes(userId)))
+    );
   }
 }
 

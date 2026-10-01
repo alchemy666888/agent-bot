@@ -18,7 +18,8 @@ import { safeError } from "../shared/logger";
 import { bindPersistenceSession } from "./persistence/database-sync";
 import { writeWorkerLog } from "./observability/worker-log";
 import { createCapabilityRegistry } from "./capabilities";
-import { SkillResolver, type InstalledSkill } from "./skills/resolver";
+import { SkillResolver } from "./skills/resolver";
+import { skillCatalogSnapshotSchema } from "./skills/schemas";
 
 const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/tmp/telegram-agent";
 
@@ -48,12 +49,8 @@ async function telegramTurn(
   const locks = new LockCoordinator(ROOT);
   const errors = new DurableErrorService(ROOT, locks);
   const capabilities = createCapabilityRegistry();
-  const skills = new SkillResolver(
-    capabilities,
-    process.env.INSTALLED_SKILLS_JSON
-      ? (JSON.parse(process.env.INSTALLED_SKILLS_JSON) as InstalledSkill[])
-      : [],
-  );
+  const catalog = skillCatalogSnapshotSchema.parse(payload.skillCatalog);
+  const skills = new SkillResolver(capabilities, catalog.skills);
   const turn = new TelegramTurn(
     locks,
     new UpdateRepository(ROOT),

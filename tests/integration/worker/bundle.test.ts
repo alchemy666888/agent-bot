@@ -55,7 +55,10 @@ describe("worker bundle", () => {
         contractVersion: 1,
         correlationId,
         operation: "telegramTurn",
-        payload: { input: { kind: "ignored", updateId: "1" } },
+        payload: {
+          input: { kind: "ignored", updateId: "1" },
+          skillCatalog: { commitSha: "a".repeat(40), skills: [] },
+        },
       }),
     );
     const env = { ...process.env };
