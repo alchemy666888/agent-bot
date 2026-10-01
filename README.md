@@ -1,12 +1,12 @@
 # Telegram Agent
 
-Telegram Agent is a public conversational assistant for private Telegram chats. People message the bot in text. The app answers with DeepSeek model `deepseek-v4-pro`, stores durable state in PostgreSQL, and gives the operator a secret-protected read-only dashboard plus a consistent export.
+Telegram Agent is a public conversational assistant for private Telegram chats. People message the bot in text. The app answers with DeepSeek model `deepseek-v4-pro`, stores application state in PostgreSQL, stores skill definitions in GitHub, and gives the operator a secret-protected read-only dashboard plus a consistent export.
 
 Telegram is the user interface. Next.js on Vercel receives webhooks, serves the dashboard, and controls a private Sandbox in Singapore (`sin1`). The Sandbox is the only process that reads and writes application data. All durable application data and structured logs are stored in PostgreSQL. The Sandbox filesystem is only a scratch working copy.
 
 Supported input includes private text, `/start`, `/help`, `/new`, and the installed-skill commands specified in `specs/telegram-agent/requirements.md`. A skill is drafted through categorized clarification, reviewed, iteratively revised, and installed only after revision-bound explicit approval. User-created skills are private to their Telegram owner; operator-managed global skills are visible to everyone. There is no user sharing or public marketplace. Discovery never implies selection: `/skill use <stable-id>` or an equivalent signed button is required before execution.
 
-PostgreSQL is the sole source of truth for conversations and installed skills. The Sandbox is disposable execution infrastructure. Approved skill versions may use only capabilities present in the operator registry and explicitly granted at installation; prompt text and model output cannot grant tools. The bounded tool loop authorizes and audits every call, and non-retry-safe unknown outcomes are not automatically replayed.
+PostgreSQL is the source of truth for conversations, messages, updates, logs, and operational skill references. GitHub's protected default branch is the source of truth for skill definitions and immutable versions. The Sandbox is disposable execution infrastructure. Approved skill versions may use only capabilities present in the operator registry and explicitly granted at installation; prompt text and model output cannot grant tools. The bounded tool loop authorizes and audits every call, and non-retry-safe unknown outcomes are not automatically replayed.
 
 Live Preview verification and the final acceptance audit are deferred for this stage. A real `sin1` stop/resume check has not been recorded.
 
@@ -40,7 +40,7 @@ Public routes:
 | `/api/health`           | `ready` or `degraded` configuration check; it does not connect to PostgreSQL |
 | `/api/download`         | Authenticated ZIP of persisted `data/`                                       |
 
-Durable records live in PostgreSQL. Existing conversation data may retain a logical file compatibility representation in `telegram_agent_files`, but installed skills use normalized, migrated relational tables for drafts, immutable revisions/versions, grants, selections, executions, tool calls, idempotency, and audit events. Any JSONL tree or Sandbox copy is generated scratch/export data rather than a second source of truth.
+Application records live in PostgreSQL. Existing conversation data may retain a logical file compatibility representation in `telegram_agent_files`; operational skill references, selections, executions, tool calls, idempotency, and audit events also remain database-backed. Skill bodies, manifests, ownership, and versions are loaded from GitHub rather than backed up or restored as database rows. Any JSONL tree or Sandbox copy is generated scratch/export data rather than a second source of truth.
 
 Installed-skills implementation and acceptance are planned in `specs/telegram-agent/tasks.md`; the feature must remain behind `SKILLS_ENABLED=false` until the migrations, modules, named acceptance tests, cross-user authorization check, and isolated restore rehearsal are complete.
 

@@ -12,8 +12,8 @@ Schema changes use expand/migrate/contract so code rollback normally leaves the 
 
 ## Database restoration
 
-When data recovery is necessary, preserve the failed database for investigation, restore the selected pre-change backup to a **new isolated database**, and run `pnpm restore:verify` with all external adapters stubbed. Verify schema checksums, ownership/visibility, immutable revision hashes, current pointers, capability grants, selections, idempotency records, tool-call outcomes, and audit continuity. Determine the recovery point and reconcile any external effects after that point.
+When data recovery is necessary, preserve the failed database for investigation, restore the selected pre-change backup to a **new isolated database**, and run `pnpm restore:verify` with all external adapters stubbed. Verify schema checksums, remaining application row integrity, operational skill references, capability grants, selections, idempotency records, tool-call outcomes, and audit continuity. Restore skill definitions from a verified GitHub mirror/bundle and reconcile every database reference to a reachable immutable commit. Determine the recovery point and reconcile any external effects after that point.
 
 Promote the restored database only after two-user privacy tests and a dry-run restored selection pass. Rotate `DATABASE_URL`, deploy with skills/capabilities disabled, smoke test, then enable deliberately. Record the backup ID, lost interval, reconciliation decisions, commands, evidence, and approver in `docs/acceptance-evidence.md`.
 
-A replacement Sandbox needs no filesystem restoration; it hydrates from PostgreSQL. Never recover installed skills from Sandbox scratch files or generated JSONL exports when a verified database backup exists.
+A replacement Sandbox needs no filesystem restoration; it hydrates application state from PostgreSQL and skill definitions from verified GitHub commits. Never recover skill definitions from Sandbox scratch files, database definition rows, or generated JSONL exports.
