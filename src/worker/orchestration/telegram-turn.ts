@@ -20,6 +20,8 @@ import { retryTransient } from "../model/retry";
 import type { UpdateState } from "../updates/state-machine";
 import type { SkillResolver } from "../skills/resolver";
 import type { RequestRouter } from "../model/deepseek-router";
+import type { RouterRunMetadata } from "../model/deepseek-router";
+import type { CapabilityRegistry } from "../capabilities/registry";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -79,6 +81,8 @@ export class TelegramTurn {
     private skills?: SkillResolver,
     private generalCapabilities: CapabilityRequest[] = [],
     private router?: RequestRouter,
+    private capabilityRegistry?: CapabilityRegistry,
+    private turnTimeoutMs = 60_000,
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -120,8 +124,15 @@ export class TelegramTurn {
         this.skills?.commandCatalog(input.userId),
         input.userId,
       );
+      const unknownCommand = /^\s*\/[A-Za-z0-9_]+(?:@\S+)?(?:\s|$)/.test(
+        input.text,
+      );
       const deterministic =
-        command?.kind === "reply" ? command.text : undefined;
+        command?.kind === "reply"
+          ? command.text
+          : !command && unknownCommand
+            ? "Unknown command. Use /help to see available commands."
+            : undefined;
       const routedText =
         command?.kind === "invoke"
           ? command.invocation.request
@@ -151,6 +162,11 @@ export class TelegramTurn {
         () => void this.telegram.typing(input.chatId).catch(() => undefined),
         4_000,
       );
+      const turnController = new AbortController();
+      const turnTimer = setTimeout(
+        () => turnController.abort(new Error("TURN_TIMEOUT")),
+        this.turnTimeoutMs,
+      );
       let answer = existing?.assistantId
         ? (await this.conversations.message(existing.assistantId))?.text
         : undefined;
@@ -161,6 +177,7 @@ export class TelegramTurn {
           let resolution: ReturnType<SkillResolver["resolve"]> | undefined;
           let routedCapabilities = this.generalCapabilities;
           let preparedContext: ModelRequest | undefined;
+          const routerRuns: RouterRunMetadata[] = [];
           let fallbackReason:
             | "no_skill_match"
             | "skill_not_found"
@@ -190,34 +207,126 @@ export class TelegramTurn {
                     role: "user" | "assistant";
                   } => message.role !== "system",
                 );
-                const decision = await this.router.route({
-                  request: routedText,
-                  conversationContext: messages.slice(0, -1).slice(-20),
-                  authorizedSkills:
-                    this.skills?.routingCatalog(input.userId) ?? [],
-                  availableTools: this.generalCapabilities,
-                });
-                if (decision.kind === "skill")
-                  resolution = this.skills?.resolveRouted(
-                    decision.selectedSkillId,
-                    input.userId,
-                  );
-                else resolution = { kind: "none" as const };
+                let skillCatalog =
+                  this.skills?.routingCatalog(input.userId) ?? [];
+                let toolCatalog = this.capabilityRegistry
+                  ? this.capabilityRegistry.generalRequests()
+                  : [...this.generalCapabilities];
+                resolution = { kind: "none" as const };
+                routedCapabilities = [];
+                // One initial classification and at most one bounded recovery
+                // classification. Invalid IDs are removed before recovery.
+                for (
+                  let routingAttempt = 0;
+                  routingAttempt < 2;
+                  routingAttempt++
+                ) {
+                  let decision;
+                  try {
+                    const routingRequest = {
+                      request: routedText,
+                      conversationContext: messages.slice(0, -1).slice(-20),
+                      authorizedSkills: skillCatalog,
+                      availableTools: toolCatalog,
+                      signal: turnController.signal,
+                    };
+                    if (this.router.routeWithMetadata) {
+                      const routed = await retryTransient(
+                        () => this.router!.routeWithMetadata!(routingRequest),
+                        isTransient,
+                      );
+                      decision = routed.decision;
+                      routerRuns.push(routed.run);
+                    } else {
+                      decision = await retryTransient(
+                        () => this.router!.route(routingRequest),
+                        isTransient,
+                      );
+                    }
+                  } catch (error) {
+                    const failedRun = (error as { run?: RouterRunMetadata })
+                      ?.run;
+                    if (failedRun) routerRuns.push(failedRun);
+                    if (
+                      routingAttempt === 0 &&
+                      (error as Error)?.message === "ROUTER_OUTPUT_INVALID"
+                    )
+                      continue;
+                    if ((error as Error)?.message !== "ROUTER_OUTPUT_INVALID")
+                      throw error;
+                    break;
+                  }
 
-                if (decision.kind === "tool")
-                  routedCapabilities = this.generalCapabilities.filter(
-                    ({ id }) => id === decision.selectedToolId,
-                  );
-                else if (decision.kind === "web_search_fallback")
-                  routedCapabilities = this.generalCapabilities.filter(
-                    ({ id }) => id === "web_search",
-                  );
-                else routedCapabilities = [];
-
-                if (decision.kind === "ambiguous")
-                  answer = `I need clarification. Possible choices: ${decision.candidateIds.join(", ")}.`;
-                else if (decision.kind === "refuse")
-                  answer = "I can’t help with that request.";
+                  if (decision.kind === "skill") {
+                    const current = this.skills?.resolveRouted(
+                      decision.selectedSkillId,
+                      input.userId,
+                    );
+                    if (current?.kind === "selected") {
+                      resolution = current;
+                      break;
+                    }
+                    skillCatalog = skillCatalog.filter(
+                      ({ id }) => id !== decision.selectedSkillId,
+                    );
+                    if (routingAttempt === 0) continue;
+                    break;
+                  }
+                  if (
+                    decision.kind === "tool" ||
+                    decision.kind === "web_search_fallback"
+                  ) {
+                    const selectedId =
+                      decision.kind === "tool"
+                        ? decision.selectedToolId
+                        : "web_search";
+                    // Fetch a fresh general catalog at execution time to close
+                    // the catalog/authorization race.
+                    const currentGeneral = this.capabilityRegistry
+                      ? this.capabilityRegistry.generalRequests()
+                      : [...this.generalCapabilities];
+                    const selected = currentGeneral.filter(
+                      ({ id }) => id === selectedId,
+                    );
+                    if (selected.length === 1) {
+                      routedCapabilities = this.capabilityRegistry
+                        ? this.capabilityRegistry.requests([selectedId])
+                        : selected;
+                      break;
+                    }
+                    toolCatalog = toolCatalog.filter(
+                      ({ id }) => id !== selectedId,
+                    );
+                    if (routingAttempt === 0) continue;
+                    break;
+                  }
+                  if (decision.kind === "ambiguous") {
+                    const authorizedIds = new Set([
+                      ...skillCatalog.map(({ id }) => id),
+                      ...toolCatalog.map(({ id }) => id),
+                    ]);
+                    const choices = decision.candidateIds.filter((id) =>
+                      authorizedIds.has(id),
+                    );
+                    if (choices.length >= 2) {
+                      answer = `I need clarification. Would you like ${choices.join(" or ")}?`;
+                      break;
+                    }
+                    skillCatalog = skillCatalog.filter(({ id }) =>
+                      choices.includes(id),
+                    );
+                    toolCatalog = toolCatalog.filter(({ id }) =>
+                      choices.includes(id),
+                    );
+                    if (routingAttempt === 0) continue;
+                    break;
+                  }
+                  if (decision.kind === "refuse")
+                    answer = "I can’t help with that request.";
+                  // direct and the bounded invalid-selection fallback both
+                  // intentionally execute without capabilities.
+                  break;
+                }
               } else {
                 resolution = this.skills?.resolve(routedText, input.userId);
               }
@@ -248,6 +357,7 @@ export class TelegramTurn {
                     this.model.generate({
                       ...context,
                       generalCapabilities: routedCapabilities,
+                      signal: turnController.signal,
                       ...(resolution?.kind === "selected"
                         ? { skill: resolution.skill }
                         : {}),
@@ -288,9 +398,44 @@ export class TelegramTurn {
             "assistant",
             answer,
           );
+          if (this.accounting)
+            for (const routerRun of routerRuns)
+              await this.conversations.recordModelRun?.({
+                id: uuidV7(),
+                runKind: "router",
+                userId: input.userId,
+                provider: "deepseek",
+                model: "deepseek-v4-pro",
+                thinkingEnabled: this.accounting.thinkingEnabled,
+                effort: "medium",
+                status: "completed",
+                requestMessageId,
+                responseMessageId: null,
+                providerRequestId: routerRun.requestId ?? null,
+                inputCount: routerRun.usage?.inputTokens ?? null,
+                outputCount: routerRun.usage?.outputTokens ?? null,
+                inputPricePerMillion:
+                  this.accounting.inputPricePerMillion ?? null,
+                outputPricePerMillion:
+                  this.accounting.outputPricePerMillion ?? null,
+                estimatedCost:
+                  routerRun.usage &&
+                  this.accounting.inputPricePerMillion &&
+                  this.accounting.outputPricePerMillion
+                    ? calculateCost(
+                        routerRun.usage.inputTokens,
+                        routerRun.usage.outputTokens,
+                        this.accounting.inputPricePerMillion,
+                        this.accounting.outputPricePerMillion,
+                      ).estimatedCost
+                    : null,
+                latencyMs: routerRun.latencyMs,
+                createdAt: new Date().toISOString(),
+              });
           if (generated && this.accounting)
             await this.conversations.recordModelRun?.({
               id: uuidV7(),
+              runKind: "answer",
               userId: input.userId,
               provider: "deepseek",
               model: "deepseek-v4-pro",
@@ -327,7 +472,7 @@ export class TelegramTurn {
               permittedCapabilities:
                 resolution?.kind === "selected"
                   ? resolution.skill.capabilities.map((item) => item.id)
-                  : [],
+                  : routedCapabilities.map((item) => item.id),
               capabilityAudit: generated.capabilityAudit ?? [],
               routingOutcome:
                 resolution?.kind === "selected"
@@ -370,6 +515,8 @@ export class TelegramTurn {
           updatedAt: new Date().toISOString(),
         });
       } finally {
+        clearTimeout(turnTimer);
+        turnController.abort();
         clearInterval(typingRefresh);
       }
     });

@@ -68,6 +68,100 @@ describe("Telegram turn", () => {
     expect(model.generate).not.toHaveBeenCalled();
   });
 
+  it("keeps known and unknown commands out of the routing path", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const router = { route: vi.fn() };
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    for (const [index, text] of [
+      "/start",
+      "/help",
+      "/new",
+      "/skills",
+      "/nope",
+    ].entries())
+      await new TelegramTurn(
+        new LockCoordinator(root),
+        new UpdateRepository(root),
+        new ConversationService(),
+        { generate: vi.fn() },
+        telegram,
+        "system",
+        undefined,
+        undefined,
+        new SkillResolver(new CapabilityRegistry()),
+        [],
+        router,
+      ).handle({
+        kind: "text",
+        updateId: `10${index}`,
+        messageId: "2",
+        chatId: "3",
+        userId: "4",
+        text,
+      });
+    expect(router.route).not.toHaveBeenCalled();
+  });
+
+  it("reroutes one invalid tool selection and executes direct with no tools", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const registry = new CapabilityRegistry([
+      {
+        scope: "general",
+        request: {
+          id: "lookup",
+          description: "Lookup current facts",
+          inputSchema: { type: "object" },
+        },
+        input: z.object({}),
+        execute: async () => ({}),
+      },
+    ]);
+    const router = {
+      route: vi
+        .fn()
+        .mockResolvedValueOnce({
+          kind: "tool",
+          selectedToolId: "stale-tool",
+          confidence: 1,
+          rationale: "stale",
+        })
+        .mockResolvedValueOnce({
+          kind: "direct",
+          confidence: 1,
+          rationale: "No tool needed",
+        }),
+    };
+    const model = { generate: vi.fn(async () => ({ content: "answer" })) };
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      model,
+      { typing: vi.fn(async () => {}), send: vi.fn(async () => {}) },
+      "system",
+      undefined,
+      undefined,
+      new SkillResolver(registry),
+      registry.generalRequests(),
+      router,
+      registry,
+    ).handle({
+      kind: "text",
+      updateId: "200",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "hello",
+    });
+    expect(router.route).toHaveBeenCalledTimes(2);
+    expect(model.generate).toHaveBeenCalledWith(
+      expect.objectContaining({ generalCapabilities: [] }),
+    );
+  });
+
   it("enforces a selected skill's prohibited actions before generation", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const model = { generate: vi.fn() };
