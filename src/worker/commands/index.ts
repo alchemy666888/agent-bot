@@ -1,6 +1,8 @@
 export type SkillAvailability = "available" | "unavailable" | "retired";
 
 export interface InstalledSkill {
+  /** Immutable executable identifier used by the runtime resolver. */
+  id?: string;
   /** Stable name used by /use (display names are not stable identifiers). */
   name: string;
   displayName: string;
@@ -20,7 +22,13 @@ export interface SkillInvocation {
 
 export type CommandResult =
   | { kind: "reply"; text: string }
-  | { kind: "invoke"; invocation: SkillInvocation };
+  | { kind: "invoke"; invocation: SkillInvocation }
+  | {
+      kind: "fallback";
+      request: string;
+      note: string;
+      reason: "skill_not_found" | "skill_unavailable";
+    };
 
 export const SKILLS_PAGE_SIZE = 5;
 
@@ -153,6 +161,13 @@ export function handleCommand(
           : "Usage: /skill <skill-name>",
     };
   const resolution = resolveSkill(catalog, requestedName);
+  if (resolution.status === "missing" && parsed.command === "/use")
+    return {
+      kind: "fallback",
+      request: invocation![2]!,
+      note: "That skill is not available, so I’ll answer without it.",
+      reason: "skill_not_found",
+    };
   if (resolution.status !== "found")
     return { kind: "reply", text: resolutionReply(resolution.status) };
   const skill = resolution.skill;
@@ -171,15 +186,29 @@ export function handleCommand(
       ].join("\n"),
     };
   if (skill.availability === "retired")
-    return {
-      kind: "reply",
-      text: "This skill has been retired and cannot be invoked.",
-    };
+    return parsed.command === "/use"
+      ? {
+          kind: "fallback",
+          request: invocation![2]!,
+          note: "That skill has been retired, so I’ll answer without it.",
+          reason: "skill_unavailable",
+        }
+      : {
+          kind: "reply",
+          text: "This skill has been retired and cannot be invoked.",
+        };
   if (skill.availability !== "available")
-    return {
-      kind: "reply",
-      text: "This skill is currently unavailable. Please try again later.",
-    };
+    return parsed.command === "/use"
+      ? {
+          kind: "fallback",
+          request: invocation![2]!,
+          note: "That skill is currently unavailable, so I’ll answer without it.",
+          reason: "skill_unavailable",
+        }
+      : {
+          kind: "reply",
+          text: "This skill is currently unavailable. Please try again later.",
+        };
   return { kind: "invoke", invocation: { skill, request: invocation![2]! } };
 }
 

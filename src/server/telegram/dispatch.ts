@@ -155,6 +155,12 @@ export async function dispatchTelegramInput(
       DEEPSEEK_OUTPUT_PRICE_PER_MILLION: String(
         model.DEEPSEEK_OUTPUT_PRICE_PER_MILLION,
       ),
+      ...(process.env.SKILLS_ENABLED
+        ? { SKILLS_ENABLED: process.env.SKILLS_ENABLED }
+        : {}),
+      ...(process.env.SKILL_MAX_TOOL_STEPS
+        ? { SKILL_MAX_TOOL_STEPS: process.env.SKILL_MAX_TOOL_STEPS }
+        : {}),
       ...databaseProcessEnv(),
     },
   );

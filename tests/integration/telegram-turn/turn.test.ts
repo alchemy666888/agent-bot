@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { TelegramTurn } from "../../../src/worker/orchestration/telegram-turn";
 import { LockCoordinator } from "../../../src/worker/locks/coordinator";
 import { UpdateRepository } from "../../../src/worker/updates/repository";
@@ -111,6 +112,139 @@ describe("Telegram turn", () => {
     expect(telegram.send).toHaveBeenCalledWith(
       "3",
       expect.stringContaining("prohibits"),
+    );
+  });
+
+  it("loads a matched skill into the model request", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const model = { generate: vi.fn(async () => ({ content: "forecast" })) };
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    const skills = new SkillResolver(new CapabilityRegistry(), [
+      {
+        id: "weather",
+        commitSha: "a".repeat(40),
+        name: "Weather",
+        description: "Weather forecasts",
+        instructions: "Use the weather procedure.",
+        triggers: { keywords: ["weather"], minimumConfidence: 1 },
+        tools: [],
+        prohibitedActions: [],
+        visibility: "public",
+        ownerTelegramUserIds: ["4"],
+        allowedTelegramUserIds: [],
+        status: "active",
+      },
+    ]);
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      model,
+      telegram,
+      "system",
+      undefined,
+      undefined,
+      skills,
+    ).handle({
+      kind: "text",
+      updateId: "matched",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "weather",
+    });
+    expect(model.generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skill: expect.objectContaining({ id: "weather" }),
+      }),
+    );
+  });
+
+  it("uses general capabilities when no skill matches", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const model = {
+      generate: vi.fn(async (_request: unknown) => ({ content: "general" })),
+    };
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    const registry = new CapabilityRegistry([
+      {
+        request: {
+          id: "lookup",
+          description: "Lookup",
+          inputSchema: { type: "object" },
+        },
+        input: z.object({}),
+        execute: async () => ({}),
+      },
+    ]);
+    const generalCapabilities = registry.requests(["lookup"]);
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      model,
+      telegram,
+      "system",
+      undefined,
+      undefined,
+      new SkillResolver(registry, []),
+      generalCapabilities,
+    ).handle({
+      kind: "text",
+      updateId: "general",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "tell me a joke",
+    });
+    const request = model.generate.mock.calls[0]![0];
+    expect(request).not.toHaveProperty("skill");
+    expect(request.generalCapabilities).toEqual(generalCapabilities);
+  });
+
+  it("answers an unknown explicit skill request through the general path", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const model = {
+      generate: vi.fn(async () => ({ content: "The answer is 42." })),
+    };
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      model,
+      telegram,
+      "system",
+      undefined,
+      undefined,
+      new SkillResolver(new CapabilityRegistry(), []),
+    ).handle({
+      kind: "text",
+      updateId: "unknown-skill",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "/use missing what is the answer?",
+    });
+    expect(model.generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          { role: "user", content: "what is the answer?" },
+        ]),
+      }),
+    );
+    expect(telegram.send).toHaveBeenCalledWith(
+      "3",
+      expect.stringMatching(/not available[\s\S]*42/),
     );
   });
 

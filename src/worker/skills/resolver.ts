@@ -1,5 +1,6 @@
 import type { SkillContext } from "../../shared/contracts";
 import { CapabilityRegistry } from "../capabilities/registry";
+import type { InstalledSkill as CommandSkill } from "../commands";
 import type { ExecutableSkill } from "./schemas";
 
 export type InstalledSkill = ExecutableSkill;
@@ -38,6 +39,29 @@ export class SkillResolver {
     )
       throw new Error("SKILL_ALREADY_INSTALLED");
     this.skills.push(structuredClone(skill));
+  }
+  commandCatalog(userId: string): CommandSkill[] {
+    return this.skills
+      .filter((skill) => this.available(skill, userId))
+      .map((skill) => ({
+        id: skill.id,
+        name: skill.id,
+        displayName: skill.name,
+        purpose: skill.description ?? "No description provided",
+        version: skill.commitSha,
+        availability:
+          skill.status === "active"
+            ? ("available" as const)
+            : ("retired" as const),
+        supportedTasks: [
+          ...(skill.triggers.phrases ?? []),
+          ...(skill.triggers.keywords ?? []),
+        ],
+        operatingConstraints:
+          skill.prohibitedActions.length > 0
+            ? `Prohibited: ${skill.prohibitedActions.join("; ")}`
+            : undefined,
+      }));
   }
   resolve(text: string, userId: string, explicitId?: string): SkillResolution {
     const started = Date.now();

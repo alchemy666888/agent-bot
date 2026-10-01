@@ -50,7 +50,10 @@ async function telegramTurn(
   const errors = new DurableErrorService(ROOT, locks);
   const capabilities = createCapabilityRegistry();
   const catalog = skillCatalogSnapshotSchema.parse(payload.skillCatalog);
-  const skills = new SkillResolver(capabilities, catalog.skills);
+  const skills = new SkillResolver(
+    capabilities,
+    process.env.SKILLS_ENABLED === "false" ? [] : catalog.skills,
+  );
   const turn = new TelegramTurn(
     locks,
     new UpdateRepository(ROOT),
@@ -60,6 +63,7 @@ async function telegramTurn(
         apiKey: requiredEnv("DEEPSEEK_API_KEY"),
         baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
         thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
+        maxToolCalls: optionalPositiveInteger("SKILL_MAX_TOOL_STEPS"),
       },
       fetch,
       capabilities,
@@ -76,6 +80,7 @@ async function telegramTurn(
       thinkingEnabled: process.env.DEEPSEEK_THINKING_ENABLED !== "false",
     },
     skills,
+    capabilities.requests(["web_search"]),
   );
   await turn.handle(input);
   return { terminal: true };
@@ -108,6 +113,15 @@ function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error("WORKER_CONFIGURATION_INVALID");
   return value;
+}
+
+function optionalPositiveInteger(name: string): number | undefined {
+  const value = process.env[name];
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1)
+    throw new Error("WORKER_CONFIGURATION_INVALID");
+  return parsed;
 }
 
 async function main() {
