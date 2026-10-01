@@ -36,6 +36,32 @@ results and the GitHub App will additionally need **Checks: read** and
 **Administration: read**; do not grant those extra permissions to the current
 create-only workflow.
 
+### Repository authorization and failure modes
+
+Every catalog list/read, draft branch, revision write, approval observation,
+retirement, and invocation must enter through the skill repository/service with
+an authenticated Telegram user. Missing and unauthorized targets both return
+`SKILL_NOT_FOUND`; user-facing errors must not include a skill name, branch,
+pull request, repository path, or document excerpt. Author, approver, retire,
+and capability grants are deployed operator policy. Repository manifests may
+request capabilities, but cannot grant them.
+
+Writes are serialized in-process by skill ID and use both the previously
+observed branch commit SHA and file blob SHA. `SKILL_REVISION_CONFLICT` is a
+safe, retry-by-revision result: do not retry the write or disclose the winning
+branch/content. Writes, approvals, unknown write outcomes, and unknown merge
+commits always fail closed.
+
+For reads only, a transient GitHub or rate-limit failure may use the last fully
+schema-validated snapshot for the same symbolic ref until its bounded stale
+deadline (currently two minutes after the normal cache lifetime). Never use
+stale data for an explicit unknown commit, after expiry, after validation or
+authentication failures, or for a mutation. Events for GitHub reads, branch and
+commit writes, pull requests, observed merges, refreshes, denials, conflicts,
+rate limits, and invocations contain only actor/skill/draft/PR identifiers,
+commit SHAs, durations, and safe codes. Connector tokens, headers, response
+bodies, branch names, repository paths, and skill content are prohibited.
+
 For a stuck run, inspect its execution, idempotency key, last committed step, descriptor retry class, provider idempotency/reference, and audit trail. Reclaim an expired lease only through the reconciliation command. Retry a call only when it is declared retry-safe or the provider can return the original result for the same key. Mark an ambiguous non-retry-safe call `unknown_outcome`, investigate externally, and tell the user; never replay it automatically.
 
 Database/Sandbox failures use sanitized stages (`bootstrap`, `persistence-sync`, `operation`, `tool-dispatch`, `delivery`). PostgreSQL authentication (`28P01`), DNS (`ENOTFOUND`), and IPv4 routing (`ENETUNREACH`) are infrastructure failures. Fix connectivity and let checkpoint recovery resume; do not switch to local files.

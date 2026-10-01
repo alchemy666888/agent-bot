@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+const migratedStatusSchema = z.enum(["active", "retired", "superseded"]);
+const migratedTriggerSchema = z
+  .object({
+    type: z.enum(["command", "keyword", "event"]),
+    value: z.string().min(1),
+  })
+  .strict();
+const migratedApprovalSchema = z
+  .object({
+    approvedBy: z.string().min(1),
+    approvedAt: z.iso.datetime(),
+    source: z.string().optional(),
+  })
+  .strict();
+
 const safeIdentifier = z.string().trim().min(1).max(200);
 const telegramUserIdSchema = z.string().regex(/^\d+$/);
 const gitCommitShaSchema = z.string().regex(/^[a-f0-9]{40}$/i);
@@ -41,11 +56,11 @@ export const skillManifestSchema = z
       .object({
         sourceVersionId: z.uuid(),
         sourceVersionNumber: z.number().int().positive(),
-        sourceStatus: installedSkillStatusSchema,
+        sourceStatus: migratedStatusSchema,
         sourceContentDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-        sourceTriggers: z.array(skillTriggerSchema).max(100),
+        sourceTriggers: z.array(migratedTriggerSchema).max(100),
         capabilities: z.array(safeIdentifier).max(100),
-        approval: skillApprovalSchema,
+        approval: migratedApprovalSchema,
         createdAt: z.iso.datetime(),
         updatedAt: z.iso.datetime(),
       })

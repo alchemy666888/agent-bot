@@ -15,10 +15,46 @@ import { uuidV7 } from "../../shared/ids";
 import type { TelegramInput } from "./input";
 import { createGitHubSkillsClient } from "../github/skills-client";
 import { GitHubSkillRepository } from "../github/skill-repository";
+import { logStructured } from "../../shared/logger";
+import type { GitHubClientEvent } from "../github/skills-client";
+import type { SkillRepositoryEvent } from "../github/skill-repository";
 
 const MAX_SKILL_CATALOG_BYTES = 4 * 1024 * 1024;
 
 const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
+
+function auditGitHubEvent(
+  correlationId: string,
+  event: GitHubClientEvent | SkillRepositoryEvent,
+) {
+  logStructured({
+    correlationId,
+    component: "controller",
+    operation: event.operation,
+    stage: "skill-repository",
+    result:
+      event.result === "denied" || event.result === "failure"
+        ? "failure"
+        : event.result,
+    durationMs: event.durationMs,
+    ...(event.code ? { code: event.code } : {}),
+    metadata: {
+      ...("actorTelegramUserId" in event && event.actorTelegramUserId
+        ? { actorTelegramUserId: event.actorTelegramUserId }
+        : {}),
+      ...("skillId" in event && event.skillId
+        ? { skillId: event.skillId }
+        : {}),
+      ...("draftId" in event && event.draftId
+        ? { draftId: event.draftId }
+        : {}),
+      ...(event.commitSha ? { commitSha: event.commitSha } : {}),
+      ...(event.pullRequestNumber
+        ? { pullRequestNumber: event.pullRequestNumber }
+        : {}),
+    },
+  });
+}
 
 /** Dispatches only the minimized Telegram input and operation-required secrets. */
 export async function dispatchTelegramInput(
@@ -28,15 +64,24 @@ export async function dispatchTelegramInput(
   const telegram = readTelegramConfig();
   const model = readModelConfig();
   const github = readGitHubConfig();
-  const skillCatalog = await new GitHubSkillRepository(
-    createGitHubSkillsClient({
-      connector: github.GITHUB_CONNECTOR,
-      owner: github.GITHUB_SKILLS_OWNER,
-      repository: github.GITHUB_SKILLS_REPO,
-      branch: github.GITHUB_SKILLS_BRANCH,
-      prefix: github.GITHUB_SKILLS_PREFIX,
-    }),
-  ).loadCatalogSnapshot();
+  // Non-text updates never enter the skill invocation path. Use the only
+  // authenticated Telegram identity available for text turns.
+  const skillCatalog =
+    input.kind === "text"
+      ? await new GitHubSkillRepository(
+          createGitHubSkillsClient(
+            {
+              connector: github.GITHUB_CONNECTOR,
+              owner: github.GITHUB_SKILLS_OWNER,
+              repository: github.GITHUB_SKILLS_REPO,
+              branch: github.GITHUB_SKILLS_BRANCH,
+              prefix: github.GITHUB_SKILLS_PREFIX,
+            },
+            { audit: (event) => auditGitHubEvent(correlationId, event) },
+          ),
+          { audit: (event) => auditGitHubEvent(correlationId, event) },
+        ).loadCatalogSnapshot({ telegramUserId: input.userId })
+      : { commitSha: "0".repeat(40), skills: [] };
   if (
     Buffer.byteLength(JSON.stringify(skillCatalog), "utf8") >
     MAX_SKILL_CATALOG_BYTES

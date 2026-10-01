@@ -9,6 +9,7 @@ const DEFAULT_MAX_BYTES = 1024 * 1024;
 const DEFAULT_RETRIES = 2;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 const SUPPORTED_EXTENSIONS = new Set([".md", ".json"]);
+const SHA_PATTERN = /^[a-f0-9]{40}$/i;
 
 const contentFileSchema = z.object({
   type: z.literal("file"),
@@ -42,6 +43,7 @@ const pullRequestSchema = z.object({
   head: z.object({ ref: z.string(), sha: z.string() }),
   base: z.object({ ref: z.string(), sha: z.string() }),
   merged: z.boolean().optional(),
+  merge_commit_sha: z.string().nullable().optional(),
 });
 const comparisonSchema = z.object({
   status: z.enum(["ahead", "behind", "diverged", "identical"]),
@@ -72,6 +74,22 @@ export interface GitHubSkillsClientOptions {
   maxFileBytes?: number;
   maxReadRetries?: number;
   sleep?: (milliseconds: number) => Promise<void>;
+  audit?: (event: GitHubClientEvent) => void | Promise<void>;
+}
+
+export interface GitHubClientEvent {
+  operation:
+    | "github.read"
+    | "github.branch_created"
+    | "github.commit"
+    | "github.pull_request_created"
+    | "github.merge_observed"
+    | "github.rate_limited";
+  result: "success" | "failure";
+  durationMs: number;
+  commitSha?: string;
+  pullRequestNumber?: number;
+  code?: string;
 }
 
 export type GitHubErrorKind =
@@ -247,6 +265,7 @@ export class GitHubSkillsClient {
   private readonly retries: number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly prefix: string;
+  private readonly audit: (event: GitHubClientEvent) => void | Promise<void>;
 
   constructor(
     private readonly config: SkillsGitHubConfig,
@@ -256,6 +275,7 @@ export class GitHubSkillsClient {
     this.tokenProvider = options.tokenProvider ?? getToken;
     this.maxBytes = options.maxFileBytes ?? DEFAULT_MAX_BYTES;
     this.retries = options.maxReadRetries ?? DEFAULT_RETRIES;
+    this.audit = options.audit ?? (() => undefined);
     this.sleep =
       options.sleep ??
       ((milliseconds) =>
@@ -274,6 +294,10 @@ export class GitHubSkillsClient {
 
   get defaultBranch(): string {
     return this.config.branch;
+  }
+
+  private emit(event: GitHubClientEvent): void {
+    void Promise.resolve(this.audit(event)).catch(() => undefined);
   }
 
   private repoUrl(path: string): string {
@@ -302,6 +326,7 @@ export class GitHubSkillsClient {
     init: RequestInit = {},
     safeRead = false,
   ): Promise<Response> {
+    const started = Date.now();
     for (let attempt = 0; ; attempt += 1) {
       const response = await this.fetcher(url, {
         ...init,
@@ -309,6 +334,13 @@ export class GitHubSkillsClient {
       });
       if (response.ok) return response;
       const failure = errorFor(response);
+      if (failure.kind === "rate_limit")
+        this.emit({
+          operation: "github.rate_limited",
+          result: "failure",
+          durationMs: Date.now() - started,
+          code: "GITHUB_RATE_LIMITED",
+        });
       if (!safeRead || !failure.retryable || attempt >= this.retries)
         throw failure;
       await response.body?.cancel();
@@ -360,8 +392,16 @@ export class GitHubSkillsClient {
   }
 
   async readFile(path: string, ref: string): Promise<SkillFile> {
+    const started = Date.now();
     const token = await this.token();
-    return this.readFileWithToken(token, path, ref);
+    const file = await this.readFileWithToken(token, path, ref);
+    this.emit({
+      operation: "github.read",
+      result: "success",
+      durationMs: Date.now() - started,
+      ...(SHA_PATTERN.test(ref) ? { commitSha: ref } : {}),
+    });
+    return file;
   }
 
   async listDirectory(path: string, ref: string): Promise<DirectoryEntry[]> {
@@ -407,12 +447,19 @@ export class GitHubSkillsClient {
   }
 
   async createBranch(branch: string, baseCommitSha: string): Promise<string> {
+    const started = Date.now();
     const token = await this.token();
     const response = await this.request(token, this.repoUrl("/git/refs"), {
       method: "POST",
       body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseCommitSha }),
     });
     const ref = this.parse(branchSchema, await response.json());
+    this.emit({
+      operation: "github.branch_created",
+      result: "success",
+      durationMs: Date.now() - started,
+      commitSha: ref.object.sha,
+    });
     return ref.object.sha;
   }
 
@@ -443,6 +490,7 @@ export class GitHubSkillsClient {
     message: string;
     expectedSha: string | null;
   }): Promise<FileMutationResult> {
+    const started = Date.now();
     const token = await this.token();
     const path = this.path(input.path);
     const bytes = new TextEncoder().encode(input.content);
@@ -454,44 +502,28 @@ export class GitHubSkillsClient {
       content: Buffer.from(bytes).toString("base64"),
     };
     if (input.expectedSha !== null) body.sha = input.expectedSha;
-    try {
-      const response = await this.request(
-        token,
-        this.repoUrl(`/contents/${encodePath(path)}`),
-        {
-          method: "PUT",
-          body: JSON.stringify(body),
-        },
-      );
-      const result = this.parse(contentWriteSchema, await response.json());
-      if (!result.content)
-        throw new GitHubSkillsError("invalid_response", undefined, false);
-      return {
-        path: result.content.path,
-        sha: result.content.sha,
-        commitSha: result.commit.sha,
-      };
-    } catch (error) {
-      // A 5xx can be returned after the commit was accepted. Read-after-write avoids an unsafe retry.
-      if (error instanceof GitHubSkillsError && error.kind === "transient") {
-        try {
-          const current = await this.readFileWithToken(
-            token,
-            path,
-            input.branch,
-          );
-          if (current.content === input.content)
-            return {
-              path: current.path,
-              sha: current.sha,
-              commitSha: current.sha,
-            };
-        } catch {
-          // Preserve the original, redacted write failure.
-        }
-      }
-      throw error;
-    }
+    // A write is never retried or inferred from matching content: that would
+    // not prove which commit won, and a blob SHA is not a commit SHA.
+    const response = await this.request(
+      token,
+      this.repoUrl(`/contents/${encodePath(path)}`),
+      { method: "PUT", body: JSON.stringify(body) },
+    );
+    const result = this.parse(contentWriteSchema, await response.json());
+    if (!result.content)
+      throw new GitHubSkillsError("invalid_response", undefined, false);
+    const mutation = {
+      path: result.content.path,
+      sha: result.content.sha,
+      commitSha: result.commit.sha,
+    };
+    this.emit({
+      operation: "github.commit",
+      result: "success",
+      durationMs: Date.now() - started,
+      commitSha: mutation.commitSha,
+    });
+    return mutation;
   }
 
   async deleteFile(input: {
@@ -523,6 +555,7 @@ export class GitHubSkillsClient {
     head: string;
     base?: string;
   }): Promise<PullRequest> {
+    const started = Date.now();
     const token = await this.token();
     const response = await this.request(token, this.repoUrl("/pulls"), {
       method: "POST",
@@ -531,7 +564,15 @@ export class GitHubSkillsClient {
         base: input.base ?? this.config.branch,
       }),
     });
-    return this.parse(pullRequestSchema, await response.json());
+    const pull = this.parse(pullRequestSchema, await response.json());
+    this.emit({
+      operation: "github.pull_request_created",
+      result: "success",
+      durationMs: Date.now() - started,
+      pullRequestNumber: pull.number,
+      commitSha: pull.head.sha,
+    });
+    return pull;
   }
 
   async listPullRequests(
@@ -566,6 +607,7 @@ export class GitHubSkillsClient {
   }
 
   async getPullRequest(number: number): Promise<PullRequest> {
+    const started = Date.now();
     const token = await this.token();
     const response = await this.request(
       token,
@@ -573,7 +615,16 @@ export class GitHubSkillsClient {
       {},
       true,
     );
-    return this.parse(pullRequestSchema, await response.json());
+    const pull = this.parse(pullRequestSchema, await response.json());
+    if (pull.merged)
+      this.emit({
+        operation: "github.merge_observed",
+        result: "success",
+        durationMs: Date.now() - started,
+        pullRequestNumber: pull.number,
+        ...(pull.merge_commit_sha ? { commitSha: pull.merge_commit_sha } : {}),
+      });
+    return pull;
   }
 }
 

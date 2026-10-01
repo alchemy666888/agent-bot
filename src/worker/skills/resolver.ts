@@ -8,11 +8,23 @@ export type SkillResolution =
   | { kind: "ambiguous"; skillIds: string[] }
   | { kind: "none" };
 
+export type SkillInvocationEvent = {
+  operation: "skill.invoked" | "skill.authorization_denied";
+  result: "success" | "denied";
+  actorTelegramUserId: string;
+  skillId?: string;
+  commitSha?: string;
+  durationMs: number;
+  code?: "SKILL_NOT_FOUND";
+};
+
 export class SkillResolver {
   private skills: InstalledSkill[] = [];
   constructor(
     private capabilities: CapabilityRegistry,
     skills: InstalledSkill[] = [],
+    private readonly audit: (event: SkillInvocationEvent) => void = () =>
+      undefined,
   ) {
     for (const skill of skills) this.install(skill);
   }
@@ -28,13 +40,25 @@ export class SkillResolver {
     this.skills.push(structuredClone(skill));
   }
   resolve(text: string, userId: string, explicitId?: string): SkillResolution {
+    const started = Date.now();
+    if (!/^\d+$/.test(userId)) return { kind: "none" };
     const command = text.match(/^\/skill\s+([a-z0-9_.-]+)(?:\s|$)/i)?.[1];
     const selectedId = explicitId ?? command;
     if (selectedId) {
       const skill = this.skills.find(
         (item) => item.id === selectedId && this.available(item, userId),
       );
-      if (!skill) return { kind: "none" };
+      if (!skill) {
+        this.audit({
+          operation: "skill.authorization_denied",
+          result: "denied",
+          actorTelegramUserId: userId,
+          durationMs: Date.now() - started,
+          code: "SKILL_NOT_FOUND",
+        });
+        return { kind: "none" };
+      }
+      this.invoked(skill, userId, started);
       return {
         kind: "selected",
         source: "explicit",
@@ -78,11 +102,22 @@ export class SkillResolver {
           .filter((item) => candidates[0]!.confidence - item.confidence < 0.15)
           .map((item) => item.skill.id),
       };
+    this.invoked(candidates[0]!.skill, userId, started);
     return {
       kind: "selected",
       source: "automatic",
       skill: this.context(candidates[0]!.skill),
     };
+  }
+  private invoked(skill: InstalledSkill, userId: string, started: number) {
+    this.audit({
+      operation: "skill.invoked",
+      result: "success",
+      actorTelegramUserId: userId,
+      skillId: skill.id,
+      commitSha: skill.commitSha,
+      durationMs: Date.now() - started,
+    });
   }
   private context(skill: InstalledSkill): SkillContext {
     // Re-check the allowlist at execution time; a stale/uninstalled capability cannot run.
