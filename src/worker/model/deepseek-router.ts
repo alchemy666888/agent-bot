@@ -16,6 +16,11 @@ export type RouterRunMetadata = {
   requestId?: string;
   usage?: { inputTokens: number; outputTokens: number };
   latencyMs: number;
+  routeKind?: RoutingDecision["kind"];
+  selectedSkillId?: string;
+  selectedToolId?: string;
+  candidateIds?: string[];
+  validationOutcome?: "valid" | "invalid";
 };
 
 export interface RequestRouter {
@@ -175,6 +180,17 @@ export class DeepSeekRouter implements RequestRouter {
               }
             : undefined,
           latencyMs: Date.now() - started,
+          routeKind: decision.kind,
+          ...(decision.kind === "skill"
+            ? { selectedSkillId: decision.selectedSkillId }
+            : {}),
+          ...(decision.kind === "tool"
+            ? { selectedToolId: decision.selectedToolId }
+            : {}),
+          ...(decision.kind === "ambiguous"
+            ? { candidateIds: decision.candidateIds }
+            : {}),
+          validationOutcome: "valid",
         },
       };
     } catch (error) {
@@ -192,6 +208,7 @@ export class DeepSeekRouter implements RequestRouter {
               }
             : undefined,
           latencyMs: Date.now() - started,
+          validationOutcome: "invalid",
         } satisfies RouterRunMetadata,
       });
       throw invalid;

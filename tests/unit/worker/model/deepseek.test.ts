@@ -1,10 +1,36 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { DeepSeekProvider } from "../../../../src/worker/model/deepseek";
+import {
+  containsInternalProtocol,
+  DeepSeekProvider,
+} from "../../../../src/worker/model/deepseek";
 import { retryTransient } from "../../../../src/worker/model/retry";
 import { calculateCost } from "../../../../src/worker/model/usage";
 import { CapabilityRegistry } from "../../../../src/worker/capabilities/registry";
 describe("model adapter", () => {
+  it.each([
+    '<tool_calls><invoke name="Search"></invoke></tool_calls>',
+    '<invoke name="Search">',
+    '{"type":"function_call","name":"Search","arguments":"{}"}',
+    '<tool_calls><invoke name="Search"',
+    '这是搜索结果之前的说明。\n<tool_calls><invoke name="Search"></invoke></tool_calls>',
+    '{"output":[{"type":"web_search_call","id":"ws_1","status":"completed"}]}',
+    '{"function_call":{"name":"Search","arguments":"{}"}}',
+    '{"tool_calls":[{"type":"function","function":{"name":"Search"}}]}',
+    '{"type":"function_call_output","call_id":"call_1","output":"ok"}',
+  ])("recognizes leaked protocol fixture %s", (fixture) => {
+    expect(containsInternalProtocol(fixture)).toBe(true);
+  });
+
+  it.each([
+    "The Responses API has a web_search_call output type.",
+    "A function_call is different from an ordinary JavaScript function call.",
+    "Use an XML <example> element when documenting the payload.",
+    "The parameter should be a string.",
+  ])("allows ordinary technical discussion %s", (fixture) => {
+    expect(containsInternalProtocol(fixture)).toBe(false);
+  });
+
   it("sends exact settings and returns final content only", async () => {
     const fetcher = vi.fn(async (...args: unknown[]) => {
       expect(args[0]).toBe("https://example.test/responses");
