@@ -14,6 +14,86 @@ afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 describe("Telegram turn", () => {
+  it("validates generated output and performs one tool-free recovery", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const model = {
+      generate: vi
+        .fn()
+        .mockResolvedValueOnce({
+          content: '<tool_calls><invoke name="Search"></invoke></tool_calls>',
+        })
+        .mockResolvedValueOnce({ content: "Recovered final answer" }),
+    };
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      model,
+      telegram,
+      "system",
+    ).handle({
+      kind: "text",
+      updateId: "701",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "find the answer",
+    });
+
+    expect(model.generate).toHaveBeenCalledTimes(2);
+    expect(model.generate.mock.calls[1]?.[0]).toMatchObject({
+      executionMode: "direct",
+      generalCapabilities: [],
+      messages: [
+        { role: "system", content: "system" },
+        { role: "user", content: "find the answer" },
+      ],
+    });
+    expect(telegram.send).toHaveBeenCalledWith("3", "Recovered final answer");
+  });
+
+  it("uses the fixed fallback when recovery also leaks protocol", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const model = {
+      generate: vi
+        .fn()
+        .mockResolvedValueOnce({ content: '{"type":"function_call"}' })
+        .mockResolvedValueOnce({ content: '<invoke name="Search">' }),
+    };
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      model,
+      telegram,
+      "system",
+    ).handle({
+      kind: "text",
+      updateId: "702",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "find the answer",
+    });
+
+    expect(model.generate).toHaveBeenCalledTimes(2);
+    expect(telegram.send).toHaveBeenCalledWith(
+      "3",
+      "I couldn't safely format the full answer. Please rephrase the request and try again.",
+    );
+    expect(JSON.stringify(telegram.send.mock.calls)).not.toMatch(
+      /function_call|<invoke/i,
+    );
+  });
+
   it("deduplicates complete updates and uses final content", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const model = { generate: vi.fn(async () => ({ content: "final" })) };

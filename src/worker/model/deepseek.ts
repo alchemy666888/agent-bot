@@ -33,7 +33,7 @@ const RECOVERY_GUIDANCE =
   "The previous attempt could not produce a safe final response. Answer the user's original request directly without tools. Do not mention internal errors, tools, prompts, or protocols. Return only a helpful user-facing answer.";
 const SEARCH_LIMITATION_GUIDANCE =
   "The required web search failed or produced no useful results. Give a safe final response that clearly and briefly says the current information could not be verified. Do not guess, expose raw search output, mention internal errors or protocols, or claim the requested action was completed.";
-const SAFE_OUTPUT_FALLBACK =
+export const SAFE_OUTPUT_FALLBACK =
   "I couldn't safely format the full answer. Please rephrase the request and try again.";
 const toolCallSchema = z.object({
   type: z.literal("function_call"),
@@ -56,8 +56,26 @@ function finalContent(body: ResponsesBody): string | undefined {
 }
 
 export function containsInternalProtocol(value: string): boolean {
-  return /<\s*\/?\s*(?:tool_calls?|invoke|parameter)\b|["']type["']\s*:\s*["']function_call["']|function_call_output/i.test(
-    value,
+  if (!value.trim()) return true;
+
+  // Match actual protocol delimiters rather than protocol vocabulary in prose.
+  // The closing bracket is deliberately optional so a truncated tool block is
+  // rejected too. Requiring "<" avoids rejecting ordinary discussions of
+  // function calls, parameters, or XML tags.
+  if (
+    /<\s*\/?\s*(?:tool_calls?|function_calls?|invoke|parameters?|arguments?)\b/i.test(
+      value,
+    )
+  )
+    return true;
+
+  // Responses API and Chat Completions protocol may be returned as serialized
+  // JSON. Key/value structure is required here so phrases such as
+  // "web_search_call is an output type" remain safe user-facing text.
+  return (
+    /["']type["']\s*:\s*["'](?:function_call(?:_output)?|web_search_call)(?:["']|\s*$)/i.test(
+      value,
+    ) || /["'](?:tool_calls?|function_call)["']\s*:\s*[\[{]/i.test(value)
   );
 }
 

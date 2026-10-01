@@ -22,6 +22,10 @@ import type { SkillResolver } from "../skills/resolver";
 import type { RequestRouter } from "../model/deepseek-router";
 import type { RouterRunMetadata } from "../model/deepseek-router";
 import type { CapabilityRegistry } from "../capabilities/registry";
+import {
+  containsInternalProtocol,
+  SAFE_OUTPUT_FALLBACK,
+} from "../model/deepseek";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -86,6 +90,44 @@ export class TelegramTurn {
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
+  }
+  private async validateFinalAnswer(
+    answer: string | undefined,
+    originalRequest: string,
+    userId: string,
+    signal: AbortSignal,
+  ): Promise<{ answer: string; recovered?: ModelResponse }> {
+    if (answer?.trim() && !containsInternalProtocol(answer)) return { answer };
+
+    try {
+      const context = await this.conversations.context(userId, this.prompt);
+      const safeHistory = context.messages.filter(
+        (message, index, messages) =>
+          message.role !== "system" &&
+          index !== messages.length - 1 &&
+          message.content.trim().length > 0 &&
+          !containsInternalProtocol(message.content),
+      );
+      const recovered = await this.model.generate({
+        executionMode: "direct",
+        messages: [
+          { role: "system", content: this.prompt },
+          ...safeHistory,
+          { role: "user", content: originalRequest },
+        ],
+        generalCapabilities: [],
+        signal,
+      });
+      if (
+        recovered.content.trim() &&
+        !containsInternalProtocol(recovered.content)
+      )
+        return { answer: recovered.content, recovered };
+    } catch {
+      // Recovery is best-effort. Provider errors must not make unsafe output
+      // eligible for delivery.
+    }
+    return { answer: SAFE_OUTPUT_FALLBACK };
   }
   async handle(input: TelegramInput) {
     if (input.kind === "ignored") return;
@@ -407,7 +449,17 @@ export class TelegramTurn {
             });
             return;
           }
-          if (!answer) throw new Error("ASSISTANT_RESPONSE_MISSING");
+          const validation = await this.validateFinalAnswer(
+            answer,
+            routedText,
+            input.userId,
+            turnController.signal,
+          );
+          answer = validation.answer;
+          if (validation.recovered) {
+            generated = validation.recovered;
+            fallbackReason = "model_output_recovery";
+          }
           const assistant = await this.conversations.add(
             input.userId,
             "assistant",
@@ -445,6 +497,11 @@ export class TelegramTurn {
                       ).estimatedCost
                     : null,
                 latencyMs: routerRun.latencyMs,
+                routingOutcome: routerRun.routeKind ?? null,
+                selectedSkillId: routerRun.selectedSkillId ?? null,
+                selectedToolId: routerRun.selectedToolId ?? null,
+                candidateIds: routerRun.candidateIds ?? [],
+                validationOutcome: routerRun.validationOutcome ?? null,
                 createdAt: new Date().toISOString(),
               });
           if (generated && this.accounting)
@@ -507,7 +564,15 @@ export class TelegramTurn {
             updatedAt: new Date().toISOString(),
           });
         }
-        const finalAnswer = answer;
+        // Revalidate durable responses as well as newly generated ones so a
+        // previously stored unsafe payload can never bypass the send boundary.
+        const finalValidation = await this.validateFinalAnswer(
+          answer,
+          routedText,
+          input.userId,
+          turnController.signal,
+        );
+        const finalAnswer = finalValidation.answer;
         if (!finalAnswer) throw new Error("ASSISTANT_RESPONSE_MISSING");
         try {
           await retryTransient(
