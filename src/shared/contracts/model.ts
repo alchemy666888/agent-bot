@@ -27,6 +27,7 @@ export const authorizedSkillDescriptorSchema = z
     id: routingIdentifierSchema,
     name: z.string().trim().min(1).max(120),
     description: routingTextSchema,
+    status: z.enum(["active", "retired"]),
     supportedTasks: z.array(z.string().trim().min(1).max(200)).max(100),
     triggerHints: z.array(z.string().trim().min(1).max(200)).max(100),
     permittedCapabilityIds: z.array(routingIdentifierSchema).max(100),
