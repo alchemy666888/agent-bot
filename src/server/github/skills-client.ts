@@ -374,9 +374,17 @@ export class GitHubSkillsClient {
     const file = this.parse(contentFileSchema, await response.json());
     if (file.truncated || file.size > this.maxBytes)
       throw new GitHubSkillsError("invalid_response", undefined, false);
-    const contentBytes = Uint8Array.from(
-      Buffer.from(file.content.replace(/\s/g, ""), "base64"),
-    );
+    const encoded = file.content.replace(/\s/g, "");
+    // Node's base64 decoder silently ignores invalid characters. Reject them
+    // (and impossible padding) before decoding repository-controlled data.
+    if (
+      encoded.length % 4 !== 0 ||
+      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+        encoded,
+      )
+    )
+      throw new GitHubSkillsError("invalid_response", undefined, false);
+    const contentBytes = Uint8Array.from(Buffer.from(encoded, "base64"));
     if (
       contentBytes.byteLength !== file.size ||
       contentBytes.byteLength > this.maxBytes

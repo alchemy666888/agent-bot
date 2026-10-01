@@ -56,8 +56,8 @@ describe("security boundaries", () => {
 
   it("keeps capability identifiers and adapters code-owned", async () => {
     const capabilities = await readFile("src/shared/capabilities.ts", "utf8");
-    expect(capabilities).toContain("capabilityIdentifiers");
-    expect(capabilities).toContain("capabilityIdentifierSchema");
+    expect(capabilities).toContain("allowedCapabilityIds");
+    expect(capabilities).toContain("isCapabilityId");
     expect(capabilities).not.toMatch(/tool_choice|child_process|fetch\(/);
   });
 });
