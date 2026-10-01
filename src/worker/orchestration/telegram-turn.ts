@@ -176,6 +176,7 @@ export class TelegramTurn {
           let latencyMs = 0;
           let resolution: ReturnType<SkillResolver["resolve"]> | undefined;
           let routedCapabilities = this.generalCapabilities;
+          let executionMode: ModelRequest["executionMode"] = "direct";
           let preparedContext: ModelRequest | undefined;
           const routerRuns: RouterRunMetadata[] = [];
           let fallbackReason:
@@ -264,6 +265,7 @@ export class TelegramTurn {
                     );
                     if (current?.kind === "selected") {
                       resolution = current;
+                      executionMode = "selected_skill";
                       break;
                     }
                     skillCatalog = skillCatalog.filter(
@@ -276,10 +278,14 @@ export class TelegramTurn {
                     decision.kind === "tool" ||
                     decision.kind === "web_search_fallback"
                   ) {
-                    const selectedId =
-                      decision.kind === "tool"
-                        ? decision.selectedToolId
-                        : "web_search";
+                    if (decision.kind === "web_search_fallback") {
+                      // Provider-native search stays in this answer request;
+                      // it is not routed through the function registry.
+                      routedCapabilities = [];
+                      executionMode = "forced_web_search";
+                      break;
+                    }
+                    const selectedId = decision.selectedToolId;
                     // Fetch a fresh general catalog at execution time to close
                     // the catalog/authorization race.
                     const currentGeneral = this.capabilityRegistry
@@ -292,6 +298,7 @@ export class TelegramTurn {
                       routedCapabilities = this.capabilityRegistry
                         ? this.capabilityRegistry.requests([selectedId])
                         : selected;
+                      executionMode = "selected_tools";
                       break;
                     }
                     toolCatalog = toolCatalog.filter(
@@ -323,6 +330,9 @@ export class TelegramTurn {
                   }
                   if (decision.kind === "refuse")
                     answer = "I can’t help with that request.";
+                  if (decision.kind === "unavailable")
+                    answer =
+                      "I can’t perform that action because no authorized capability is available, and web search cannot perform it.";
                   // direct and the bounded invalid-selection fallback both
                   // intentionally execute without capabilities.
                   break;
@@ -330,6 +340,10 @@ export class TelegramTurn {
               } else {
                 resolution = this.skills?.resolve(routedText, input.userId);
               }
+              if (resolution?.kind === "selected")
+                executionMode = "selected_skill";
+              else if (!this.router && routedCapabilities.length)
+                executionMode = "selected_tools";
               if (!resolution || resolution.kind === "none")
                 fallbackReason =
                   command?.kind === "fallback"
@@ -356,6 +370,7 @@ export class TelegramTurn {
                   async () =>
                     this.model.generate({
                       ...context,
+                      executionMode,
                       generalCapabilities: routedCapabilities,
                       signal: turnController.signal,
                       ...(resolution?.kind === "selected"

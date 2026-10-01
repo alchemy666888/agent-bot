@@ -87,6 +87,7 @@ export class ConversationService {
         i++;
       }
     return {
+      executionMode: "direct",
       messages: [
         { role: "system", content: systemPrompt },
         ...pairs
