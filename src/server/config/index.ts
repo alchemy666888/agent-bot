@@ -18,6 +18,11 @@ const price = z
 const strictBoolean = z
   .enum(["true", "false"])
   .transform((value) => value === "true");
+const boundedRouterTimeout = z.coerce.number().int().min(250).max(30_000);
+const optionalConfidence = z.preprocess(
+  (value) => (value === "" || value === undefined ? undefined : value),
+  z.coerce.number().min(0).max(1).optional(),
+);
 
 const modelSchema = z.object({
   DEEPSEEK_API_KEY: requiredString,
@@ -25,6 +30,10 @@ const modelSchema = z.object({
   DEEPSEEK_THINKING_ENABLED: strictBoolean.default(true),
   DEEPSEEK_REASONING_EFFORT: z.literal("medium").default("medium"),
   DEEPSEEK_BASE_URL: z.url().default("https://api.deepseek.com"),
+  DEEPSEEK_ROUTING_ENABLED: strictBoolean.default(false),
+  DEEPSEEK_ROUTING_MODE: z.enum(["shadow", "enforced"]).default("shadow"),
+  DEEPSEEK_ROUTER_TIMEOUT_MS: boundedRouterTimeout.default(3_000),
+  DEEPSEEK_ROUTER_MIN_CONFIDENCE: optionalConfidence,
   DEEPSEEK_INPUT_PRICE_PER_MILLION: price,
   DEEPSEEK_OUTPUT_PRICE_PER_MILLION: price,
 });

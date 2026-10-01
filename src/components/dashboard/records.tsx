@@ -29,6 +29,16 @@ const LABELS: Record<string, string> = {
   thinkingEnabled: "Thinking",
   requestMessageId: "Request message",
   responseMessageId: "Response message",
+  runKind: "Cost category",
+  routingOutcome: "Routing outcome",
+  routingMode: "Routing mode",
+  selectedSkillId: "Selected skill ID",
+  selectedToolId: "Selected tool ID",
+  confidence: "Router confidence",
+  validationOutcome: "Schema validation",
+  rerouteCount: "Reroute count",
+  disagreement: "Shadow disagreement",
+  fallbackReason: "Fallback reason",
 };
 
 function label(key: string): string {

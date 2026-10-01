@@ -58,6 +58,22 @@ async function telegramTurn(
     capabilities,
     process.env.SKILLS_ENABLED === "false" ? [] : catalog.skills,
   );
+  const routingEnabled = optionalStrictBoolean(
+    "DEEPSEEK_ROUTING_ENABLED",
+    false,
+  );
+  const routingMode = optionalRoutingMode();
+  const routerTimeoutMs = boundedInteger(
+    "DEEPSEEK_ROUTER_TIMEOUT_MS",
+    250,
+    30_000,
+    3_000,
+  );
+  const routerMinimumConfidence = optionalBoundedNumber(
+    "DEEPSEEK_ROUTER_MIN_CONFIDENCE",
+    0,
+    1,
+  );
   const turn = new TelegramTurn(
     locks,
     new UpdateRepository(ROOT),
@@ -85,16 +101,20 @@ async function telegramTurn(
     },
     skills,
     capabilities.generalRequests(),
-    new DeepSeekRouter(
-      {
-        apiKey: requiredEnv("DEEPSEEK_API_KEY"),
-        baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
-        thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
-      },
-      fetch,
-    ),
+    routingEnabled
+      ? new DeepSeekRouter(
+          {
+            apiKey: requiredEnv("DEEPSEEK_API_KEY"),
+            baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
+            thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
+            timeoutMs: routerTimeoutMs,
+          },
+          fetch,
+        )
+      : undefined,
     capabilities,
     optionalPositiveInteger("SKILL_EXECUTION_TIMEOUT_MS") ?? 60_000,
+    { mode: routingMode, minimumConfidence: routerMinimumConfidence },
   );
   await turn.handle(input);
   return { terminal: true };
@@ -134,6 +154,48 @@ function optionalPositiveInteger(name: string): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1)
+    throw new Error("WORKER_CONFIGURATION_INVALID");
+  return parsed;
+}
+
+function optionalStrictBoolean(name: string, fallback: boolean): boolean {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  if (value !== "true" && value !== "false")
+    throw new Error("WORKER_CONFIGURATION_INVALID");
+  return value === "true";
+}
+
+function optionalRoutingMode(): "shadow" | "enforced" {
+  const value = process.env.DEEPSEEK_ROUTING_MODE ?? "shadow";
+  if (value !== "shadow" && value !== "enforced")
+    throw new Error("WORKER_CONFIGURATION_INVALID");
+  return value;
+}
+
+function boundedInteger(
+  name: string,
+  minimum: number,
+  maximum: number,
+  fallback: number,
+): number {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum)
+    throw new Error("WORKER_CONFIGURATION_INVALID");
+  return parsed;
+}
+
+function optionalBoundedNumber(
+  name: string,
+  minimum: number,
+  maximum: number,
+): number | undefined {
+  const value = process.env[name];
+  if (value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum)
     throw new Error("WORKER_CONFIGURATION_INVALID");
   return parsed;
 }

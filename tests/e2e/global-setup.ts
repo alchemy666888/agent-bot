@@ -64,11 +64,29 @@ export default async function globalSetup(): Promise<void> {
     join(E2E_ROOT, "data/state/model-runs/run-priced.json"),
     JSON.stringify({
       id: "run-priced",
+      runKind: "answer",
       model: "deepseek-v4-pro",
       inputCount: 2,
       outputCount: 3,
       estimatedCost: "0.000008",
       latencyMs: 12,
+    }),
+  );
+  await writeFile(
+    join(E2E_ROOT, "data/state/model-runs/run-router.json"),
+    JSON.stringify({
+      id: "run-router",
+      runKind: "router",
+      routingMode: "shadow",
+      routingOutcome: "tool",
+      selectedToolId: "web_search",
+      confidence: 0.94,
+      validationOutcome: "valid",
+      disagreement: true,
+      inputCount: 120,
+      outputCount: 20,
+      estimatedCost: "0.000014",
+      latencyMs: 210,
     }),
   );
   await writeFile(

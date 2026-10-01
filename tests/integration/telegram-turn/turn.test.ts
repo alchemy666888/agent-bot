@@ -242,6 +242,52 @@ describe("Telegram turn", () => {
     );
   });
 
+  it("records a shadow decision without executing its selected tool", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const capabilities = ["lookup", "calendar"].map((id) => ({
+      id,
+      description: `${id} capability`,
+      inputSchema: { type: "object" },
+    }));
+    const router = {
+      route: vi.fn(async () => ({
+        kind: "tool" as const,
+        selectedToolId: "lookup",
+        confidence: 0.9,
+        rationale: "Would select lookup",
+      })),
+    };
+    const model = { generate: vi.fn(async () => ({ content: "answer" })) };
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      model,
+      { typing: vi.fn(async () => {}), send: vi.fn(async () => {}) },
+      "system",
+      undefined,
+      undefined,
+      new SkillResolver(new CapabilityRegistry()),
+      capabilities,
+      router,
+      undefined,
+      60_000,
+      { mode: "shadow" },
+    ).handle({
+      kind: "text",
+      updateId: "201",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "hello",
+    });
+
+    expect(router.route).toHaveBeenCalledOnce();
+    expect(model.generate).toHaveBeenCalledWith(
+      expect.objectContaining({ generalCapabilities: capabilities }),
+    );
+  });
+
   it("enforces a selected skill's prohibited actions before generation", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const model = { generate: vi.fn() };

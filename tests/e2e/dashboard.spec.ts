@@ -67,6 +67,9 @@ test("inspects every read-only dashboard view", async ({ page }) => {
   await page.getByRole("link", { name: "Messages" }).click();
   await expect(page.getByRole("heading", { name: "Messages" })).toBeVisible();
   await page.getByRole("link", { name: "Usage" }).click();
+  await expect(page.getByText(/router classification cost/i)).toBeVisible();
+  await expect(page.getByText("router", { exact: true })).toBeVisible();
+  await expect(page.getByText("answer", { exact: true })).toBeVisible();
   await expect(page.getByText("0.000008")).toBeVisible();
   await expect(page.getByText("Unavailable").first()).toBeVisible();
   await page.getByRole("link", { name: "Errors" }).click();

@@ -25,7 +25,28 @@ describe("entry-point configuration", () => {
       DEEPSEEK_THINKING_ENABLED: true,
       DEEPSEEK_REASONING_EFFORT: "medium",
       DEEPSEEK_BASE_URL: "https://api.deepseek.com",
+      DEEPSEEK_ROUTING_ENABLED: false,
+      DEEPSEEK_ROUTING_MODE: "shadow",
+      DEEPSEEK_ROUTER_TIMEOUT_MS: 3_000,
     });
+  });
+
+  it.each([
+    { DEEPSEEK_ROUTING_ENABLED: "yes" },
+    { DEEPSEEK_ROUTING_MODE: "automatic" },
+    { DEEPSEEK_ROUTER_TIMEOUT_MS: "249" },
+    { DEEPSEEK_ROUTER_TIMEOUT_MS: "30001" },
+    { DEEPSEEK_ROUTER_MIN_CONFIDENCE: "-0.1" },
+    { DEEPSEEK_ROUTER_MIN_CONFIDENCE: "1.1" },
+  ])("rejects invalid router configuration %#", (invalid) => {
+    expect(() =>
+      readModelConfig({
+        DEEPSEEK_API_KEY: "fixture-key",
+        DEEPSEEK_INPUT_PRICE_PER_MILLION: "1",
+        DEEPSEEK_OUTPUT_PRICE_PER_MILLION: "1",
+        ...invalid,
+      }),
+    ).toThrow();
   });
 
   it.each([

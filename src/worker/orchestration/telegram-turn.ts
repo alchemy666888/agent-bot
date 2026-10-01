@@ -3,6 +3,7 @@ import type {
   ModelProvider,
   ModelRequest,
   ModelResponse,
+  RoutingDecision,
 } from "../../shared/contracts";
 import { uuidV7 } from "../../shared/ids";
 import { calculateCost } from "../model/usage";
@@ -87,6 +88,10 @@ export class TelegramTurn {
     private router?: RequestRouter,
     private capabilityRegistry?: CapabilityRegistry,
     private turnTimeoutMs = 60_000,
+    private routing: {
+      mode: "shadow" | "enforced";
+      minimumConfidence?: number;
+    } = { mode: "enforced" },
   ) {}
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -221,6 +226,7 @@ export class TelegramTurn {
           let executionMode: ModelRequest["executionMode"] = "direct";
           let preparedContext: ModelRequest | undefined;
           const routerRuns: RouterRunMetadata[] = [];
+          let shadowRouteKind: string | undefined;
           let fallbackReason:
             | "no_skill_match"
             | "skill_not_found"
@@ -230,6 +236,62 @@ export class TelegramTurn {
           try {
             if (deterministic) answer = deterministic;
             else {
+              if (!command && this.router && this.routing.mode === "shadow") {
+                const shadowContext = await this.conversations.context(
+                  input.userId,
+                  this.prompt,
+                );
+                try {
+                  const routed = this.router.routeWithMetadata
+                    ? await this.router.routeWithMetadata({
+                        request: routedText,
+                        conversationContext: shadowContext.messages
+                          .filter(
+                            (
+                              message,
+                            ): message is typeof message & {
+                              role: "user" | "assistant";
+                            } => message.role !== "system",
+                          )
+                          .slice(0, -1)
+                          .slice(-20),
+                        authorizedSkills:
+                          this.skills?.routingCatalog(input.userId) ?? [],
+                        availableTools: this.capabilityRegistry
+                          ? this.capabilityRegistry.generalRequests()
+                          : [...this.generalCapabilities],
+                        signal: turnController.signal,
+                      })
+                    : {
+                        decision: await this.router.route({
+                          request: routedText,
+                          conversationContext: [],
+                          authorizedSkills:
+                            this.skills?.routingCatalog(input.userId) ?? [],
+                          availableTools: this.capabilityRegistry
+                            ? this.capabilityRegistry.generalRequests()
+                            : [...this.generalCapabilities],
+                          signal: turnController.signal,
+                        }),
+                        run: { latencyMs: 0 },
+                      };
+                  shadowRouteKind = routed.decision.kind;
+                  routerRuns.push({
+                    ...routed.run,
+                    routingMode: "shadow",
+                    fallbackReason:
+                      this.routing.minimumConfidence !== undefined &&
+                      routed.decision.confidence <
+                        this.routing.minimumConfidence
+                        ? "low_confidence"
+                        : routed.run.fallbackReason,
+                  });
+                } catch (error) {
+                  const failed = (error as { run?: RouterRunMetadata }).run;
+                  if (failed)
+                    routerRuns.push({ ...failed, routingMode: "shadow" });
+                }
+              }
               if (command?.kind === "fallback") {
                 resolution = { kind: "none" as const };
               } else if (command?.kind === "invoke") {
@@ -238,7 +300,7 @@ export class TelegramTurn {
                   input.userId,
                   command.invocation.skill.id ?? command.invocation.skill.name,
                 );
-              } else if (this.router) {
+              } else if (this.router && this.routing.mode === "enforced") {
                 preparedContext = await this.conversations.context(
                   input.userId,
                   this.prompt,
@@ -264,7 +326,7 @@ export class TelegramTurn {
                   routingAttempt < 2;
                   routingAttempt++
                 ) {
-                  let decision;
+                  let decision: RoutingDecision;
                   try {
                     const routingRequest = {
                       request: routedText,
@@ -279,7 +341,24 @@ export class TelegramTurn {
                         isTransient,
                       );
                       decision = routed.decision;
-                      routerRuns.push(routed.run);
+                      const lowConfidence =
+                        this.routing.minimumConfidence !== undefined &&
+                        decision.confidence < this.routing.minimumConfidence;
+                      routerRuns.push({
+                        ...routed.run,
+                        routingMode: "enforced",
+                        rerouteCount: routingAttempt,
+                        ...(lowConfidence
+                          ? { fallbackReason: "low_confidence" as const }
+                          : {}),
+                      });
+                      if (lowConfidence) {
+                        decision = {
+                          kind: "direct",
+                          confidence: decision.confidence,
+                          rationale: "Below configured confidence threshold",
+                        };
+                      }
                     } else {
                       decision = await retryTransient(
                         () => this.router!.route(routingRequest),
@@ -289,14 +368,19 @@ export class TelegramTurn {
                   } catch (error) {
                     const failedRun = (error as { run?: RouterRunMetadata })
                       ?.run;
-                    if (failedRun) routerRuns.push(failedRun);
+                    if (failedRun)
+                      routerRuns.push({
+                        ...failedRun,
+                        routingMode: "enforced",
+                        rerouteCount: routingAttempt,
+                      });
                     if (
                       routingAttempt === 0 &&
                       (error as Error)?.message === "ROUTER_OUTPUT_INVALID"
                     )
                       continue;
-                    if ((error as Error)?.message !== "ROUTER_OUTPUT_INVALID")
-                      throw error;
+                    // Provider failures and timeouts fail safely to the direct
+                    // answer path; the sanitized failed run is still recorded.
                     break;
                   }
 
@@ -384,8 +468,23 @@ export class TelegramTurn {
               }
               if (resolution?.kind === "selected")
                 executionMode = "selected_skill";
-              else if (!this.router && routedCapabilities.length)
+              else if (
+                (!this.router || this.routing.mode === "shadow") &&
+                routedCapabilities.length
+              )
                 executionMode = "selected_tools";
+              if (this.routing.mode === "shadow" && shadowRouteKind) {
+                const existingRoute =
+                  resolution?.kind === "selected"
+                    ? "skill"
+                    : resolution?.kind === "ambiguous"
+                      ? "ambiguous"
+                      : routedCapabilities.length
+                        ? "tool"
+                        : "direct";
+                for (const run of routerRuns)
+                  run.disagreement = shadowRouteKind !== existingRoute;
+              }
               if (!resolution || resolution.kind === "none")
                 fallbackReason =
                   command?.kind === "fallback"
@@ -502,6 +601,11 @@ export class TelegramTurn {
                 selectedToolId: routerRun.selectedToolId ?? null,
                 candidateIds: routerRun.candidateIds ?? [],
                 validationOutcome: routerRun.validationOutcome ?? null,
+                confidence: routerRun.confidence ?? null,
+                routingMode: routerRun.routingMode ?? null,
+                rerouteCount: routerRun.rerouteCount ?? 0,
+                disagreement: routerRun.disagreement ?? null,
+                fallbackReason: routerRun.fallbackReason ?? null,
                 createdAt: new Date().toISOString(),
               });
           if (generated && this.accounting)

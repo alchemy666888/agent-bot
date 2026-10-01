@@ -6,11 +6,18 @@ export default function Page({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   return (
-    <DashboardSection
-      title="Model runs"
-      view="model-runs"
-      pathname="/dashboard/model-runs"
-      searchParams={searchParams}
-    />
+    <>
+      <p className="muted">
+        Cost category identifies router classification cost separately from
+        final-answer generation cost. Shadow decisions are observational and are
+        never executed.
+      </p>
+      <DashboardSection
+        title="Model runs"
+        view="model-runs"
+        pathname="/dashboard/model-runs"
+        searchParams={searchParams}
+      />
+    </>
   );
 }

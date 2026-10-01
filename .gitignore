@@ -12,3 +12,6 @@ tsconfig.tsbuildinfo
 .vercel
 .skill-migration-state.json
 skill-migration-reconciliation.json
+
+# Local screenshots and generated review artifacts
+artifacts/

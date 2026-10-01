@@ -1,5 +1,18 @@
 # Rollback and recovery
 
+## DeepSeek routing rollback
+
+The immediate rollback is configuration-only: change
+`DEEPSEEK_ROUTING_MODE=enforced` to `shadow` and redeploy. This retains safe
+decision telemetry while guaranteeing that shadow-selected skills/tools are not
+executed. If the provider is failing, latency is harmful, or telemetry itself
+must stop, set `DEEPSEEK_ROUTING_ENABLED=false` and redeploy; the existing route
+continues without a classifier call. Confirm the dashboard has no new router
+runs after disabling, then verify a direct answer and an existing skill route.
+Do not delete routing records or increase timeout/confidence bounds during an
+incident. Preserve the deployment ID, UTC window, threshold breach, and
+approver for later review.
+
 ## Skill-store cutover rollback
 
 During the defined pre-cleanup observation window, rollback changes the
