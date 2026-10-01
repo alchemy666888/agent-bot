@@ -42,14 +42,14 @@ Database/Sandbox failures use sanitized stages (`bootstrap`, `persistence-sync`,
 
 ## Backup and restoration
 
-Schedule encrypted provider snapshots plus logical backups at an operator-defined recovery interval. Backups must consistently include schema migrations, users/conversations, skills/revisions/clarifications/approvals/versions, registry/grants, selections, executions/tool calls, idempotency, and audit events. Store backup ID, database/schema version, checksum, UTC time, and retention. Never include application/provider credentials.
+Schedule encrypted provider snapshots plus logical backups at an operator-defined recovery interval. Backups must consistently include schema migrations, users/conversations/messages/updates/logs, operational skill references, registry/grants, selections, executions/tool calls, idempotency, and audit events. Skill definitions and their version history are recovered from the separately verified GitHub mirror/bundle, not from PostgreSQL. Store backup ID, database/schema version, checksum, UTC time, and retention. Never include application/provider credentials.
 
 At least once per release and on the regular disaster-recovery cadence:
 
 1. Restore the chosen backup to a new isolated database with no Telegram webhook and stubbed external adapters.
 2. Run `DATABASE_URL=<isolated-url> pnpm restore:verify`.
-3. Verify migration checksums, FK/integrity checks, row counts by table, revision content hashes, one current version per skill, exact grants, private/global visibility, selections, audit continuity, and absence of secrets.
-4. List/discover as two test owners; prove cross-owner denial. Dry-run a restored selected skill pinned to its version.
+3. Verify migration checksums, FK/integrity checks, row counts for remaining application tables, exact grants, operational references, selections, audit continuity, and absence of secrets.
+4. Reconcile every restored skill reference to a reachable GitHub commit, then list/discover as two test owners, prove cross-owner denial, and dry-run a restored selected skill pinned to its commit.
 5. Record duration, recovery point, output, and operator approval in `docs/acceptance-evidence.md`; destroy the isolated restore according to policy.
 
 An export is useful for inspection but is not a database backup unless restoration from it has passed the same checks.

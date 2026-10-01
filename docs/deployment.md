@@ -1,6 +1,6 @@
 # Deployment
 
-PostgreSQL is the only durable store. A Vercel Sandbox is a disposable execution boundary and is hydrated from PostgreSQL; never deploy a configuration that treats its filesystem as a backup.
+PostgreSQL remains the durable store for conversations, messages, updates, logs, and other application/operational state. GitHub is the durable source for skill definitions. A Vercel Sandbox is a disposable execution boundary; never deploy a configuration that treats its filesystem as a backup.
 
 ## Database and roles
 
@@ -57,6 +57,7 @@ Each `create` flow opens or provides the GitHub App installation flow. On GitHub
 1. Disable or leave disabled Telegram delivery and set `SKILLS_ENABLED=false`; disable effectful capability registry entries.
 2. Create a provider-consistent backup and record its ID, schema version, UTC time, and encryption/retention location.
 3. Run `DATABASE_URL="$DATABASE_MIGRATOR_URL" pnpm migrate` from the trusted deployment job. Apply expand/migrate/contract migrations only after old code compatibility is proven.
+   Before the legacy skill-definition cleanup migration, attest the completed GitHub copy and reconciliation as described in `migrations/README.md`; the cleanup is never run by application startup.
 4. Run the migration acceptance suite against an empty database and an upgraded copy: `pnpm test -- tests/acceptance/skills/migration-restore.test.ts`.
 5. Deploy with `pnpm build`. Configure all `.env.example` values; keep capability credentials server-side and adapter-scoped.
 6. Check `/api/health` for schema compatibility, then exercise create → clarify → revise → approve → install → list → discover → select with capability execution still disabled.
