@@ -100,7 +100,7 @@ describe("skill routing acceptance", () => {
       [],
     ).handle({
       kind: "text",
-      updateId: "routing-1",
+      updateId: "11",
       messageId: "2",
       chatId: "3",
       userId: "4",

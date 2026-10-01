@@ -150,7 +150,7 @@ describe("Telegram turn", () => {
       skills,
     ).handle({
       kind: "text",
-      updateId: "matched",
+      updateId: "8",
       messageId: "2",
       chatId: "3",
       userId: "4",
@@ -197,7 +197,7 @@ describe("Telegram turn", () => {
       generalCapabilities,
     ).handle({
       kind: "text",
-      updateId: "general",
+      updateId: "9",
       messageId: "2",
       chatId: "3",
       userId: "4",
@@ -229,7 +229,7 @@ describe("Telegram turn", () => {
       new SkillResolver(new CapabilityRegistry(), []),
     ).handle({
       kind: "text",
-      updateId: "unknown-skill",
+      updateId: "10",
       messageId: "2",
       chatId: "3",
       userId: "4",
