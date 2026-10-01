@@ -114,4 +114,29 @@ describe("skill resolver", () => {
       }),
     ]);
   });
+  it("returns a deterministic, metadata-only routing catalog", () => {
+    const resolver = new SkillResolver(registry(), [
+      {
+        ...skills[0]!,
+        description: "Current weather",
+        instructions: "SECRET REPOSITORY CONTENT",
+        prohibitedActions: ["internal policy"],
+      },
+    ]);
+    const catalog = resolver.routingCatalog("9");
+    expect(catalog).toEqual([
+      {
+        id: "weather",
+        name: "Weather",
+        description: "Current weather",
+        status: "active",
+        supportedTasks: [],
+        triggerHints: ["weather", "forecast"],
+        permittedCapabilityIds: ["lookup"],
+      },
+    ]);
+    expect(JSON.stringify(catalog)).not.toMatch(
+      /SECRET|internal policy|ownerTelegram|commitSha/,
+    );
+  });
 });

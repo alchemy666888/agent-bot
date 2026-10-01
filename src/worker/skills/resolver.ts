@@ -7,6 +7,8 @@ import type { InstalledSkill as CommandSkill } from "../commands";
 import type { ExecutableSkill } from "./schemas";
 
 export type InstalledSkill = ExecutableSkill;
+/** Kept in sync with routingRequestSchema's bounded classifier payload. */
+export const MAX_ROUTING_SKILLS = 200;
 export type SkillResolution =
   | { kind: "selected"; source: "explicit" | "automatic"; skill: SkillContext }
   | { kind: "ambiguous"; skillIds: string[] }
@@ -67,16 +69,23 @@ export class SkillResolver {
       }));
   }
   routingCatalog(userId: string): AuthorizedSkillDescriptor[] {
-    return this.skills
+    const catalog = this.skills
       .filter((skill) => this.available(skill, userId))
+      .sort((left, right) => left.id.localeCompare(right.id))
       .map((skill) => ({
         id: skill.id,
         name: skill.name,
         description: skill.description ?? "No description provided",
+        status: skill.status,
         supportedTasks: skill.triggers.phrases ?? [],
         triggerHints: skill.triggers.keywords ?? [],
         permittedCapabilityIds: [...skill.tools],
       }));
+    // Never silently produce a partial authorization view: that could make
+    // routing dependent on installation order or hide an explicitly requested skill.
+    if (catalog.length > MAX_ROUTING_SKILLS)
+      throw new Error("ROUTING_SKILL_CATALOG_LIMIT_EXCEEDED");
+    return structuredClone(catalog);
   }
 
   /** Execution-time lookup for a classifier-selected, user-authorized skill. */

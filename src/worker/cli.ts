@@ -84,7 +84,7 @@ async function telegramTurn(
       thinkingEnabled: process.env.DEEPSEEK_THINKING_ENABLED !== "false",
     },
     skills,
-    capabilities.requests(["web_search"]),
+    capabilities.generalRequests(),
     new DeepSeekRouter(
       {
         apiKey: requiredEnv("DEEPSEEK_API_KEY"),

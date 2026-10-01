@@ -90,6 +90,7 @@ export function createCapabilityRegistry(
 ) {
   return new CapabilityRegistry([
     {
+      scope: "general",
       request: {
         id: "web_search",
         description:

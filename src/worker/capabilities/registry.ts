@@ -8,6 +8,8 @@ export interface CapabilityAuditRecord {
 }
 export interface CapabilityDefinition {
   request: CapabilityRequest;
+  /** Only general capabilities are offered to the router independently of a skill. */
+  scope?: "general" | "skill";
   input: z.ZodType;
   timeoutMs?: number;
   execute(args: unknown, signal: AbortSignal): Promise<unknown>;
@@ -26,6 +28,7 @@ function safeResult(value: unknown): unknown {
 }
 
 export class CapabilityRegistry {
+  static readonly MAX_ROUTING_CAPABILITIES = 200;
   private definitions = new Map<string, CapabilityDefinition>();
   constructor(definitions: CapabilityDefinition[] = []) {
     for (const definition of definitions) this.register(definition);
@@ -41,6 +44,16 @@ export class CapabilityRegistry {
       if (!definition) throw new Error(`CAPABILITY_NOT_APPROVED:${id}`);
       return definition.request;
     });
+  }
+  /** A detached, deterministic snapshot of operator-registered general tools. */
+  generalRequests(): CapabilityRequest[] {
+    const requests = [...this.definitions.values()]
+      .filter(({ scope }) => scope === "general")
+      .sort((left, right) => left.request.id.localeCompare(right.request.id))
+      .map(({ request }) => structuredClone(request));
+    if (requests.length > CapabilityRegistry.MAX_ROUTING_CAPABILITIES)
+      throw new Error("ROUTING_CAPABILITY_CATALOG_LIMIT_EXCEEDED");
+    return requests;
   }
   async invoke(
     id: string,
