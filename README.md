@@ -10,6 +10,15 @@ PostgreSQL is the source of truth for conversations, messages, updates, logs, an
 
 Live Preview verification and the final acceptance audit are deferred for this stage. A real `sin1` stop/resume check has not been recorded.
 
+The skill-definition migration used a temporary server-only
+`SKILL_STORE=postgres|github-shadow|github` rollout control. PostgreSQL remained
+authoritative in shadow mode while aggregate, redacted comparisons covered IDs,
+owners, status, capabilities, and content digests. Following the observation
+window the selector, legacy repository implementation, obsolete configuration,
+and dedicated definition tables were removed. Do not add `SKILL_STORE` to a
+current deployment: rollback now follows `docs/rollback.md`, and live rollout
+evidence must be recorded—not inferred—in `docs/acceptance-evidence.md`.
+
 ## Project structure
 
 ```text

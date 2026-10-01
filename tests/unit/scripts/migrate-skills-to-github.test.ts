@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { convertRow } from "../../../scripts/migrate-skills-to-github.mjs";
+import {
+  convertRow,
+  createMismatchMetrics,
+} from "../../../scripts/migrate-skills-to-github.mjs";
 
 const row = {
   stable_id: "11111111-1111-4111-8111-111111111111",
@@ -52,5 +55,24 @@ describe("skill migration conversion", () => {
     expect(() => convertRow({ ...row, approved_body: "changed" })).toThrow(
       "approved_document_mismatch",
     );
+  });
+
+  it("reports reconciliation mismatches as aggregate redacted metrics", () => {
+    const metrics = createMismatchMetrics([
+      "owner_or_capability_mismatch",
+      "archive_unreadable",
+      "owner_or_capability_mismatch",
+    ]);
+
+    expect(metrics).toEqual({
+      total: 3,
+      byReason: {
+        archive_unreadable: 1,
+        owner_or_capability_mismatch: 2,
+      },
+    });
+    expect(JSON.stringify(metrics)).not.toContain(row.stable_id);
+    expect(JSON.stringify(metrics)).not.toContain(row.owners[0]);
+    expect(JSON.stringify(metrics)).not.toContain(row.approved_body);
   });
 });
