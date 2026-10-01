@@ -10,3 +10,5 @@ test-results/
 
 tsconfig.tsbuildinfo
 .vercel
+.skill-migration-state.json
+skill-migration-reconciliation.json
