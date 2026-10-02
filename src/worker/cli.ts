@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { workerRequestSchema, workerResponseSchema } from "../shared/contracts";
+import { authorizedSkillCatalogSchema } from "../shared/contracts";
 import { telegramInputSchema } from "../server/telegram/input";
 import { LockCoordinator } from "./locks/coordinator";
 import { UpdateRepository } from "./updates/repository";
@@ -62,6 +63,9 @@ async function telegramTurn(
   const errors = new DurableErrorService(ROOT, locks);
   const capabilities = createCapabilityRegistry();
   const catalog = skillCatalogSnapshotSchema.parse(payload.skillCatalog);
+  // Preserve the repository-filtered snapshot independently of the resolver.
+  // Parsing again applies the tighter model-context count and byte limits.
+  const authorizedSkillCatalog = authorizedSkillCatalogSchema.parse(catalog);
   const bundle = promptBundle
     ? parsePromptBundle(promptBundle)
     : compiledEmergencyBundle(requiredEnv("ASSISTANT_SYSTEM_PROMPT"));
@@ -126,6 +130,10 @@ async function telegramTurn(
     capabilities,
     optionalPositiveInteger("SKILL_EXECUTION_TIMEOUT_MS") ?? 60_000,
     { mode: routingMode, minimumConfidence: routerMinimumConfidence },
+    Object.freeze({
+      commitSha: authorizedSkillCatalog.commitSha,
+      skills: [...authorizedSkillCatalog.skills],
+    }),
   );
   await turn.handle(input);
   const proposal =

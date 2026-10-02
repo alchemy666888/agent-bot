@@ -4,6 +4,7 @@ import type {
   ModelRequest,
   ModelResponse,
   RoutingDecision,
+  AuthorizedSkillCatalog,
 } from "../../shared/contracts";
 import { uuidV7 } from "../../shared/ids";
 import { calculateCost } from "../model/usage";
@@ -95,6 +96,7 @@ export class TelegramTurn {
       mode: "shadow" | "enforced";
       minimumConfidence?: number;
     } = { mode: "enforced" },
+    private authorizedSkillCatalog?: Readonly<AuthorizedSkillCatalog>,
   ) {}
   private composed(rawText: string) {
     return typeof this.promptBundle === "string"
@@ -137,6 +139,9 @@ export class TelegramTurn {
               messages: [...safeHistory, turn.currentRequest],
             }),
         generalCapabilities: [],
+        ...(this.authorizedSkillCatalog
+          ? { authorizedSkillCatalog: this.authorizedSkillCatalog }
+          : {}),
         signal,
       });
       if (
@@ -539,6 +544,11 @@ export class TelegramTurn {
                       ...context,
                       executionMode,
                       generalCapabilities: routedCapabilities,
+                      ...(this.authorizedSkillCatalog
+                        ? {
+                            authorizedSkillCatalog: this.authorizedSkillCatalog,
+                          }
+                        : {}),
                       signal: turnController.signal,
                       ...(resolution?.kind === "selected"
                         ? { skill: resolution.skill }
