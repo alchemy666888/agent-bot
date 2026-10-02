@@ -22,6 +22,8 @@ import { createCapabilityRegistry } from "./capabilities";
 import { SkillResolver } from "./skills/resolver";
 import { skillCatalogSnapshotSchema } from "./skills/schemas";
 import type { PromptBundle } from "../shared/contracts/prompt";
+import { compiledEmergencyBundle, parsePromptBundle } from "./prompts/bundle";
+import { detectPromptChangeProposal } from "./prompts/proposal";
 
 const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/tmp/telegram-agent";
 
@@ -46,22 +48,23 @@ async function telegramTurn(
   payload: Record<string, unknown>,
   correlationId: string,
   promptBundle?: PromptBundle,
+  rawTelegramInput?: string,
 ) {
   const input = telegramInputSchema.parse(payload.input);
+  if (
+    rawTelegramInput !== undefined &&
+    input.kind === "text" &&
+    input.text !== rawTelegramInput
+  )
+    throw new Error("RAW_TELEGRAM_INPUT_MISMATCH");
   await initializeLayout(ROOT);
   const locks = new LockCoordinator(ROOT);
   const errors = new DurableErrorService(ROOT, locks);
   const capabilities = createCapabilityRegistry();
   const catalog = skillCatalogSnapshotSchema.parse(payload.skillCatalog);
-  const prompt = promptBundle
-    ? [
-        promptBundle.commonSystemPrompt.content,
-        promptBundle.personalOverlay?.content,
-        promptBundle.requestTemplate.content,
-      ]
-        .filter((part): part is string => Boolean(part))
-        .join("\n\n")
-    : requiredEnv("ASSISTANT_SYSTEM_PROMPT");
+  const bundle = promptBundle
+    ? parsePromptBundle(promptBundle)
+    : compiledEmergencyBundle(requiredEnv("ASSISTANT_SYSTEM_PROMPT"));
   const skills = new SkillResolver(
     capabilities,
     process.env.SKILLS_ENABLED === "false" ? [] : catalog.skills,
@@ -97,7 +100,7 @@ async function telegramTurn(
       capabilities,
     ),
     new TelegramClient(requiredEnv("TELEGRAM_BOT_TOKEN")),
-    prompt,
+    bundle,
     {
       correlationId,
       recordFailure: (failure) => errors.record({ correlationId, ...failure }),
@@ -125,7 +128,11 @@ async function telegramTurn(
     { mode: routingMode, minimumConfidence: routerMinimumConfidence },
   );
   await turn.handle(input);
-  return { terminal: true };
+  const proposal =
+    input.kind === "text"
+      ? detectPromptChangeProposal(input.text, bundle)
+      : null;
+  return { terminal: true, ...(proposal ? { proposal } : {}) };
 }
 
 async function createExport() {
@@ -212,9 +219,12 @@ async function main() {
   const [, , operation, requestPath, responsePath] = process.argv;
   if (!operation || !requestPath || !responsePath)
     throw new Error("INVALID_WORKER_INVOCATION");
-  const request = workerRequestSchema.parse(
-    JSON.parse(await readFile(requestPath, "utf8")),
-  );
+  const rawRequest = JSON.parse(await readFile(requestPath, "utf8"));
+  // Parse/detach v2 prompt data at ingress, before any turn object or service
+  // can be constructed. The full request parse additionally rejects absence.
+  if ((rawRequest as { contractVersion?: unknown }).contractVersion === 2)
+    parsePromptBundle((rawRequest as { promptBundle?: unknown }).promptBundle);
+  const request = workerRequestSchema.parse(rawRequest);
   if (request.operation !== operation) throw new Error("OPERATION_MISMATCH");
   const started = Date.now();
   let data: unknown;
@@ -233,6 +243,9 @@ async function main() {
                 request.correlationId,
                 request.contractVersion === 2
                   ? request.promptBundle
+                  : undefined,
+                request.contractVersion === 2
+                  ? request.rawTelegramInput
                   : undefined,
               )
             : request.operation === "export"

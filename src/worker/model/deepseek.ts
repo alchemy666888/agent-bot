@@ -92,10 +92,14 @@ export class DeepSeekProvider implements ModelProvider {
   ) {}
   async generate(input: ModelRequest): Promise<ModelResponse> {
     const audit: CapabilityAuditRecord[] = [];
-    const system = input.messages
-      .filter((m) => m.role === "system")
-      .map((m) => m.content)
-      .join("\n\n");
+    // New callers provide an explicit trusted channel. The role-based branch
+    // is a rollback adapter for v1 turns and must not be used by v2 composition.
+    const system = input.trustedInstructions?.length
+      ? input.trustedInstructions.map((item) => item.content).join("\n\n")
+      : input.messages
+          .filter((m) => m.role === "system")
+          .map((m) => m.content)
+          .join("\n\n");
     const escapedSkillInstructions = input.skill?.instructions
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;");
@@ -161,7 +165,7 @@ export class DeepSeekProvider implements ModelProvider {
       if (!response.ok && input.executionMode === "forced_web_search")
         return this.recover(
           input,
-          system,
+          instructions,
           conversation,
           usage,
           requestId,
@@ -196,7 +200,7 @@ export class DeepSeekProvider implements ModelProvider {
           if (failedSearch)
             return this.recover(
               input,
-              system,
+              instructions,
               conversation,
               usage,
               requestId,
@@ -206,7 +210,7 @@ export class DeepSeekProvider implements ModelProvider {
           if (iteration === (this.config.maxToolCalls ?? 4))
             return this.recover(
               input,
-              system,
+              instructions,
               conversation,
               usage,
               requestId,
@@ -219,7 +223,7 @@ export class DeepSeekProvider implements ModelProvider {
         if (content && containsInternalProtocol(content))
           return this.recover(
             input,
-            system,
+            instructions,
             conversation,
             usage,
             requestId,
@@ -240,7 +244,7 @@ export class DeepSeekProvider implements ModelProvider {
         if (!call.success)
           return this.recover(
             input,
-            system,
+            instructions,
             conversation,
             usage,
             requestId,
@@ -252,7 +256,7 @@ export class DeepSeekProvider implements ModelProvider {
         } catch {
           return this.recover(
             input,
-            system,
+            instructions,
             conversation,
             usage,
             requestId,
@@ -271,7 +275,7 @@ export class DeepSeekProvider implements ModelProvider {
           if (isTransient(error)) throw error;
           return this.recover(
             input,
-            system,
+            instructions,
             conversation,
             usage,
             requestId,
@@ -285,12 +289,19 @@ export class DeepSeekProvider implements ModelProvider {
         });
       }
     }
-    return this.recover(input, system, conversation, usage, requestId, audit);
+    return this.recover(
+      input,
+      instructions,
+      conversation,
+      usage,
+      requestId,
+      audit,
+    );
   }
 
   private async recover(
     input: ModelRequest,
-    system: string,
+    trustedInstructions: string,
     originalConversation: unknown[],
     usage: { inputTokens: number; outputTokens: number },
     requestId: string | undefined,
@@ -310,7 +321,7 @@ export class DeepSeekProvider implements ModelProvider {
         model: "deepseek-v4-pro",
         stream: false,
         reasoning: { effort: this.config.thinking ? "medium" : "none" },
-        instructions: `${system}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
+        instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
         input: [
           ...originalConversation.filter(
             (item) =>
