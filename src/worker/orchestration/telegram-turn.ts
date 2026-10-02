@@ -71,7 +71,8 @@ export class TelegramTurn {
     private updates: UpdateRepository,
     private conversations: ConversationStore,
     private model: ModelProvider,
-    private telegram: Pick<TelegramClient, "typing" | "send">,
+    private telegram: Pick<TelegramClient, "typing" | "send"> &
+      Partial<Pick<TelegramClient, "acknowledgeCallback">>,
     private prompt: string,
     private observability?: {
       correlationId: string;
@@ -141,6 +142,13 @@ export class TelegramTurn {
         () => this.telegram.send(input.chatId, "Please send a text message."),
         isTransient,
       );
+      return;
+    }
+    if (input.kind === "callback") {
+      // Telegram requires a prompt answer to stop the client's progress UI.
+      // The controller-side confirmation service performs the durable CAS; the
+      // worker must never reinterpret opaque callback data as conversation text.
+      await this.telegram.acknowledgeCallback?.(input.callbackQueryId);
       return;
     }
     await this.locks.withUser(input.userId, async () => {

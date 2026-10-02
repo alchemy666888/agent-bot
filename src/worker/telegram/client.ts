@@ -53,12 +53,35 @@ export class TelegramClient {
   async typing(chatId: string) {
     await this.call("sendChatAction", { chat_id: chatId, action: "typing" });
   }
-  async send(chatId: string, text: string) {
+  async acknowledgeCallback(callbackQueryId: string, text?: string) {
+    const response = await this.call("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      ...(text ? { text } : {}),
+    });
+    if (!response.ok) throw new Error("TELEGRAM_DELIVERY_FAILED");
+  }
+  async send(
+    chatId: string,
+    text: string,
+    buttons?: readonly { text: string; callbackData: string }[],
+  ) {
     const formatted = formatTelegramText(text);
     for (const chunk of chunkTelegramText(formatted)) {
       const response = await this.call("sendMessage", {
         chat_id: chatId,
         text: chunk,
+        ...(buttons?.length
+          ? {
+              reply_markup: {
+                inline_keyboard: [
+                  buttons.map((button) => ({
+                    text: button.text,
+                    callback_data: button.callbackData,
+                  })),
+                ],
+              },
+            }
+          : {}),
       });
       if (!response.ok) throw new Error("TELEGRAM_DELIVERY_FAILED");
     }

@@ -39,6 +39,40 @@ describe("Telegram contract", () => {
     expect(
       extractTelegramInput({ update_id: 1, edited_message: {} }).kind,
     ).toBe("ignored"));
+  it("extracts only bounded opaque callbacks from private chats", () => {
+    expect(
+      extractTelegramInput({
+        update_id: 9,
+        callback_query: {
+          id: "callback-id",
+          from: { id: 4, first_name: "private" },
+          message: { message_id: 8, chat: { id: 3, type: "private" } },
+          data: "y_abcdefghijklmnopqrstuvwxyz123456",
+        },
+      }),
+    ).toEqual({
+      kind: "callback",
+      updateId: "9",
+      callbackQueryId: "callback-id",
+      messageId: "8",
+      chatId: "3",
+      userId: "4",
+      username: undefined,
+      languageCode: undefined,
+      data: "y_abcdefghijklmnopqrstuvwxyz123456",
+    });
+    expect(
+      extractTelegramInput({
+        update_id: 10,
+        callback_query: {
+          id: "bad",
+          from: { id: 4 },
+          message: { message_id: 8, chat: { id: 3, type: "private" } },
+          data: "not opaque!",
+        },
+      }).kind,
+    ).toBe("ignored");
+  });
   it("losslessly chunks long output", () => {
     const text = "a".repeat(9000);
     const chunks = chunkTelegramText(text);
