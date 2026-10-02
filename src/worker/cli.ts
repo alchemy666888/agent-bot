@@ -23,6 +23,7 @@ import { createCapabilityRegistry } from "./capabilities";
 import { SkillResolver } from "./skills/resolver";
 import { skillCatalogSnapshotSchema } from "./skills/schemas";
 import type { PromptBundle } from "../shared/contracts/prompt";
+import type { DegradationNotice } from "../shared/contracts/worker";
 import { compiledEmergencyBundle, parsePromptBundle } from "./prompts/bundle";
 import { detectPromptChangeProposal } from "./prompts/proposal";
 
@@ -50,6 +51,7 @@ async function telegramTurn(
   correlationId: string,
   promptBundle?: PromptBundle,
   rawTelegramInput?: string,
+  degradationNotices: readonly DegradationNotice[] = [],
 ) {
   const input = telegramInputSchema.parse(payload.input);
   if (
@@ -134,6 +136,7 @@ async function telegramTurn(
       commitSha: authorizedSkillCatalog.commitSha,
       skills: [...authorizedSkillCatalog.skills],
     }),
+    degradationNotices,
   );
   await turn.handle(input);
   const proposal =
@@ -254,6 +257,9 @@ async function main() {
                   : undefined,
                 request.contractVersion === 2
                   ? request.rawTelegramInput
+                  : undefined,
+                request.contractVersion === 2
+                  ? request.degradationNotices
                   : undefined,
               )
             : request.operation === "export"

@@ -14,6 +14,51 @@ afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 describe("Telegram turn", () => {
+  it("stores and sends one combined sanitized degradation notice", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const conversations = new ConversationService();
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    const turn = new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      conversations,
+      { generate: vi.fn(async () => ({ content: "Useful answer" })) },
+      telegram,
+      "system",
+      undefined,
+      undefined,
+      undefined,
+      [],
+      undefined,
+      undefined,
+      60_000,
+      { mode: "enforced" },
+      undefined,
+      ["repository_unavailable", "request_prompt_missing"],
+    );
+    await turn.handle({
+      kind: "text",
+      updateId: "9001",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "hello",
+    });
+
+    const delivered = telegram.send.mock.calls[0]?.[1];
+    expect(delivered).toContain("Useful answer");
+    expect(delivered).toContain(
+      "GitHub connection and skill list were unavailable",
+    );
+    expect(delivered).toContain("requested prompt was unavailable");
+    expect(telegram.send).toHaveBeenCalledTimes(1);
+    const context = await conversations.context("4", "system");
+    expect(context.messages.at(-1)?.content).toBe(delivered);
+  });
+
   it("validates generated output and performs one tool-free recovery", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const model = {

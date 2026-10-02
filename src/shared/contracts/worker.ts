@@ -1,6 +1,17 @@
 import { z } from "zod";
 import { promptBundleSchema } from "./prompt";
 
+export const degradationNoticeSchema = z.enum([
+  "repository_unavailable",
+  "catalog_missing",
+  "stale_snapshot",
+  "catalog_too_large",
+  "system_prompt_missing",
+  "request_prompt_missing",
+  "compiled_emergency_prompt",
+]);
+export type DegradationNotice = z.infer<typeof degradationNoticeSchema>;
+
 export const workerOperationSchema = z.enum([
   "telegramTurn",
   "query",
@@ -23,6 +34,7 @@ export const workerRequestV2Schema = z
     operation: workerOperationSchema,
     payload: z.record(z.string(), z.unknown()),
     promptBundle: promptBundleSchema,
+    degradationNotices: z.array(degradationNoticeSchema).max(7).default([]),
     rawTelegramInput: z
       .string()
       .max(64 * 1024)

@@ -47,6 +47,7 @@ import {
   MAX_AUTHORIZED_SKILL_CATALOG_BYTES,
   MAX_AUTHORIZED_SKILL_COUNT,
 } from "../../shared/contracts";
+import type { DegradationNotice } from "../../shared/contracts/worker";
 
 const MAX_SKILL_CATALOG_BYTES = MAX_AUTHORIZED_SKILL_CATALOG_BYTES;
 // The catalog crosses the worker boundary and is then serialized once more as
@@ -58,6 +59,33 @@ const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
 type SkillCatalog = Awaited<
   ReturnType<GitHubSkillRepository["loadCatalogSnapshot"]>
 >;
+
+export function promptDegradationNotices(
+  promptBundle: Awaited<ReturnType<DispatchPromptServices["resolve"]>>,
+  requestText: string,
+): DegradationNotice[] {
+  const notices: DegradationNotice[] = [];
+  if (
+    promptBundle.telemetry.degraded &&
+    promptBundle.degradedModeSource === "verified_snapshot"
+  )
+    notices.push("stale_snapshot");
+  if (
+    promptBundle.telemetry.degraded &&
+    (promptBundle.degradedModeSource === "compiled_emergency" ||
+      promptBundle.commonSystemPrompt.source === "compiled_emergency")
+  )
+    notices.push("system_prompt_missing", "compiled_emergency_prompt");
+  // A default request prompt is normal. It is degraded only when the user
+  // actually attempted to select a request prompt and selection fell back.
+  if (
+    promptBundle.resolutionSource === "default" &&
+    promptBundle.telemetry.resolution === "fallback" &&
+    /^\/prompt(?:@[A-Za-z0-9_]{5,32})?(?:\s|$)/i.test(requestText)
+  )
+    notices.push("request_prompt_missing");
+  return notices;
+}
 
 const EMPTY_SKILL_CATALOG: SkillCatalog = {
   commitSha: "0".repeat(40),
@@ -249,13 +277,22 @@ function configuredPromptService(
  * Fail closed (with no skills) when GitHub Connect is unavailable so a
  * connector outage cannot prevent the bot from answering normal messages.
  */
-export async function loadSkillCatalogOrEmpty(
+export async function loadSkillCatalog(
   load: () => Promise<SkillCatalog>,
   correlationId: string,
-): Promise<SkillCatalog> {
+): Promise<{
+  catalog: SkillCatalog;
+  degradationReason?: "repository_unavailable" | "catalog_missing";
+}> {
   const started = Date.now();
   try {
-    return await load();
+    const catalog = await load();
+    return {
+      catalog,
+      ...(catalog.skills.length === 0
+        ? { degradationReason: "catalog_missing" as const }
+        : {}),
+    };
   } catch (error) {
     const failure = safeError(error, "GITHUB_CATALOG_UNAVAILABLE", "catalog");
     logStructured({
@@ -268,7 +305,10 @@ export async function loadSkillCatalogOrEmpty(
       code: "GITHUB_CATALOG_UNAVAILABLE",
       ...(failure.diagnostic ? { metadata: failure.diagnostic } : {}),
     });
-    return EMPTY_SKILL_CATALOG;
+    return {
+      catalog: EMPTY_SKILL_CATALOG,
+      degradationReason: "repository_unavailable",
+    };
   }
 }
 
@@ -442,9 +482,9 @@ export async function dispatchTelegramInput(
   const github = readGitHubConfig();
   // Non-text updates never enter the skill invocation path. Use the only
   // authenticated Telegram identity available for text turns.
-  let skillCatalog =
+  const skillResult =
     input.kind === "text"
-      ? await loadSkillCatalogOrEmpty(
+      ? await loadSkillCatalog(
           () =>
             new GitHubSkillRepository(
               createGitHubSkillsClient(
@@ -461,7 +501,14 @@ export async function dispatchTelegramInput(
             ).loadCatalogSnapshot({ telegramUserId: input.userId }),
           correlationId,
         )
-      : EMPTY_SKILL_CATALOG;
+      : { catalog: EMPTY_SKILL_CATALOG };
+  let skillCatalog = skillResult.catalog;
+  const degradationNotices: DegradationNotice[] = [];
+  if (skillResult.degradationReason)
+    degradationNotices.push(skillResult.degradationReason);
+  degradationNotices.push(
+    ...promptDegradationNotices(promptBundle, input.text),
+  );
   const promptBytes = Buffer.byteLength(JSON.stringify(promptBundle), "utf8");
   let skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
   if (
@@ -472,6 +519,8 @@ export async function dispatchTelegramInput(
     // The documented safe default is an empty, zero-commit catalog. Never
     // truncate a snapshot: that would make the advertised catalog incomplete.
     skillCatalog = EMPTY_SKILL_CATALOG;
+    if (!degradationNotices.includes("catalog_too_large"))
+      degradationNotices.push("catalog_too_large");
     skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
   }
   if (promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES)
@@ -490,6 +539,7 @@ export async function dispatchTelegramInput(
       operation: "telegramTurn",
       payload: { input, skillCatalog },
       promptBundle,
+      degradationNotices: [...new Set(degradationNotices)],
       rawTelegramInput: input.text,
     },
     workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
