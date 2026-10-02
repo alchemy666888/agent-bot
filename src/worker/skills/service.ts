@@ -215,6 +215,7 @@ export class SkillAuthoringService {
     text: string,
     updateId: string,
     languageCode?: string,
+    username?: string,
   ): Promise<string> {
     let draft: SkillDraft | undefined =
       await this.repository.activeForOwner(userId);
@@ -258,7 +259,7 @@ export class SkillAuthoringService {
     // An approval event may have been committed just before a worker crash.
     // Installation is an idempotent write, so finish that transition first.
     if (draft.status === "approved") {
-      const published = await this.repository.publish(draft);
+      const published = await this.repository.publish(draft, username);
       const response =
         published.state === "merged"
           ? `Installed skill “${draft.skillName}” revision ${draft.revisionNumber}: pull request #${published.number} is merged into the configured base branch.`
@@ -340,7 +341,7 @@ export class SkillAuthoringService {
       );
       let published;
       try {
-        published = await this.repository.publish(draft);
+        published = await this.repository.publish(draft, username);
       } catch (error) {
         if ((error as Error).message === "SKILL_REVISION_REQUIRED") {
           const response = `Revision required: the approved branch or commit conflicts with the reviewed revision. Create and approve a new revision; remote changes were not overwritten.`;

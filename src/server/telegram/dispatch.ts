@@ -42,6 +42,7 @@ import type { SkillAuthoringRepository } from "../skills/service";
 import type { SkillDraftGenerator } from "../../worker/skills/types";
 import { PostgresSkillAuthoringRepository } from "../skills/repository";
 import { DeepSeekProvider } from "../../worker/model/deepseek";
+import { parseTelegramAllowlist } from "../../shared/telegram-allowlist";
 
 const MAX_SKILL_CATALOG_BYTES = 4 * 1024 * 1024;
 export const MAX_WORKER_CONTEXT_BYTES = MAX_SKILL_CATALOG_BYTES;
@@ -77,15 +78,6 @@ type DispatchSkillAuthoringService = Pick<
 let skillAuthoringService: DispatchSkillAuthoringService | undefined;
 let repositorySkillAuthoringService: DispatchSkillAuthoringService | undefined;
 
-function configuredIdSet(value: string | undefined): Set<string> {
-  return new Set(
-    (value ?? "")
-      .split(",")
-      .map((id) => id.trim())
-      .filter((id) => /^[1-9][0-9]*$/.test(id)),
-  );
-}
-
 /** Installs the trusted authoring coordinator; primarily used by integration wiring. */
 export function installDispatchSkillAuthoringService(
   service?: DispatchSkillAuthoringService,
@@ -109,7 +101,7 @@ function configuredSkillAuthoringService(
     branch: github.GITHUB_SKILLS_BRANCH,
     prefix: github.GITHUB_SKILLS_PREFIX,
   });
-  const ids = configuredIdSet(process.env.SKILL_AUTHOR_TELEGRAM_IDS);
+  const authors = parseTelegramAllowlist(process.env.SKILL_AUTHOR_TELEGRAM_IDS);
   const capabilities = new Set(
     (process.env.SKILL_AUTHOR_CAPABILITY_IDS ?? "")
       .split(",")
@@ -118,7 +110,8 @@ function configuredSkillAuthoringService(
   );
   const repository: SkillAuthoringRepository =
     new PostgresSkillAuthoringRepository(pool, client, {
-      authorTelegramUserIds: ids,
+      authorTelegramUserIds: authors.ids,
+      authorTelegramUsernames: authors.usernames,
       capabilityIds: capabilities,
     });
   const provider = new DeepSeekProvider({
@@ -386,6 +379,7 @@ export async function dispatchTelegramInput(
         input.text,
         input.updateId,
         input.languageCode,
+        input.username,
       );
     } catch (error) {
       if ((error as Error).message !== "SKILL_AUTHOR_NOT_AUTHORIZED")
