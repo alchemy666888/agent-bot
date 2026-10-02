@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getToken } from "@vercel/connect";
+import { translateConnectorError } from "./connector-error";
 import { z } from "zod";
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -64,9 +65,14 @@ export class GitHubContentsTransport {
   }
 
   private async request(path: string, init: RequestInit = {}) {
-    const token = await this.tokenProvider(this.config.connector, {
-      subject: { type: "app" },
-    });
+    let token: string;
+    try {
+      token = await this.tokenProvider(this.config.connector, {
+        subject: { type: "app" },
+      });
+    } catch (error) {
+      throw translateConnectorError(error);
+    }
     const response = await this.fetcher(this.url(path), {
       ...init,
       headers: {

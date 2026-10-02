@@ -10,6 +10,7 @@ vi.mock("pg", () => ({
 
 import {
   dispatchTelegramInput,
+  installDispatchSkillAuthoringService,
   loadSkillCatalogOrEmpty,
 } from "../../../../src/server/telegram/dispatch";
 
@@ -65,7 +66,53 @@ describe("Telegram dispatch skill catalog", () => {
     }
   });
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    installDispatchSkillAuthoringService(undefined);
+    vi.restoreAllMocks();
+  });
+
+  it("tells the user when the GitHub connector is not attached", async () => {
+    const prior = { ...process.env };
+    Object.assign(process.env, {
+      TELEGRAM_BOT_TOKEN: "token",
+      TELEGRAM_WEBHOOK_SECRET: "secret",
+      DEEPSEEK_API_KEY: "key",
+      DEEPSEEK_INPUT_PRICE_PER_MILLION: "1",
+      DEEPSEEK_OUTPUT_PRICE_PER_MILLION: "2",
+      PROMPT_READS_ENABLED: "false",
+    });
+    installDispatchSkillAuthoringService({
+      shouldHandle: async () => true,
+      handle: async () => {
+        throw new Error("GITHUB_CONNECTOR_NOT_FOUND");
+      },
+    });
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true, result: {} }));
+    try {
+      await expect(
+        dispatchTelegramInput({
+          kind: "text",
+          updateId: "9",
+          messageId: "9",
+          chatId: "3",
+          userId: "4",
+          languageCode: "zh-TW",
+          text: "你可以生成並安裝AI skill 嗎",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        data: { handled: "skill-authoring" },
+      });
+      expect(String(fetch.mock.calls[0]?.[1]?.body)).toContain(
+        "GitHub connector",
+      );
+      expect(String(fetch.mock.calls[0]?.[0])).toContain("api.telegram.org");
+    } finally {
+      process.env = prior;
+    }
+  });
 
   it("uses the validated catalog when GitHub is available", async () => {
     const catalog = { commitSha: "a".repeat(40), skills: [] };

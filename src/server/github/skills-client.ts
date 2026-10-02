@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getToken } from "@vercel/connect";
+import { translateConnectorError } from "./connector-error";
 import { z } from "zod";
 
 const API_ROOT = "https://api.github.com";
@@ -304,9 +305,13 @@ export class GitHubSkillsClient {
   }
 
   private async token(): Promise<string> {
-    return this.tokenProvider(this.config.connector, {
-      subject: { type: "app" },
-    });
+    try {
+      return await this.tokenProvider(this.config.connector, {
+        subject: { type: "app" },
+      });
+    } catch (error) {
+      throw translateConnectorError(error);
+    }
   }
 
   private headers(token: string): HeadersInit {
