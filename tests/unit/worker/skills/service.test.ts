@@ -76,6 +76,43 @@ async function fixture() {
 }
 
 describe("skill authoring domain", () => {
+  it.each([
+    ["幫我建立一個 AI skill", true],
+    ["請建立一個能整理會議紀錄的 AI skill", true],
+    ["請創建 AI skill", true],
+    ["幫我生成一個 AI 技能", true],
+    ["請製作 AI skill", true],
+    ["安裝這個 AI skill", true],
+    ["请创建一个 AI skill", true],
+    ["帮我生成一个 AI 技能", true],
+    ["请制作 AI skill", true],
+    ["请安装这个 AI skill", true],
+    ["Please create a skill called audits", true],
+    ["Build me a new AI skill", true],
+    ["Install a skill", true],
+    ["如何建立 skill？", false],
+    ["怎么创建 AI skill？", false],
+    ["How do I create a skill?", false],
+    ["Explain how to build a skill", false],
+    ["This article discusses skill creation", false],
+  ])("classifies %j as creation intent=%s", (text, expected) => {
+    expect(isSkillCreationRequest(text)).toBe(expected);
+  });
+
+  it("uses languageCode only to localize structured clarification", async () => {
+    const { locks, repository, service } = await fixture();
+    const response = await locks.withUser("42", () =>
+      service.handle("42", "幫我建立一個 AI skill", "zh-1", "zh-TW"),
+    );
+
+    expect(response).toContain("還需要一項資料");
+    expect(response).toContain("英文連字號名稱");
+    expect(await repository.activeForOwner("42")).toMatchObject({
+      ownerTelegramUserId: "42",
+      status: "clarifying",
+    });
+  });
+
   it("detects explicit creation requests and asks one focused missing-constraint question", async () => {
     const { locks, repository, service } = await fixture();
     expect(isSkillCreationRequest("Please create a skill called audits")).toBe(

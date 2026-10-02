@@ -375,6 +375,7 @@ export async function dispatchTelegramInput(
       input.userId,
       input.text,
       input.updateId,
+      input.languageCode,
     );
     await client.send(input.chatId, response);
     return {
