@@ -15,14 +15,14 @@ Enhance `agent-bot` with a secure, hierarchical prompt-management system where:
 
 The recommended model is hybrid:
 
-| Layer | Static or dynamic | Purpose |
-|---|---|---|
+| Layer                   | Static or dynamic       | Purpose                                            |
+| ----------------------- | ----------------------- | -------------------------------------------------- |
 | Runtime security policy | Static application code | Authorization, tool permissions, safety boundaries |
-| Emergency prompt | Static application code | Last-resort operation during GitHub failure |
-| Common system prompt | Dynamic GitHub content | Shared assistant identity and behavior |
-| Personal system overlay | Dynamic GitHub content | Persistent user preferences |
-| Request template | Dynamic GitHub content | Task-specific instructions |
-| Telegram message | Dynamic per request | Raw, untrusted user input |
+| Emergency prompt        | Static application code | Last-resort operation during GitHub failure        |
+| Common system prompt    | Dynamic GitHub content  | Shared assistant identity and behavior             |
+| Personal system overlay | Dynamic GitHub content  | Persistent user preferences                        |
+| Request template        | Dynamic GitHub content  | Task-specific instructions                         |
+| Telegram message        | Dynamic per request     | Raw, untrusted user input                          |
 
 Prompt files may influence responses, but never grant capabilities or override application-enforced security.
 
@@ -554,17 +554,17 @@ Record a sanitized degraded-mode event without storing prompt content, chat text
 
 The main integration areas in `agent-bot` are:
 
-| Existing area | Change |
-|---|---|
-| `src/server/config/index.ts` | Retain only trusted runtime policy and emergency defaults |
-| `src/server/telegram/dispatch.ts` | Resolve identity, obtain a validated prompt bundle, and pin its version |
-| `src/worker/cli.ts` | Accept the validated prompt bundle |
-| `src/worker/conversations/service.ts` | Construct system layers and separated user-template input |
-| `src/worker/model/deepseek.ts` | Send the resolved hierarchy to DeepSeek |
-| `src/worker/model/deepseek-router.ts` | Add metadata-only prompt routing with structured output |
-| `src/server/github/skills-client.ts` | Reuse the authenticated GitHub transport where appropriate |
-| PostgreSQL schema | Add confirmation, snapshot, cache, and audit state |
-| `.env.example` | Document prompt prefix, operator IDs, user-key secret, and feature flag |
+| Existing area                         | Change                                                                  |
+| ------------------------------------- | ----------------------------------------------------------------------- |
+| `src/server/config/index.ts`          | Retain only trusted runtime policy and emergency defaults               |
+| `src/server/telegram/dispatch.ts`     | Resolve identity, obtain a validated prompt bundle, and pin its version |
+| `src/worker/cli.ts`                   | Accept the validated prompt bundle                                      |
+| `src/worker/conversations/service.ts` | Construct system layers and separated user-template input               |
+| `src/worker/model/deepseek.ts`        | Send the resolved hierarchy to DeepSeek                                 |
+| `src/worker/model/deepseek-router.ts` | Add metadata-only prompt routing with structured output                 |
+| `src/server/github/skills-client.ts`  | Reuse the authenticated GitHub transport where appropriate              |
+| PostgreSQL schema                     | Add confirmation, snapshot, cache, and audit state                      |
+| `.env.example`                        | Document prompt prefix, operator IDs, user-key secret, and feature flag |
 
 Recommended new modules:
 
@@ -756,3 +756,17 @@ The completed system should guarantee:
 - GitHub or prompt failures do not take the bot offline.
 - Prompt content cannot expand application capabilities.
 - PostgreSQL and GitHub retain all durable state required by the serverless architecture.
+
+## 24. PH-001 Contract Decisions
+
+These decisions close the format and boundary questions before repository or database implementation:
+
+- **Versioning and compatibility:** prompt dispatch uses worker contract version 2. Version 1 remains accepted as a rollback bridge, but it cannot carry prompt hierarchy data. Producers must deploy version 2 before enabling prompt hierarchy and may disable it to resume version-1 dispatch. Responses use the request version.
+- **Limits:** each prompt body is at most 16 KiB of UTF-8, the serialized bundle is at most 64 KiB of UTF-8, and a bundle has at most eight prompt/skill layers. Metadata arrays also have explicit schema limits. Limits are checked after parsing, before dispatch.
+- **Immutable version:** `repositoryCommitSha` is the sole commit for every repository or verified-snapshot layer, selected blob SHA, and skill reference. `turnPin.commitSha` must equal it and is unchanged for the current turn. A newly committed prompt is therefore eligible only on a later turn.
+- **Input separation:** raw Telegram text is `rawTelegramInput` on the version-2 worker request. It is never a bundle field, trusted runtime-context value, system layer, proposal result, routing descriptor, or telemetry field.
+- **Routing:** the server supplies only strict, authorized request-prompt descriptors. Candidate IDs are unique. A result is accepted only by jointly validating it with its request and proving that a non-null selected ID belongs to those candidates; low confidence or no match uses the default.
+- **Mutation response:** proposals contain semantic scope, kind, ID, and optimistic-concurrency SHAs, but no repository path or identity. The server returns an opaque proposal UUID, status, expiry, and sanitized summary only.
+- **Emergency mode:** it always uses the compiled emergency runtime policy and compiled emergency common assistant prompt. Personal and request content is absent or comes exclusively from one verified snapshot; live repository content and mixed commits are forbidden. Emergency usage is represented by sanitized enums/booleans, never prompt or chat content.
+- **Secrets and identity:** contracts have no credential, HMAC-secret, operator-allowlist, raw Telegram ID, username, display-name, or repository-path fields. Opaque IDs are UUIDs or validated prompt IDs. Strict objects reject attempts to smuggle these as extra properties.
+- **Schema evolution:** prompt schema version 1 and worker contract version 2 are independent. New required boundary fields require a new worker version; additive optional fields still require coordinated reader deployment. Unknown fields are rejected rather than silently ignored.
