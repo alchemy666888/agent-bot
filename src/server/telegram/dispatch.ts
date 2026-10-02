@@ -77,6 +77,15 @@ type DispatchSkillAuthoringService = Pick<
 let skillAuthoringService: DispatchSkillAuthoringService | undefined;
 let repositorySkillAuthoringService: DispatchSkillAuthoringService | undefined;
 
+function configuredIdSet(value: string | undefined): Set<string> {
+  return new Set(
+    (value ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter((id) => /^[1-9][0-9]*$/.test(id)),
+  );
+}
+
 /** Installs the trusted authoring coordinator; primarily used by integration wiring. */
 export function installDispatchSkillAuthoringService(
   service?: DispatchSkillAuthoringService,
@@ -100,13 +109,12 @@ function configuredSkillAuthoringService(
     branch: github.GITHUB_SKILLS_BRANCH,
     prefix: github.GITHUB_SKILLS_PREFIX,
   });
-  const ids = new Set(
-    (process.env.SKILL_AUTHOR_TELEGRAM_IDS ?? "")
-      .split(",")
-      .filter((id) => /^[1-9][0-9]*$/.test(id)),
-  );
+  const ids = configuredIdSet(process.env.SKILL_AUTHOR_TELEGRAM_IDS);
   const capabilities = new Set(
-    (process.env.SKILL_AUTHOR_CAPABILITY_IDS ?? "").split(",").filter(Boolean),
+    (process.env.SKILL_AUTHOR_CAPABILITY_IDS ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean),
   );
   const repository: SkillAuthoringRepository =
     new PostgresSkillAuthoringRepository(pool, client, {
@@ -371,12 +379,31 @@ export async function dispatchTelegramInput(
     skillAuthoringService ??
     configuredSkillAuthoringService(model, readGitHubConfig());
   if (await authoring.shouldHandle(input.userId, input.text)) {
-    const response = await authoring.handle(
-      input.userId,
-      input.text,
-      input.updateId,
-      input.languageCode,
-    );
+    let response: string;
+    try {
+      response = await authoring.handle(
+        input.userId,
+        input.text,
+        input.updateId,
+        input.languageCode,
+      );
+    } catch (error) {
+      if ((error as Error).message !== "SKILL_AUTHOR_NOT_AUTHORIZED")
+        throw error;
+
+      // Authorization denial is an expected policy result, not an unavailable
+      // webhook. Acknowledge it so Telegram does not retry the same update.
+      logStructured({
+        correlationId,
+        component: "controller",
+        operation: "skill.authoring",
+        stage: "authorization",
+        result: "failure",
+        code: "SKILL_AUTHOR_NOT_AUTHORIZED",
+      });
+      response =
+        "You are not authorized to create or publish skills. Ask the bot operator to allow your Telegram user ID.";
+    }
     await client.send(input.chatId, response);
     return {
       contractVersion: 1 as const,

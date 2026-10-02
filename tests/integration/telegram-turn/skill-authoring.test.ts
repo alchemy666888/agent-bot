@@ -265,12 +265,14 @@ describe("Telegram skill authoring", () => {
     });
   });
 
-  it("rejects an unauthorized author at explicit approval", async () => {
+  it("acknowledges an unauthorized author without making the webhook retry", async () => {
     await fixture({ authors: [] });
     await dispatch("520", COMPLETE_REQUEST);
-    await expect(dispatch("521", "/skill_approve 1")).rejects.toThrow(
-      "SKILL_AUTHOR_NOT_AUTHORIZED",
-    );
+    await expect(dispatch("521", "/skill_approve 1")).resolves.toMatchObject({
+      data: { handled: "skill-authoring" },
+    });
+    expect(sentText()).toContain("not authorized");
+    expect(sentText()).toContain("Telegram user ID");
   });
 
   it("rejects an unregistered requested capability", async () => {
