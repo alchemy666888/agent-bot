@@ -7,4 +7,5 @@ export type {
   RefreshLease,
   RepositoryIdentity,
   SnapshotInput,
+  StoredSnapshot,
 } from "./types";

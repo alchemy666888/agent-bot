@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { Pool, PoolClient, QueryResultRow } from "pg";
-import type { RefreshLease, SnapshotInput } from "./types";
+import type { RefreshLease, SnapshotInput, StoredSnapshot } from "./types";
 
 export class PromptTransitionConflict extends Error {
   constructor() {
@@ -127,7 +127,9 @@ export class PostgresPromptRepository {
   acquireRefreshLease(lease: RefreshLease): Promise<boolean> {
     const lifetime = lease.expiresAt.getTime() - Date.now();
     if (lifetime <= 0 || lifetime > 5 * 60_000)
-      throw new RangeError("Refresh lease lifetime must be between 1ms and 5 minutes");
+      throw new RangeError(
+        "Refresh lease lifetime must be between 1ms and 5 minutes",
+      );
     return this.pool
       .query(
         `INSERT INTO prompt_cache_entries
@@ -149,6 +151,86 @@ export class PostgresPromptRepository {
         ],
       )
       .then((result) => result.rowCount === 1);
+  }
+
+  getActiveSnapshot(
+    owner: string,
+    name: string,
+    prefix: string,
+  ): Promise<StoredSnapshot | null> {
+    return this.pool
+      .query<
+        {
+          id: string;
+          commit_sha: string;
+          snapshot_payload: unknown;
+          content_digest: string;
+          validated_at: Date;
+        } & QueryResultRow
+      >(
+        `SELECT id, commit_sha, snapshot_payload, content_digest, validated_at
+           FROM prompt_snapshots
+          WHERE repository_owner=$1 AND repository_name=$2 AND repository_prefix=$3
+            AND active AND verified
+          LIMIT 1`,
+        [owner, name, prefix],
+      )
+      .then((result) => {
+        const row = result.rows[0];
+        return row
+          ? {
+              id: row.id,
+              owner,
+              name,
+              prefix,
+              commitSha: row.commit_sha,
+              payload: row.snapshot_payload,
+              contentDigest: row.content_digest,
+              validatedAt: row.validated_at,
+            }
+          : null;
+      });
+  }
+
+  async finishRefresh(
+    lease: RefreshLease,
+    commitSha: string,
+    freshnessDeadline: Date,
+  ): Promise<void> {
+    const result = await this.pool.query(
+      `UPDATE prompt_cache_entries
+          SET current_verified_commit=$6, refreshed_at=now(), freshness_deadline=$7,
+              error_at=NULL, error_code=NULL, lease_owner=NULL, lease_expires_at=NULL
+        WHERE repository_owner=$1 AND repository_name=$2 AND repository_prefix=$3
+          AND symbolic_ref=$4 AND lease_owner=$5`,
+      [
+        lease.owner,
+        lease.name,
+        lease.prefix,
+        lease.symbolicRef,
+        lease.ownerId,
+        commitSha,
+        freshnessDeadline,
+      ],
+    );
+    if (result.rowCount !== 1) throw new Error("PROMPT_REFRESH_LEASE_LOST");
+  }
+
+  async failRefresh(lease: RefreshLease, errorCode: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE prompt_cache_entries
+          SET error_at=now(), error_code=$6, lease_owner=NULL, lease_expires_at=NULL
+        WHERE repository_owner=$1 AND repository_name=$2 AND repository_prefix=$3
+          AND symbolic_ref=$4 AND lease_owner=$5`,
+      [
+        lease.owner,
+        lease.name,
+        lease.prefix,
+        lease.symbolicRef,
+        lease.ownerId,
+        errorCode,
+      ],
+    );
   }
 
   activateSnapshot(snapshot: SnapshotInput): Promise<void> {
