@@ -52,6 +52,30 @@ Each `create` flow opens or provides the GitHub App installation flow. On GitHub
 
 `@vercel/connect` obtains its workload identity from `VERCEL_OIDC_TOKEN` when the Next.js server loads a skill catalog. The server resolves the configured branch once, validates every manifest and skill document at that immutable commit, and passes a schema-validated snapshot to the Sandbox worker. The snapshot is capped at 4 MiB. GitHub credentials and connector configuration are never forwarded to the worker, written to request/response files, included in prompts, or persisted in application data.
 
+### Prompt repository rollout
+
+Prompt access shares `GITHUB_CONNECTOR` so the application has only one transport credential, while its owner, repository, branch, and prefix are independently validated. Restrict the GitHub App installation to the selected repository. A read-only rollout needs only Contents: Read-only; grant Contents: Read and write only when reviewed prompt writes are enabled.
+
+Start every environment with `PROMPT_HIERARCHY_ENABLED=false` and `PROMPT_HIERARCHY_WRITES_ENABLED=false`. In this state startup does not require prompt repository settings and request handling retains the compiled emergency path without contacting GitHub. To enable read-only hierarchy resolution, configure:
+
+```dotenv
+PROMPT_HIERARCHY_ENABLED=true
+PROMPT_HIERARCHY_WRITES_ENABLED=false
+GITHUB_PROMPTS_OWNER=alchemy666888
+GITHUB_PROMPTS_REPO=skill
+GITHUB_PROMPTS_BRANCH=main
+GITHUB_PROMPTS_PREFIX=prompts
+PROMPT_OPERATOR_TELEGRAM_IDS=123456789,987654321
+PROMPT_USER_KEY_SECRET=<independent-secret-of-at-least-32-characters-and-eight-distinct-characters>
+PROMPT_CACHE_TTL_SECONDS=300
+PROMPT_CONFIRMATION_TTL_SECONDS=600
+PROMPT_ROUTER_CONFIDENCE_THRESHOLD=0.75
+```
+
+The operator allowlist accepts only comma-separated, canonical positive numeric Telegram IDs: whitespace, signs, empty tokens, duplicates, leading zeroes, and unsafe integer values fail validation. Keep the allowlist and user-key secret in the Next.js server only. They must never be added to Sandbox environment forwarding, worker files, logs, prompt bundles, or browser configuration. Normal prompts live under the reviewed GitHub prefix; `ASSISTANT_SYSTEM_PROMPT` is solely a break-glass emergency fallback, and immutable runtime security policy remains compiled code.
+
+After read-only evidence is approved, enable `PROMPT_HIERARCHY_WRITES_ENABLED=true` only on the protected `main` branch and with the required review controls. Rotating `PROMPT_USER_KEY_SECRET` derives a new `u1_` namespace and makes old personal paths undiscoverable. Rotation therefore requires an explicit, audited namespace migration (or an intentional reset) before cutover; never replace the value as though it were a transparent credential rotation.
+
 ## Ordered rollout
 
 ## DeepSeek routing rollout
