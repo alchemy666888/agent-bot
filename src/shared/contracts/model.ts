@@ -133,6 +133,16 @@ export const modelExecutionModeSchema = z.enum([
 export const modelRequestSchema = z
   .object({
     messages: z.array(modelMessageSchema).min(1),
+    trustedInstructions: z
+      .array(
+        z
+          .object({
+            source: z.enum(["common", "personal", "runtime"]),
+            content: z.string().min(1),
+          })
+          .strict(),
+      )
+      .optional(),
     /** Chosen by trusted orchestration; model providers must not infer or broaden it. */
     executionMode: modelExecutionModeSchema,
     skill: skillContextSchema.optional(),

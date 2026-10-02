@@ -151,7 +151,10 @@ export class DurableConversationService {
     return message;
   }
 
-  async context(userId: string, systemPrompt: string): Promise<ModelRequest> {
+  async context(
+    userId: string,
+    input: import("../prompts/composer").ComposedTurn | string,
+  ): Promise<ModelRequest> {
     const user = await this.requireUser(userId);
     const conversationId = user.activeConversationId as string;
     const messages = (await this.list("messages"))
@@ -168,10 +171,28 @@ export class DurableConversationService {
       }
     }
     const latest = messages.at(-1);
+    if (typeof input === "string")
+      return {
+        executionMode: "direct",
+        messages: [
+          { role: "system", content: input },
+          ...pairs
+            .slice(-20)
+            .flat()
+            .map((item) => ({
+              role: item.role as "user" | "assistant",
+              content: item.text as string,
+            })),
+          ...(latest?.role === "user"
+            ? [{ role: "user" as const, content: latest.text as string }]
+            : []),
+        ],
+      };
+    const turn = input;
     return {
       executionMode: "direct",
+      trustedInstructions: [...turn.trustedInstructions],
       messages: [
-        { role: "system", content: systemPrompt },
         ...pairs
           .slice(-20)
           .flat()
@@ -179,9 +200,7 @@ export class DurableConversationService {
             role: item.role as "user" | "assistant",
             content: item.text as string,
           })),
-        ...(latest?.role === "user"
-          ? [{ role: "user" as const, content: latest.text as string }]
-          : []),
+        ...(latest?.role === "user" ? [turn.currentRequest] : []),
       ],
     };
   }

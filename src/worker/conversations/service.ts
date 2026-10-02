@@ -1,5 +1,6 @@
 import { uuidV7, telegramId } from "../../shared/ids";
 import type { ModelRequest } from "../../shared/contracts";
+import type { ComposedTurn } from "../prompts/composer";
 
 export interface UserProfile {
   telegramUserId: string;
@@ -75,7 +76,7 @@ export class ConversationService {
     conversation.messages.push(message);
     return message;
   }
-  context(userId: string, systemPrompt: string): ModelRequest {
+  context(userId: string, input: ComposedTurn | string): ModelRequest {
     const messages = this.ensureConversation(userId).messages;
     const pairs: Message[][] = [];
     for (let i = 0; i < messages.length - 1; i++)
@@ -86,17 +87,30 @@ export class ConversationService {
         pairs.push([messages[i]!, messages[i + 1]!]);
         i++;
       }
+    if (typeof input === "string")
+      return {
+        executionMode: "direct",
+        messages: [
+          { role: "system", content: input },
+          ...pairs
+            .slice(-20)
+            .flat()
+            .map(({ role, text }) => ({ role, content: text })),
+          ...(messages.at(-1)?.role === "user"
+            ? [{ role: "user" as const, content: messages.at(-1)!.text }]
+            : []),
+        ],
+      };
+    const turn = input;
     return {
       executionMode: "direct",
+      trustedInstructions: [...turn.trustedInstructions],
       messages: [
-        { role: "system", content: systemPrompt },
         ...pairs
           .slice(-20)
           .flat()
           .map(({ role, text }) => ({ role, content: text })),
-        ...(messages.at(-1)?.role === "user"
-          ? [{ role: "user" as const, content: messages.at(-1)!.text }]
-          : []),
+        ...(messages.at(-1)?.role === "user" ? [turn.currentRequest] : []),
       ],
     };
   }

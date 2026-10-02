@@ -27,6 +27,8 @@ import {
   containsInternalProtocol,
   SAFE_OUTPUT_FALLBACK,
 } from "../model/deepseek";
+import type { PromptBundle } from "../../shared/contracts/prompt";
+import { composePromptTurn } from "../prompts/composer";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -73,7 +75,7 @@ export class TelegramTurn {
     private model: ModelProvider,
     private telegram: Pick<TelegramClient, "typing" | "send"> &
       Partial<Pick<TelegramClient, "acknowledgeCallback">>,
-    private prompt: string,
+    private promptBundle: Readonly<PromptBundle> | string,
     private observability?: {
       correlationId: string;
       recordFailure(input: {
@@ -94,6 +96,11 @@ export class TelegramTurn {
       minimumConfidence?: number;
     } = { mode: "enforced" },
   ) {}
+  private composed(rawText: string) {
+    return typeof this.promptBundle === "string"
+      ? this.promptBundle
+      : composePromptTurn(this.promptBundle, rawText);
+  }
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
   }
@@ -106,7 +113,8 @@ export class TelegramTurn {
     if (answer?.trim() && !containsInternalProtocol(answer)) return { answer };
 
     try {
-      const context = await this.conversations.context(userId, this.prompt);
+      const turn = this.composed(originalRequest);
+      const context = await this.conversations.context(userId, turn);
       const safeHistory = context.messages.filter(
         (message, index, messages) =>
           message.role !== "system" &&
@@ -116,11 +124,18 @@ export class TelegramTurn {
       );
       const recovered = await this.model.generate({
         executionMode: "direct",
-        messages: [
-          { role: "system", content: this.prompt },
-          ...safeHistory,
-          { role: "user", content: originalRequest },
-        ],
+        ...(typeof turn === "string"
+          ? {
+              messages: [
+                { role: "system" as const, content: turn },
+                ...safeHistory,
+                { role: "user" as const, content: originalRequest },
+              ],
+            }
+          : {
+              trustedInstructions: [...turn.trustedInstructions],
+              messages: [...safeHistory, turn.currentRequest],
+            }),
         generalCapabilities: [],
         signal,
       });
@@ -247,7 +262,7 @@ export class TelegramTurn {
               if (!command && this.router && this.routing.mode === "shadow") {
                 const shadowContext = await this.conversations.context(
                   input.userId,
-                  this.prompt,
+                  this.composed(routedText),
                 );
                 try {
                   const routed = this.router.routeWithMetadata
@@ -311,7 +326,7 @@ export class TelegramTurn {
               } else if (this.router && this.routing.mode === "enforced") {
                 preparedContext = await this.conversations.context(
                   input.userId,
-                  this.prompt,
+                  this.composed(routedText),
                 );
                 const messages = preparedContext.messages.filter(
                   (
@@ -514,7 +529,10 @@ export class TelegramTurn {
                 const started = Date.now();
                 const context =
                   preparedContext ??
-                  (await this.conversations.context(input.userId, this.prompt));
+                  (await this.conversations.context(
+                    input.userId,
+                    this.composed(routedText),
+                  ));
                 generated = await retryTransient(
                   async () =>
                     this.model.generate({
