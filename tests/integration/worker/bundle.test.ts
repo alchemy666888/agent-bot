@@ -82,6 +82,7 @@ globalThis.fetch = async (url, init = {}) => {
         contractVersion: 2,
         correlationId,
         operation: "telegramTurn",
+        repositoryCommitSha: sha,
         payload: {
           input: {
             kind: "text",

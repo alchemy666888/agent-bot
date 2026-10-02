@@ -292,6 +292,12 @@ export type SandboxConfig = z.infer<typeof sandboxSchema> & {
 };
 export type GitHubConfig = z.output<typeof githubSchema>;
 export type PromptConfig = z.output<typeof promptConfigSchema>;
+export type RepositoryIdentityConfig = {
+  connector: string;
+  owner: string;
+  repository: string;
+  branch: string;
+};
 
 export function readModelConfig(
   env: Record<string, string | undefined> = process.env,
@@ -329,4 +335,31 @@ export function readPromptConfig(
   env: Record<string, string | undefined> = process.env,
 ): PromptConfig {
   return promptConfigSchema.parse(env);
+}
+
+/**
+ * Reads the single repository identity used to materialize a Telegram turn.
+ * Prompt and skill prefixes may differ, but their connector and mutable ref
+ * must not: the controller can only make an atomic snapshot from one head.
+ */
+export function readRepositoryIdentityConfig(
+  env: Record<string, string | undefined> = process.env,
+): RepositoryIdentityConfig {
+  const skills = readGitHubConfig(env);
+  const prompts = readPromptConfig(env);
+  const identity = {
+    connector: skills.GITHUB_CONNECTOR,
+    owner: skills.GITHUB_SKILLS_OWNER,
+    repository: skills.GITHUB_SKILLS_REPO,
+    branch: skills.GITHUB_SKILLS_BRANCH,
+  };
+  if (
+    prompts.PROMPT_READS_ENABLED &&
+    (prompts.GITHUB_CONNECTOR !== identity.connector ||
+      prompts.GITHUB_PROMPTS_OWNER !== identity.owner ||
+      prompts.GITHUB_PROMPTS_REPO !== identity.repository ||
+      prompts.GITHUB_PROMPTS_BRANCH !== identity.branch)
+  )
+    throw new Error("Prompt and skill repository identities must match");
+  return identity;
 }

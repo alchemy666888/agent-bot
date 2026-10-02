@@ -10,6 +10,7 @@ import {
   readGitHubConfig,
   readModelConfig,
   readPromptConfig,
+  readRepositoryIdentityConfig,
   readSandboxConfig,
   readTelegramConfig,
 } from "../../src/server/config";
@@ -147,6 +148,34 @@ describe("entry-point configuration", () => {
       GITHUB_SKILLS_BRANCH: "feature/skills-v2",
       GITHUB_SKILLS_PREFIX: "skills/approved",
     });
+  });
+
+  it("exposes one repository identity and rejects split prompt configuration", () => {
+    const env = {
+      GITHUB_CONNECTOR: "github/shared-repo",
+      GITHUB_SKILLS_OWNER: "owner",
+      GITHUB_SKILLS_REPO: "repository",
+      GITHUB_SKILLS_BRANCH: "main",
+      PROMPT_READS_ENABLED: "true",
+      GITHUB_PROMPTS_OWNER: "owner",
+      GITHUB_PROMPTS_REPO: "repository",
+      GITHUB_PROMPTS_BRANCH: "main",
+      GITHUB_PROMPTS_PREFIX: "prompts",
+      PROMPT_OPERATOR_TELEGRAM_IDS: "123",
+      PROMPT_USER_KEY_SECRET: "0123456789abcdefghijklmnopqrstuvwxyz",
+    };
+    expect(readRepositoryIdentityConfig(env)).toEqual({
+      connector: "github/shared-repo",
+      owner: "owner",
+      repository: "repository",
+      branch: "main",
+    });
+    expect(() =>
+      readRepositoryIdentityConfig({
+        ...env,
+        GITHUB_PROMPTS_REPO: "another-repository",
+      }),
+    ).toThrow("Prompt and skill repository identities must match");
   });
 
   it.each([
