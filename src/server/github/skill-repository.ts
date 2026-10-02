@@ -17,6 +17,12 @@ import {
   type SkillManifest,
 } from "../../worker/skills/schemas";
 import { GitHubSkillsClient, GitHubSkillsError } from "./skills-client";
+import type { SkillDraftGitClient } from "../skills/repository";
+
+/** GitHub adapter used only by the trusted server-side authoring coordinator. */
+export class GitHubSkillAuthoringAdapter
+  extends GitHubSkillsClient
+  implements SkillDraftGitClient {}
 
 const INDEX_FILE = "index.json";
 const CACHE_TTL_MS = 30_000;
