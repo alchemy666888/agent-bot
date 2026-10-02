@@ -202,6 +202,9 @@ const promptConfigSchema = z
     PROMPT_CONFIRMATION_TTL_SECONDS: optionalEnv(
       z.coerce.number().int().min(30).max(3_600),
     ).default(600),
+    // Prompt classification is independently kill-switchable. Deterministic
+    // selection and the verified default remain available when it is off.
+    PROMPT_ROUTER_ENABLED: strictBoolean.default(false),
     PROMPT_ROUTER_CONFIDENCE_THRESHOLD: optionalEnv(
       z.coerce.number().min(0).max(1),
     ).default(0.75),
