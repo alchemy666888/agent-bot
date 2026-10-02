@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "pnpm worker:build && next build",
+    "build": "pnpm worker:build && pnpm worker:verify && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -20,7 +20,8 @@
     "test:integration": "vitest run --passWithNoTests tests/integration",
     "test:contracts": "vitest run --passWithNoTests tests/contracts",
     "test:e2e": "playwright test",
-    "worker:build": "esbuild src/worker/cli.ts --bundle --platform=node --format=esm --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/worker.mjs",
+    "worker:build": "node scripts/worker-artifact.mjs build",
+    "worker:verify": "node scripts/worker-artifact.mjs verify",
     "skills:migrate-to-github": "node scripts/migrate-skills-to-github.mjs"
   },
   "dependencies": {

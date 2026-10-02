@@ -1,5 +1,25 @@
 # Deployment
 
+## Worker release artifact
+
+`src/worker/cli.ts` is the sole worker entry point. `dist/worker.mjs` is a
+generated-only release artifact and remains ignored by Git; a clean checkout
+creates it with `pnpm worker:build`. The build uses fixed esbuild options and
+`pnpm worker:verify` rebuilds into a temporary directory, byte-compares the
+result, and rejects prohibited server-only configuration names and any known
+secret values supplied to verification. This catches missing or stale prompt
+modules without embedding environment-derived prompt content. Only the minimal
+compiled emergency request/runtime policy remains available in worker source;
+normal common, personal, and request prompts arrive in the validated v2 bundle.
+
+`pnpm build` always builds and verifies the worker before Next.js packaging.
+CI must use that command (or run `pnpm worker:build && pnpm worker:verify`
+explicitly) and must not cache or download `dist/worker.mjs` from another
+revision. Next.js output tracing includes `./dist/worker.mjs`, the exact path
+read by the Telegram dispatcher. Deploy server and worker contract changes
+together; never pair a server requiring v2 bundles with an older worker unless
+tested version negotiation has been introduced.
+
 PostgreSQL remains the durable store for conversations, messages, updates, logs, and other application/operational state. GitHub is the durable source for skill definitions. A Vercel Sandbox is a disposable execution boundary; never deploy a configuration that treats its filesystem as a backup.
 
 ## Database and roles
