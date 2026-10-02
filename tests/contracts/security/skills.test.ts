@@ -37,6 +37,21 @@ describe("GitHub skills client security contract", () => {
     ).toThrow();
   });
 
+  it("reports a missing Vercel Connect attachment instead of an internal error", async () => {
+    const failure = new Error("Failed to get token: 404 Not Found - not_found");
+    failure.name = "ConnectError";
+    Object.assign(failure, { status: 404, code: "not_found" });
+    const client = new GitHubSkillsClient(config, {
+      tokenProvider: async () => {
+        throw failure;
+      },
+    });
+
+    await expect(client.getBranchHead("main")).rejects.toThrow(
+      "GITHUB_CONNECTOR_NOT_FOUND",
+    );
+  });
+
   it("acquires a fresh app-scoped token and never persists it", async () => {
     const tokenProvider = vi
       .fn()

@@ -382,21 +382,34 @@ export async function dispatchTelegramInput(
         input.username,
       );
     } catch (error) {
-      if ((error as Error).message !== "SKILL_AUTHOR_NOT_AUTHORIZED")
+      const code = (error as Error).message;
+      if (
+        code !== "SKILL_AUTHOR_NOT_AUTHORIZED" &&
+        code !== "GITHUB_CONNECTOR_NOT_FOUND" &&
+        code !== "GITHUB_CONNECTOR_NOT_INSTALLED"
+      )
         throw error;
 
-      // Authorization denial is an expected policy result, not an unavailable
-      // webhook. Acknowledge it so Telegram does not retry the same update.
+      // These are permanent project/policy results. Acknowledge them so
+      // Telegram does not retry the same update.
       logStructured({
         correlationId,
         component: "controller",
         operation: "skill.authoring",
-        stage: "authorization",
+        stage:
+          code === "SKILL_AUTHOR_NOT_AUTHORIZED"
+            ? "authorization"
+            : "skill-repository",
         result: "failure",
-        code: "SKILL_AUTHOR_NOT_AUTHORIZED",
+        code,
       });
+      const chinese = input.languageCode?.toLowerCase().startsWith("zh");
       response =
-        "You are not authorized to create or publish skills. Ask the bot operator to allow your Telegram user ID.";
+        code === "SKILL_AUTHOR_NOT_AUTHORIZED"
+          ? "You are not authorized to create or publish skills. Ask the bot operator to allow your Telegram user ID."
+          : chinese
+            ? "還不能建立 skill，因為這個 Vercel 專案沒有連結 GitHub connector。請先建立並 attach connector，然後再傳一次。"
+            : "I can't create a skill yet because this Vercel project is not linked to a GitHub connector. Create and attach the connector, then try again.";
     }
     await client.send(input.chatId, response);
     return {
