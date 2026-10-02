@@ -18,6 +18,7 @@ import { GitHubSkillRepository } from "../github/skill-repository";
 import { logStructured, safeError } from "../../shared/logger";
 import type { GitHubClientEvent } from "../github/skills-client";
 import type { SkillRepositoryEvent } from "../github/skill-repository";
+import { TelegramClient } from "../../worker/telegram/client";
 
 const MAX_SKILL_CATALOG_BYTES = 4 * 1024 * 1024;
 
@@ -99,6 +100,20 @@ export async function dispatchTelegramInput(
   correlationId = uuidV7(),
 ) {
   const telegram = readTelegramConfig();
+  if (input.kind === "callback") {
+    // This deployment completes turns synchronously, so acknowledge at the
+    // ingress boundary and do not claim asynchronous completion. Mutation is
+    // only started later by the durable confirmation transaction.
+    await new TelegramClient(telegram.TELEGRAM_BOT_TOKEN).acknowledgeCallback(
+      input.callbackQueryId,
+    );
+    return {
+      contractVersion: 1 as const,
+      correlationId,
+      ok: true as const,
+      data: { acknowledged: true },
+    };
+  }
   const model = readModelConfig();
   const github = readGitHubConfig();
   // Non-text updates never enter the skill invocation path. Use the only

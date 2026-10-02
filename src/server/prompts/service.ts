@@ -10,6 +10,29 @@ import {
 import type { PromptSnapshotCache, PromptSnapshotResult } from "./cache";
 import type { StoredPromptFile, VerifiedPromptSnapshot } from "./github-store";
 import { resolvePrompt } from "./resolver";
+import {
+  listAuthorizedPromptSummaries,
+  type PromptActor,
+  type StoredPromptSummary,
+} from "./authorization";
+
+/** User-facing management output deliberately omits IDs and repository details. */
+export function promptManagementSummaries(
+  actor: PromptActor,
+  rows: readonly StoredPromptSummary[],
+): Array<{ scope: "common" | "global" | "personal"; summary: string }> {
+  return listAuthorizedPromptSummaries(actor, rows).map(
+    ({ scope, summary }) => ({
+      scope,
+      summary: summary
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/\b[0-9a-f]{40,64}\b/gi, "[version]")
+        .replace(/(?:^|\s)(?:[\w.-]+\/)+[\w.-]+/g, " [target]")
+        .replace(/\s+/g, " ")
+        .trim(),
+    }),
+  );
+}
 
 export interface PromptRoutingClient {
   route(input: {
