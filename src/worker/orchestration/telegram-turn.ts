@@ -30,6 +30,7 @@ import {
 } from "../model/deepseek";
 import type { PromptBundle } from "../../shared/contracts/prompt";
 import { composePromptTurn } from "../prompts/composer";
+import type { DegradationNotice } from "../../shared/contracts/worker";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -97,7 +98,30 @@ export class TelegramTurn {
       minimumConfidence?: number;
     } = { mode: "enforced" },
     private authorizedSkillCatalog?: Readonly<AuthorizedSkillCatalog>,
+    private degradationNotices: readonly DegradationNotice[] = [],
   ) {}
+  private degradationNotice(): string {
+    const reasons = new Set(this.degradationNotices);
+    if (!reasons.size) return "";
+    const notices: string[] = [];
+    if (reasons.has("repository_unavailable"))
+      notices.push("the GitHub connection and skill list were unavailable");
+    else if (reasons.has("catalog_missing"))
+      notices.push("the skill list was unavailable");
+    if (reasons.has("catalog_too_large"))
+      notices.push("the skill list could not be loaded safely");
+    if (reasons.has("stale_snapshot"))
+      notices.push("a stale verified prompt snapshot was used");
+    if (reasons.has("system_prompt_missing"))
+      notices.push("the configured system prompt was unavailable");
+    if (reasons.has("request_prompt_missing"))
+      notices.push("the requested prompt was unavailable");
+    if (reasons.has("compiled_emergency_prompt"))
+      notices.push("the built-in emergency prompt was used");
+    return notices.length
+      ? `\n\n⚠️ Some defaults were used because ${notices.join(", ")}.`
+      : "";
+  }
   private composed(rawText: string) {
     return typeof this.promptBundle === "string"
       ? this.promptBundle
@@ -591,6 +615,7 @@ export class TelegramTurn {
             turnController.signal,
           );
           answer = validation.answer;
+          answer += this.degradationNotice();
           if (validation.recovered) {
             generated = validation.recovered;
             fallbackReason = "model_output_recovery";
