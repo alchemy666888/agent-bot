@@ -73,12 +73,13 @@ describe("model adapter", () => {
       model: "deepseek-v4-pro",
       stream: false,
       reasoning: { effort: "medium" },
-      instructions:
-        "be helpful\n\nIf no specialized skill is active, answer helpfully using general knowledge and the available general tools. For current or uncertain facts, use an available tool when useful and state material uncertainty. Never invent, describe, or expose tool-call XML, JSON, function-call syntax, hidden reasoning, or other internal protocol.",
+      tools: [{ type: "web_search" }],
+      tool_choice: "auto",
       input: [{ role: "user", content: "hi" }],
     });
     expect(body.instructions).toContain("be helpful");
     expect(body.instructions).toContain("Never invent");
+    expect(body.instructions).toContain("use web search before answering");
   });
   it("continues after a server-side web_search_call until the answer arrives", async () => {
     const searchCall = {
@@ -91,7 +92,7 @@ describe("model adapter", () => {
     const fetcher = vi.fn(async (...args: unknown[]) => {
       const body = JSON.parse(
         String((args[1] as RequestInit | undefined)?.body),
-      ) as { input: unknown[] };
+      ) as { input: unknown[]; tools: unknown[]; tool_choice: unknown };
       round += 1;
       if (round === 1)
         return new Response(JSON.stringify({ id: "r1", output: [searchCall] }));
@@ -99,6 +100,10 @@ describe("model adapter", () => {
         { role: "user", content: "weather" },
         searchCall,
       ]);
+      expect(body).toMatchObject({
+        tools: [{ type: "web_search" }],
+        tool_choice: "auto",
+      });
       return new Response(
         JSON.stringify({
           id: "r2",
@@ -160,6 +165,13 @@ describe("model adapter", () => {
     const recoveryBody = JSON.parse(
       String((fetcher.mock.calls[1]?.[1] as RequestInit | undefined)?.body),
     );
+    const initialBody = JSON.parse(
+      String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
+    );
+    expect(initialBody).toMatchObject({
+      tools: [{ type: "web_search" }],
+      tool_choice: { type: "web_search" },
+    });
     expect(recoveryBody.tools).toBeUndefined();
     expect(recoveryBody.instructions).toContain(
       "failed or produced no useful results",
@@ -214,7 +226,7 @@ describe("model adapter", () => {
       { type: "web_search" },
     ]);
   });
-  it("omits web search when the selected skill does not allow it", async () => {
+  it("always offers web search when the selected skill does not authorize its compatibility id", async () => {
     const fetcher = vi.fn(
       async () =>
         new Response(
@@ -254,8 +266,10 @@ describe("model adapter", () => {
         description: "Lookup",
         parameters: { type: "object" },
       },
+      { type: "web_search" },
     ]);
-    expect(body.instructions).not.toMatch(/web search/);
+    expect(body.tool_choice).toBe("auto");
+    expect(body.instructions).toMatch(/web search/);
   });
   it("retries transient errors only twice", async () => {
     const fn = vi.fn(async () => {
@@ -395,6 +409,19 @@ describe("model adapter", () => {
       content: "It is 28°C.",
       capabilityAudit: [{ capabilityId: "lookup", outcome: "success" }],
     });
+    const initialBody = JSON.parse(
+      String((fetcher.mock.calls[0]![1] as RequestInit).body),
+    );
+    expect(initialBody.tools).toEqual([
+      {
+        type: "function",
+        name: "lookup",
+        description: "Lookup",
+        parameters: { type: "object" },
+      },
+      { type: "web_search" },
+    ]);
+    expect(initialBody.tool_choice).toBe("auto");
   });
 
   it("retries once when final text leaks raw tool protocol", async () => {

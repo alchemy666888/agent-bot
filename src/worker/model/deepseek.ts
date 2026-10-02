@@ -109,10 +109,6 @@ export class DeepSeekProvider implements ModelProvider {
           ? (input.generalCapabilities ?? [])
           : [];
     const permitted = activeCapabilities.map((item) => item.id);
-    const serverWebSearch =
-      input.executionMode === "forced_web_search" ||
-      (input.executionMode === "selected_skill" &&
-        permitted.includes("web_search"));
     const tools = [
       ...activeCapabilities
         .filter((item) => item.id !== "web_search")
@@ -122,12 +118,11 @@ export class DeepSeekProvider implements ModelProvider {
           description: item.description,
           parameters: item.inputSchema,
         })),
-      ...(serverWebSearch ? [DEEPSEEK_WEB_SEARCH] : []),
+      DEEPSEEK_WEB_SEARCH,
     ];
-    if (serverWebSearch)
-      instructions = [instructions, WEB_SEARCH_GUIDANCE]
-        .filter(Boolean)
-        .join("\n\n");
+    instructions = [instructions, WEB_SEARCH_GUIDANCE]
+      .filter(Boolean)
+      .join("\n\n");
     const conversation: unknown[] = input.messages
       .filter((m) => m.role !== "system")
       .map(({ role, content }) => ({ role, content }));
@@ -302,6 +297,9 @@ export class DeepSeekProvider implements ModelProvider {
     audit: CapabilityAuditRecord[],
     searchLimitation = false,
   ): Promise<ModelResponse> {
+    // Recovery is the one deliberate exception to generate's always-available
+    // native search tool. It is a bounded, tool-free safety escape hatch after
+    // malformed protocol, denied calls, failed search, or exhausted tool turns.
     const response = await this.request(`${this.config.baseUrl}/responses`, {
       method: "POST",
       headers: {
