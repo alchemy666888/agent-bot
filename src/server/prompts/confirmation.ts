@@ -214,6 +214,10 @@ export class PromptConfirmationService {
       ttlMs?: number;
       operatorIds?: ReadonlySet<string>;
       id?: () => string;
+      /** Revalidates proposal schema/policy/digest immediately before commit. */
+      revalidate?: (
+        record: Readonly<PendingConfirmation>,
+      ) => Promise<boolean> | boolean;
     } = {},
   ) {}
 
@@ -294,6 +298,16 @@ export class PromptConfirmationService {
         status: "second_confirmation",
         prompt: this.prompt(next, nonce),
       };
+    }
+    // Authorization above intentionally runs again using the current actor and
+    // operator set. The proposal hook binds schema, policy and content digest;
+    // failure is indistinguishable from a stale/conflicting proposal.
+    if (
+      this.options.revalidate &&
+      !(await this.options.revalidate({ ...record, actor: input.actor }))
+    ) {
+      await this.store.cancel(record.id, "conflict");
+      return { status: "cancelled" };
     }
     if (!(await this.store.beginCommit(record.id, record.nonceDigest)))
       return { status: "ignored" };

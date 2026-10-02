@@ -265,4 +265,47 @@ export class PostgresPromptRepository {
       );
     });
   }
+
+  /** Publishes a read-back-verified snapshot and completes its request atomically. */
+  activateSnapshotAndMarkVerified(
+    changeRequestId: string,
+    snapshot: SnapshotInput,
+  ): Promise<void> {
+    return transaction(this.pool, async (client) => {
+      const inserted = await client.query<{ id: string } & QueryResultRow>(
+        `INSERT INTO prompt_snapshots
+          (repository_owner, repository_name, repository_prefix, commit_sha, snapshot_payload,
+           content_digest, validated_at, verified)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,true)
+         ON CONFLICT (repository_owner, repository_name, repository_prefix, commit_sha)
+         DO UPDATE SET snapshot_payload=EXCLUDED.snapshot_payload,
+           content_digest=EXCLUDED.content_digest, validated_at=EXCLUDED.validated_at, verified=true
+         RETURNING id`,
+        [
+          snapshot.owner,
+          snapshot.name,
+          snapshot.prefix,
+          snapshot.commitSha,
+          snapshot.payload,
+          snapshot.contentDigest,
+          snapshot.validatedAt,
+        ],
+      );
+      await client.query(
+        `UPDATE prompt_snapshots SET active = false
+          WHERE repository_owner=$1 AND repository_name=$2 AND repository_prefix=$3 AND active`,
+        [snapshot.owner, snapshot.name, snapshot.prefix],
+      );
+      await client.query(
+        "UPDATE prompt_snapshots SET active = true WHERE id = $1",
+        [inserted.rows[0].id],
+      );
+      const completed = await client.query(
+        `UPDATE prompt_change_requests SET state='verified', completed_at=now()
+          WHERE id=$1 AND state='committing' RETURNING id`,
+        [changeRequestId],
+      );
+      if (completed.rowCount !== 1) throw new PromptTransitionConflict();
+    });
+  }
 }

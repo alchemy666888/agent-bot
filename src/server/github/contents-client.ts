@@ -205,4 +205,74 @@ export class GitHubContentsTransport {
       })
       .parse(await response.json());
   }
+
+  /** Creates one commit for a multi-file change and advances the ref with CAS semantics. */
+  async mutateTree(input: {
+    branch: string;
+    expectedBranchSha: string;
+    message: string;
+    changes: readonly { path: string; content?: string }[];
+  }): Promise<{ commit: { sha: string } }> {
+    if (!SHA.test(input.expectedBranchSha) || input.changes.length === 0)
+      throw new TypeError("Expected branch SHA and changes are required");
+    if ((await this.resolveBranch(input.branch)) !== input.expectedBranchSha)
+      throw new GitHubContentsError(409, "CONFLICT");
+    const parentResponse = await this.request(
+      `/git/commits/${input.expectedBranchSha}`,
+    );
+    const parent = z
+      .object({ tree: z.object({ sha: z.string().regex(SHA) }) })
+      .parse(await parentResponse.json());
+    const tree = [] as Array<{
+      path: string;
+      mode: "100644";
+      type: "blob";
+      sha: string | null;
+    }>;
+    for (const change of input.changes) {
+      let sha: string | null = null;
+      if (change.content !== undefined) {
+        const bytes = new TextEncoder().encode(change.content);
+        if (bytes.byteLength > this.maxBytes)
+          throw new TypeError("Upload exceeds configured bound");
+        const response = await this.request("/git/blobs", {
+          method: "POST",
+          body: JSON.stringify({
+            content: Buffer.from(bytes).toString("base64"),
+            encoding: "base64",
+          }),
+        });
+        sha = z
+          .object({ sha: z.string().regex(SHA) })
+          .parse(await response.json()).sha;
+      }
+      tree.push({ path: change.path, mode: "100644", type: "blob", sha });
+    }
+    const treeResponse = await this.request("/git/trees", {
+      method: "POST",
+      body: JSON.stringify({ base_tree: parent.tree.sha, tree }),
+    });
+    const treeSha = z
+      .object({ sha: z.string().regex(SHA) })
+      .parse(await treeResponse.json()).sha;
+    const commitResponse = await this.request("/git/commits", {
+      method: "POST",
+      body: JSON.stringify({
+        message: input.message,
+        tree: treeSha,
+        parents: [input.expectedBranchSha],
+      }),
+    });
+    const commit = z
+      .object({ sha: z.string().regex(SHA) })
+      .parse(await commitResponse.json());
+    await this.request(
+      `/git/refs/heads/${input.branch.split("/").map(encodeURIComponent).join("/")}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ sha: commit.sha, force: false }),
+      },
+    );
+    return { commit };
+  }
 }

@@ -9,6 +9,9 @@ import {
 } from "../../shared/contracts/prompt";
 import type { PromptSnapshotCache, PromptSnapshotResult } from "./cache";
 import type { StoredPromptFile, VerifiedPromptSnapshot } from "./github-store";
+import type { GitHubPromptStore } from "./github-store";
+import type { PostgresPromptRepository } from "./postgres";
+import type { PendingConfirmation } from "./confirmation";
 import { resolvePrompt } from "./resolver";
 import {
   listAuthorizedPromptSummaries,
@@ -204,3 +207,69 @@ export const materializePromptBundle = (
   service: PromptService,
   input: ResolvePromptBundleInput,
 ) => service.resolve(input);
+
+export type PromptActivationEvent = {
+  event: "prompt_snapshot_activated";
+  changeRequestId: string;
+  commitSha: string;
+  contentDigest: string;
+};
+
+/**
+ * Completes an already claimed confirmation. The store does the guarded write
+ * and full immutable read-back before this service can publish success. It does
+ * not update PromptSnapshotCache, so a bundle pinned by the current Telegram
+ * request cannot observe the new snapshot; it becomes eligible on the next
+ * request through the normal cache lookup.
+ */
+export class PromptMutationService {
+  constructor(
+    private readonly store: GitHubPromptStore,
+    private readonly repository: Pick<
+      PostgresPromptRepository,
+      "activateSnapshotAndMarkVerified" | "markFailed"
+    >,
+    private readonly identity: { owner: string; name: string; prefix: string },
+    private readonly emit: (event: PromptActivationEvent) => void = () =>
+      undefined,
+  ) {}
+
+  async commit(
+    action: Readonly<PendingConfirmation>,
+    mutation: { path: string; content?: string; message: string },
+  ): Promise<{ ok: true; message: string; commitSha: string }> {
+    if (action.state !== "committing")
+      throw new TypeError("PROMPT_CHANGE_NOT_COMMITTING");
+    try {
+      const result = await this.store.mutate({
+        ...mutation,
+        expectedBranchSha: action.baseCommitSha,
+        expectedBlobSha: action.baseBlobSha ?? null,
+      });
+      const snapshot = result.snapshot;
+      await this.repository.activateSnapshotAndMarkVerified(action.id, {
+        ...this.identity,
+        commitSha: snapshot.commitSha,
+        payload: snapshot,
+        contentDigest: snapshot.contentDigest,
+        validatedAt: new Date(snapshot.validatedAt),
+      });
+      this.emit({
+        event: "prompt_snapshot_activated",
+        changeRequestId: action.id,
+        commitSha: snapshot.commitSha,
+        contentDigest: snapshot.contentDigest,
+      });
+      return {
+        ok: true,
+        message: "The prompt update was verified and activated.",
+        commitSha: snapshot.commitSha,
+      };
+    } catch (error) {
+      await this.repository
+        .markFailed(action.id, "PROMPT_UPDATE_FAILED")
+        .catch(() => undefined);
+      throw error;
+    }
+  }
+}
