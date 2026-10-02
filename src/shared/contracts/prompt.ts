@@ -266,7 +266,15 @@ export const promptRoutingResultSchema = z
     confidence: z.number().min(0).max(1),
     reasonCode: z.enum(["selected", "low_confidence", "no_match"]),
   })
-  .strict();
+  .strict()
+  .superRefine((result, ctx) => {
+    if ((result.reasonCode === "selected") !== (result.selectedId !== null))
+      ctx.addIssue({
+        code: "custom",
+        path: ["selectedId"],
+        message: "Only a selected result may contain a prompt ID",
+      });
+  });
 
 export function parseAuthorizedPromptRoutingResult(
   request: unknown,
