@@ -1,4 +1,8 @@
 import { uuidV7 } from "../../shared/ids";
+import {
+  isSkillCancellationRequest,
+  skillCancellationMessage,
+} from "../../worker/skills/cancellation";
 import type {
   SkillDraft,
   SkillDraftGenerator,
@@ -141,9 +145,9 @@ function clarification(question: string, languageCode?: string): string {
           : question.includes("never")
             ? "這個 skill 絕對不能做什麼？若無特殊規則，請回答「無」。"
             : "在可行情況下，這個 skill 最好怎麼做？若無偏好，請回答「無」。";
-    return `我正在準備你的 skill，還需要一項資料：\n\n${translated}`;
+    return `我正在準備你的 skill，還需要一項資料：\n\n${translated}\n\n回覆「停止」即可取消。`;
   }
-  return `I’m preparing your skill and need one focused detail:\n\n${question}`;
+  return `I’m preparing your skill and need one focused detail:\n\n${question}\n\nReply \`stop\` to cancel.`;
 }
 
 function applyText(draft: SkillDraft, text: string): SkillDraft {
@@ -219,11 +223,14 @@ export class SkillAuthoringService {
   ) {}
 
   async shouldHandle(userId: string, text: string): Promise<boolean> {
-    return (
-      isSkillCreationRequest(text) ||
-      /^\/skill_/i.test(text.trim()) ||
-      Boolean(await this.repository.activeForOwner(userId))
-    );
+    if (await this.repository.activeForOwner(userId)) return true;
+    // A refusal that also mentions creating a skill must not start a new draft.
+    if (
+      isSkillCancellationRequest(text) &&
+      !/^\/skill_cancel$/i.test(text.trim())
+    )
+      return false;
+    return isSkillCreationRequest(text) || /^\/skill_/i.test(text.trim());
   }
 
   async handle(
@@ -241,7 +248,7 @@ export class SkillAuthoringService {
       return draft.lastResponse;
     const now = new Date().toISOString();
     if (!draft) {
-      if (!isSkillCreationRequest(text))
+      if (!isSkillCreationRequest(text) || isSkillCancellationRequest(text))
         return "No active skill draft is available for this Telegram user.";
       draft = await this.repository.begin(
         {
@@ -299,14 +306,8 @@ export class SkillAuthoringService {
     }
 
     const approve = text.trim().match(/^\/skill_approve\s+(\d+)$/i);
-    if (
-      /^\/skill_cancel$/i.test(text.trim()) ||
-      /^(?:取消|放棄)(?:這個|目前|當前)?\s*skill(?:\s*草稿)?$/i.test(
-        text.trim(),
-      )
-    ) {
-      const response =
-        "Skill draft cancelled. Start again whenever you are ready.";
+    if (isSkillCancellationRequest(text)) {
+      const response = skillCancellationMessage(text, languageCode);
       await this.repository.save(
         {
           ...draft,
@@ -446,6 +447,7 @@ export class SkillAuthoringService {
     const content = await this.generator.generateSkillDraft(draft, feedback);
     draft = await this.repository.commitRevision(draft, content);
     const revisionNumber = draft.revisionNumber;
+    const document = draft.draftContent ?? content;
     draft = await this.repository.save(
       {
         ...draft,
@@ -455,7 +457,7 @@ export class SkillAuthoringService {
       },
       "skill_draft.draft_ready",
     );
-    const response = `${content}\n\nDraft ${draft.id}, revision ${revisionNumber}.\nCommit: ${draft.latestCommitSha}\nDigest: ${draft.contentDigest}\nApprove: /skill_approve ${revisionNumber}\nRevise: send comments (or /skill_revise ${revisionNumber} <comments>)\nCancel: /skill_cancel`;
+    const response = `${document}\n\nDraft ${draft.id}, revision ${revisionNumber}.\nCommit: ${draft.latestCommitSha}\nDigest: ${draft.contentDigest}\nApprove: /skill_approve ${revisionNumber}\nRevise: send comments (or /skill_revise ${revisionNumber} <comments>)\nCancel: /skill_cancel or reply stop`;
     await this.repository.save(
       {
         ...draft,
