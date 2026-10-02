@@ -26,3 +26,7 @@ export interface RefreshLease extends RepositoryIdentity {
   ownerId: string;
   expiresAt: Date;
 }
+
+export interface StoredSnapshot extends SnapshotInput {
+  id: string;
+}
