@@ -75,4 +75,39 @@ describe("PromptSnapshotCache refresh", () => {
       snapshot,
     });
   });
+
+  it("coalesces concurrent refreshes and does not duplicate GitHub reads", async () => {
+    const { store, repository } = dependencies();
+    const cache = new PromptSnapshotCache(store, repository, identity);
+    const [first, second, third] = await Promise.all([
+      cache.get(),
+      cache.get(),
+      cache.get(),
+    ]);
+    expect([first, second, third]).toEqual([
+      { source: "current_snapshot", snapshot },
+      { source: "current_snapshot", snapshot },
+      { source: "current_snapshot", snapshot },
+    ]);
+    expect(store.resolveHead).toHaveBeenCalledTimes(1);
+    expect(store.load).toHaveBeenCalledTimes(1);
+    expect(repository.acquireRefreshLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks the immutable head after four minutes and reuses an unchanged snapshot", async () => {
+    let now = 0;
+    const { store, repository } = dependencies();
+    const cache = new PromptSnapshotCache(
+      store,
+      repository,
+      identity,
+      () => now,
+    );
+    await cache.get();
+    now = PROMPT_REFRESH_INTERVAL_MS + 1;
+    await cache.get();
+    expect(store.resolveHead).toHaveBeenCalledTimes(2);
+    expect(store.load).toHaveBeenCalledTimes(1);
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+  });
 });

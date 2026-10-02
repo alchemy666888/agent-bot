@@ -172,6 +172,7 @@ describe("entry-point configuration", () => {
         PROMPT_CACHE_TTL_SECONDS: 300,
         PROMPT_CONFIRMATION_TTL_SECONDS: 600,
         PROMPT_ROUTER_CONFIDENCE_THRESHOLD: 0.75,
+        PROMPT_ROUTER_ENABLED: false,
       });
     });
 
