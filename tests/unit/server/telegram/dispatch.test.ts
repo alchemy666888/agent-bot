@@ -11,7 +11,7 @@ vi.mock("pg", () => ({
 import {
   dispatchTelegramInput,
   installDispatchSkillAuthoringService,
-  loadSkillCatalogOrEmpty,
+  loadSkillCatalog,
 } from "../../../../src/server/telegram/dispatch";
 
 describe("Telegram dispatch skill catalog", () => {
@@ -118,18 +118,21 @@ describe("Telegram dispatch skill catalog", () => {
     const catalog = { commitSha: "a".repeat(40), skills: [] };
 
     await expect(
-      loadSkillCatalogOrEmpty(async () => catalog, "correlation-id"),
-    ).resolves.toEqual(catalog);
+      loadSkillCatalog(async () => catalog, "correlation-id"),
+    ).resolves.toEqual({ catalog, degradationReason: "catalog_missing" });
   });
 
   it("continues without skills when GitHub Connect is unavailable", async () => {
     const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     await expect(
-      loadSkillCatalogOrEmpty(async () => {
+      loadSkillCatalog(async () => {
         throw new Error("connector response containing private detail");
       }, "correlation-id"),
-    ).resolves.toEqual({ commitSha: "0".repeat(40), skills: [] });
+    ).resolves.toEqual({
+      catalog: { commitSha: "0".repeat(40), skills: [] },
+      degradationReason: "repository_unavailable",
+    });
 
     expect(log).toHaveBeenCalledOnce();
     const event = JSON.parse(log.mock.calls[0]![0]);
