@@ -66,3 +66,58 @@ describe("Telegram skill invocation", () => {
     expect(telegram.send).toHaveBeenCalledWith("2", expect.any(String));
   });
 });
+
+describe("server dispatch skill authoring", () => {
+  it("intercepts an authoring turn before prompt resolution and sandbox routing", async () => {
+    const prior = { ...process.env };
+    Object.assign(process.env, {
+      TELEGRAM_BOT_TOKEN: "test-token",
+      TELEGRAM_WEBHOOK_SECRET: "test-secret",
+      DEEPSEEK_API_KEY: "model-key",
+      DEEPSEEK_INPUT_PRICE_PER_MILLION: "0",
+      DEEPSEEK_OUTPUT_PRICE_PER_MILLION: "0",
+    });
+    const { installDispatchSkillAuthoringService, dispatchTelegramInput } =
+      await import("../../../src/server/telegram/dispatch");
+    const handle = vi.fn(
+      async () =>
+        "Draft revision 2\nCommit: abc\nDigest: sha256:def\nApprove: /skill_approve 2",
+    );
+    installDispatchSkillAuthoringService({
+      shouldHandle: vi.fn(async () => true),
+      handle,
+    });
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    try {
+      await expect(
+        dispatchTelegramInput(
+          {
+            kind: "text",
+            updateId: "501",
+            messageId: "11",
+            chatId: "22",
+            userId: "42",
+            text: "Create a skill called reports",
+          },
+          "authoring-correlation",
+        ),
+      ).resolves.toMatchObject({ data: { handled: "skill-authoring" } });
+      expect(handle).toHaveBeenCalledWith(
+        "42",
+        "Create a skill called reports",
+        "501",
+      );
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(fetch.mock.calls[0]![0]).toContain("sendMessage");
+    } finally {
+      installDispatchSkillAuthoringService(undefined);
+      fetch.mockRestore();
+      process.env = prior;
+    }
+  });
+});

@@ -16,7 +16,10 @@ import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
 import type { TelegramInput } from "./input";
 import { createGitHubSkillsClient } from "../github/skills-client";
-import { GitHubSkillRepository } from "../github/skill-repository";
+import {
+  GitHubSkillRepository,
+  GitHubSkillAuthoringAdapter,
+} from "../github/skill-repository";
 import { logStructured, safeError } from "../../shared/logger";
 import type { GitHubClientEvent } from "../github/skills-client";
 import type { SkillRepositoryEvent } from "../github/skill-repository";
@@ -34,6 +37,11 @@ import { PostgresPromptRepository } from "../prompts/postgres";
 import { readDatabaseConfig } from "../../shared/postgres/config";
 import { postgresPoolConfig } from "../../shared/postgres/client";
 import { PromptMetadataRouter } from "../../worker/prompts/router";
+import { SkillAuthoringService } from "../skills/service";
+import type { SkillAuthoringRepository } from "../skills/service";
+import type { SkillDraftGenerator } from "../../worker/skills/types";
+import { PostgresSkillAuthoringRepository } from "../skills/repository";
+import { DeepSeekProvider } from "../../worker/model/deepseek";
 
 const MAX_SKILL_CATALOG_BYTES = 4 * 1024 * 1024;
 export const MAX_WORKER_CONTEXT_BYTES = MAX_SKILL_CATALOG_BYTES;
@@ -61,6 +69,90 @@ type DispatchPromptServices = {
 
 let promptServices: DispatchPromptServices | undefined;
 let repositoryPromptServices: DispatchPromptServices | undefined;
+
+type DispatchSkillAuthoringService = Pick<
+  SkillAuthoringService,
+  "shouldHandle" | "handle"
+>;
+let skillAuthoringService: DispatchSkillAuthoringService | undefined;
+let repositorySkillAuthoringService: DispatchSkillAuthoringService | undefined;
+
+/** Installs the trusted authoring coordinator; primarily used by integration wiring. */
+export function installDispatchSkillAuthoringService(
+  service?: DispatchSkillAuthoringService,
+) {
+  skillAuthoringService = service;
+}
+
+function configuredSkillAuthoringService(
+  model: ReturnType<typeof readModelConfig>,
+  github: ReturnType<typeof readGitHubConfig>,
+): DispatchSkillAuthoringService {
+  if (repositorySkillAuthoringService) return repositorySkillAuthoringService;
+  const database = readDatabaseConfig();
+  const pool = new Pool(
+    postgresPoolConfig(database.DATABASE_URL, database.AIVEN_PG_CA),
+  );
+  const client = new GitHubSkillAuthoringAdapter({
+    connector: github.GITHUB_CONNECTOR,
+    owner: github.GITHUB_SKILLS_OWNER,
+    repository: github.GITHUB_SKILLS_REPO,
+    branch: github.GITHUB_SKILLS_BRANCH,
+    prefix: github.GITHUB_SKILLS_PREFIX,
+  });
+  const ids = new Set(
+    (process.env.SKILL_AUTHOR_TELEGRAM_IDS ?? "")
+      .split(",")
+      .filter((id) => /^[1-9][0-9]*$/.test(id)),
+  );
+  const capabilities = new Set(
+    (process.env.SKILL_AUTHOR_CAPABILITY_IDS ?? "").split(",").filter(Boolean),
+  );
+  const repository: SkillAuthoringRepository =
+    new PostgresSkillAuthoringRepository(pool, client, {
+      authorTelegramUserIds: ids,
+      capabilityIds: capabilities,
+    });
+  const provider = new DeepSeekProvider({
+    apiKey: model.DEEPSEEK_API_KEY,
+    baseUrl: model.DEEPSEEK_BASE_URL,
+    thinking: model.DEEPSEEK_THINKING_ENABLED,
+    maxToolCalls: 0,
+  });
+  const generator: SkillDraftGenerator = {
+    async generateSkillDraft(draft, feedback) {
+      const result = await provider.generate({
+        executionMode: "direct",
+        trustedInstructions: [
+          {
+            source: "runtime",
+            content:
+              "Write a concise SKILL.md. Return only markdown with YAML frontmatter containing name and description. Preserve all MUST, MUST NOT, and tool constraints.",
+          },
+        ],
+        messages: [
+          {
+            role: "user",
+            content: JSON.stringify({
+              name: draft.skillName,
+              domain: draft.intendedTasksDomain,
+              mustDo: draft.mustDo,
+              mustNotDo: draft.mustNotDo,
+              betterToDo: draft.betterToDo,
+              tools: draft.requiredToolsFunctions,
+              feedback,
+            }),
+          },
+        ],
+      });
+      return result.content;
+    },
+  };
+  return (repositorySkillAuthoringService = new SkillAuthoringService(
+    repository,
+    generator,
+  ));
+}
 
 /** Installs trusted, repository-backed services without putting their authority in the worker. */
 export function installDispatchPromptServices(
@@ -271,6 +363,26 @@ export async function dispatchTelegramInput(
       },
       workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
     );
+  }
+
+  // Authoring is classified and executed entirely inside the trusted server boundary.
+  // Neither connector credentials nor repository authority are included in worker input.
+  const authoring =
+    skillAuthoringService ??
+    configuredSkillAuthoringService(model, readGitHubConfig());
+  if (await authoring.shouldHandle(input.userId, input.text)) {
+    const response = await authoring.handle(
+      input.userId,
+      input.text,
+      input.updateId,
+    );
+    await client.send(input.chatId, response);
+    return {
+      contractVersion: 1 as const,
+      correlationId,
+      ok: true as const,
+      data: { handled: "skill-authoring" as const },
+    };
   }
 
   // Resolve identity and freeze exactly one bundle before any sandbox exists.
