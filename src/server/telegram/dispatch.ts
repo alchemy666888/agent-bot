@@ -488,35 +488,52 @@ export async function dispatchTelegramInput(
   }
 
   const github = readGitHubConfig();
-  // Non-text updates never enter the skill invocation path. Use the only
-  // authenticated Telegram identity available for text turns.
-  const skillResult =
-    input.kind === "text"
-      ? await loadSkillCatalog(
-          () =>
-            new GitHubSkillRepository(
-              createGitHubSkillsClient(
-                {
-                  connector: github.GITHUB_CONNECTOR,
-                  owner: github.GITHUB_SKILLS_OWNER,
-                  repository: github.GITHUB_SKILLS_REPO,
-                  branch: github.GITHUB_SKILLS_BRANCH,
-                  prefix: github.GITHUB_SKILLS_PREFIX,
-                },
-                { audit: (event) => auditGitHubEvent(correlationId, event) },
-              ),
-              { audit: (event) => auditGitHubEvent(correlationId, event) },
-            ).loadCatalogSnapshot({ telegramUserId: input.userId }),
+  const turnContext = await (async () => {
+    if (!(promptConfig.PROMPT_READS_ENABLED && services.repository)) {
+      return {
+        promptBundle: await services.resolve({
+          userKey: "u1_" + "A".repeat(43),
+          text: input.text,
           correlationId,
-        )
-      : { catalog: EMPTY_SKILL_CATALOG };
-  let skillCatalog = skillResult.catalog;
-  const degradationNotices: DegradationNotice[] = [];
-  if (skillResult.degradationReason)
-    degradationNotices.push(skillResult.degradationReason);
-  degradationNotices.push(
-    ...promptDegradationNotices(promptBundle, input.text),
-  );
+          ...(input.languageCode ? { language: input.languageCode } : {}),
+        }),
+        skillCatalog: EMPTY_SKILL_CATALOG,
+        repositoryCommitSha: null,
+      };
+    }
+
+    const identity = readRepositoryIdentityConfig();
+    const skillRepository = new GitHubSkillRepository(
+      createGitHubSkillsClient(
+        {
+          connector: github.GITHUB_CONNECTOR,
+          owner: github.GITHUB_SKILLS_OWNER,
+          repository: github.GITHUB_SKILLS_REPO,
+          branch: github.GITHUB_SKILLS_BRANCH,
+          prefix: github.GITHUB_SKILLS_PREFIX,
+        },
+        { audit: (event) => auditGitHubEvent(correlationId, event) },
+      ),
+      { audit: (event) => auditGitHubEvent(correlationId, event) },
+    );
+    return resolveRepositoryTurnContext({
+      telegramUserId: input.userId,
+      promptUserKeySecret: promptConfig.PROMPT_USER_KEY_SECRET as string,
+      text: input.text,
+      ...(input.languageCode ? { language: input.languageCode } : {}),
+      correlationId,
+      identity,
+      promptIdentity: services.repository.identity,
+      skillIdentity: identity,
+      resolveHead: () => services.repository!.store.resolveHead(),
+      loadPromptSnapshot: (commit) => services.repository!.store.load(commit),
+      resolvePrompt: (request) => services.resolve(request),
+      loadSkillCatalog: (telegramUserId, commit) =>
+        skillRepository.loadCatalogSnapshot({ telegramUserId }, commit),
+    });
+  })();
+  const { promptBundle, repositoryCommitSha } = turnContext;
+  let skillCatalog: SkillCatalog = turnContext.skillCatalog;
   const promptBytes = Buffer.byteLength(JSON.stringify(promptBundle), "utf8");
   let skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
   if (
