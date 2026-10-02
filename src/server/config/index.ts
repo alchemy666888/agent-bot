@@ -173,8 +173,19 @@ const telegramOperatorIds = z
 
 const promptConfigSchema = z
   .object({
-    PROMPT_HIERARCHY_ENABLED: strictBoolean.default(false),
-    PROMPT_HIERARCHY_WRITES_ENABLED: strictBoolean.default(false),
+    // Independent, server-only rollout controls. None are forwarded to the
+    // browser or sandbox worker.
+    PROMPT_READS_ENABLED: strictBoolean.default(false),
+    PROMPT_PERSONAL_READS_ENABLED: strictBoolean.default(false),
+    PROMPT_OPERATOR_WRITES_ENABLED: strictBoolean.default(false),
+    PROMPT_PERSONAL_WRITES_ENABLED: strictBoolean.default(false),
+    PROMPT_AUTONOMOUS_SUGGESTIONS_ENABLED: strictBoolean.default(false),
+    PROMPT_SUGGESTION_COHORT_PERCENT: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .max(100)
+      .default(0),
     GITHUB_CONNECTOR: optionalEnv(
       z
         .string()
@@ -210,14 +221,27 @@ const promptConfigSchema = z
     ).default(0.75),
   })
   .superRefine((config, context) => {
-    if (!config.PROMPT_HIERARCHY_ENABLED) {
-      if (config.PROMPT_HIERARCHY_WRITES_ENABLED) {
+    if (!config.PROMPT_READS_ENABLED) {
+      for (const key of [
+        "PROMPT_PERSONAL_READS_ENABLED",
+        "PROMPT_OPERATOR_WRITES_ENABLED",
+        "PROMPT_PERSONAL_WRITES_ENABLED",
+        "PROMPT_AUTONOMOUS_SUGGESTIONS_ENABLED",
+        "PROMPT_ROUTER_ENABLED",
+      ] as const) {
+        if (!config[key]) continue;
         context.addIssue({
           code: "custom",
-          path: ["PROMPT_HIERARCHY_WRITES_ENABLED"],
-          message: "Prompt writes require the prompt hierarchy",
+          path: [key],
+          message: `${key} requires prompt reads`,
         });
       }
+      if (config.PROMPT_SUGGESTION_COHORT_PERCENT !== 0)
+        context.addIssue({
+          code: "custom",
+          path: ["PROMPT_SUGGESTION_COHORT_PERCENT"],
+          message: "A suggestion cohort requires prompt reads",
+        });
       return;
     }
 
@@ -240,7 +264,8 @@ const promptConfigSchema = z
     }
 
     if (
-      config.PROMPT_HIERARCHY_WRITES_ENABLED &&
+      (config.PROMPT_OPERATOR_WRITES_ENABLED ||
+        config.PROMPT_PERSONAL_WRITES_ENABLED) &&
       config.GITHUB_PROMPTS_BRANCH !== "main"
     ) {
       context.addIssue({

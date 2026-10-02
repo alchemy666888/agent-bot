@@ -84,7 +84,7 @@ function configuredPromptService(
   config: ReturnType<typeof readPromptConfig>,
   model: ReturnType<typeof readModelConfig>,
 ): DispatchPromptServices {
-  if (!config.PROMPT_HIERARCHY_ENABLED)
+  if (!config.PROMPT_READS_ENABLED)
     return emergencyPromptService(model.ASSISTANT_SYSTEM_PROMPT);
   if (repositoryPromptServices) return repositoryPromptServices;
 
@@ -110,6 +110,7 @@ function configuredPromptService(
     new PromptSnapshotCache(store, repository, identity),
     {
       routerEnabled: config.PROMPT_ROUTER_ENABLED,
+      personalReadsEnabled: config.PROMPT_PERSONAL_READS_ENABLED,
       confidenceThreshold: config.PROMPT_ROUTER_CONFIDENCE_THRESHOLD as number,
       router: new PromptMetadataRouter({
         apiKey: model.DEEPSEEK_API_KEY,
@@ -273,7 +274,7 @@ export async function dispatchTelegramInput(
   }
 
   // Resolve identity and freeze exactly one bundle before any sandbox exists.
-  const userKey = promptConfig.PROMPT_HIERARCHY_ENABLED
+  const userKey = promptConfig.PROMPT_READS_ENABLED
     ? derivePromptUserKey(
         promptConfig.PROMPT_USER_KEY_SECRET as string,
         input.userId,

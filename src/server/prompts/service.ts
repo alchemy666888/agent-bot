@@ -93,6 +93,7 @@ export class PromptService {
     private readonly options: {
       router?: PromptRoutingClient;
       routerEnabled?: boolean;
+      personalReadsEnabled?: boolean;
       confidenceThreshold?: number;
       runtimePolicyVersion?: string;
       now?: () => Date;
@@ -119,15 +120,18 @@ export class PromptService {
         : undefined,
     });
     const common = fileAt(snapshot, "prompts/common/system/base.md");
-    const overlays = snapshot.files
-      .filter(
-        (file) =>
-          file.metadata.kind === "system" &&
-          file.metadata.scope === "personal" &&
-          file.metadata.status === "active" &&
-          file.path.startsWith(`prompts/users/${input.userKey}/system/`),
-      )
-      .sort((a, b) => a.metadata.id.localeCompare(b.metadata.id));
+    const overlays =
+      this.options.personalReadsEnabled === false
+        ? []
+        : snapshot.files
+            .filter(
+              (file) =>
+                file.metadata.kind === "system" &&
+                file.metadata.scope === "personal" &&
+                file.metadata.status === "active" &&
+                file.path.startsWith(`prompts/users/${input.userKey}/system/`),
+            )
+            .sort((a, b) => a.metadata.id.localeCompare(b.metadata.id));
     // Multiple active overlays are configuration ambiguity and therefore apply none.
     const overlay = overlays.length === 1 ? overlays[0] : undefined;
     const source =

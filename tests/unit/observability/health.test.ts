@@ -21,6 +21,7 @@ describe("health route", () => {
         dashboard: "degraded",
         sandbox: "degraded",
         postgres: "degraded",
+        prompts: "disabled",
       },
     });
   });

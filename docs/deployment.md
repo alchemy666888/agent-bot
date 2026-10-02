@@ -74,15 +74,21 @@ Each `create` flow opens or provides the GitHub App installation flow. On GitHub
 
 ### Prompt repository rollout
 
-Prompt access shares `GITHUB_CONNECTOR` so the application has only one transport credential, while its owner, repository, branch, and prefix are independently validated. Restrict the GitHub App installation to the selected repository. A read-only rollout needs only Contents: Read-only; grant Contents: Read and write only when reviewed prompt writes are enabled.
+Use a dedicated prompt connector rather than the skill-authoring connector. Install it on the private prompt repository only, with **Metadata: Read-only** and **Contents: Read and write**. Grant no Pull requests, Administration, Checks, Secrets, Webhooks, organization, or account permissions. Prompt changes commit only after application confirmation and compare-and-set validation; adding PR permission is outside this rollout.
 
-Start every environment with `PROMPT_HIERARCHY_ENABLED=false` and `PROMPT_HIERARCHY_WRITES_ENABLED=false`. In this state startup does not require prompt repository settings and request handling retains the compiled emergency path without contacting GitHub. To enable read-only hierarchy resolution, configure:
+Preview and Production use separate connector installations and separately scoped Vercel configuration. Preview uses a disposable private repository unless an operator explicitly approves read access to Production's repository. Deploy the expand migration first with every control false and cohort zero:
 
 ```dotenv
-PROMPT_HIERARCHY_ENABLED=true
-PROMPT_HIERARCHY_WRITES_ENABLED=false
-GITHUB_PROMPTS_OWNER=alchemy666888
-GITHUB_PROMPTS_REPO=skill
+PROMPT_READS_ENABLED=false
+PROMPT_PERSONAL_READS_ENABLED=false
+PROMPT_OPERATOR_WRITES_ENABLED=false
+PROMPT_PERSONAL_WRITES_ENABLED=false
+PROMPT_AUTONOMOUS_SUGGESTIONS_ENABLED=false
+PROMPT_SUGGESTION_COHORT_PERCENT=0
+PROMPT_ROUTER_ENABLED=false
+GITHUB_CONNECTOR=github/prompts-production
+GITHUB_PROMPTS_OWNER=<private-owner>
+GITHUB_PROMPTS_REPO=<private-prompt-repository>
 GITHUB_PROMPTS_BRANCH=main
 GITHUB_PROMPTS_PREFIX=prompts
 PROMPT_OPERATOR_TELEGRAM_IDS=123456789,987654321
@@ -92,11 +98,22 @@ PROMPT_CONFIRMATION_TTL_SECONDS=600
 PROMPT_ROUTER_CONFIDENCE_THRESHOLD=0.75
 ```
 
-The operator allowlist accepts only comma-separated, canonical positive numeric Telegram IDs: whitespace, signs, empty tokens, duplicates, leading zeroes, and unsafe integer values fail validation. Keep the allowlist and user-key secret in the Next.js server only. They must never be added to Sandbox environment forwarding, worker files, logs, prompt bundles, or browser configuration. Normal prompts live under the reviewed GitHub prefix; `ASSISTANT_SYSTEM_PROMPT` is solely a break-glass emergency fallback, and immutable runtime security policy remains compiled code.
+These controls are server-only and never browser variables or worker environment values. The operator allowlist accepts canonical positive numeric Telegram IDs only. Rotating the user-key secret creates a new `u1_` namespace and requires an audited namespace migration or intentional reset.
 
-After read-only evidence is approved, enable `PROMPT_HIERARCHY_WRITES_ENABLED=true` only on the protected `main` branch and with the required review controls. Rotating `PROMPT_USER_KEY_SECRET` derives a new `u1_` namespace and makes old personal paths undiscoverable. Rotation therefore requires an explicit, audited namespace migration (or an intentional reset) before cutover; never replace the value as though it were a transparent credential rotation.
+## Ordered prompt rollout
 
-## Ordered rollout
+Every stage uses the same tested artifact and a recorded deployment. Stopping a stage means leaving its flag false (or returning it to false) and redeploying; a stop itself performs no database or GitHub mutation.
+
+1. Apply `20261002_prompt_persistence.sql` with all controls false. Record its version/checksum and verify application-role grants.
+2. Seed the v1 schema, `prompts/common/system/base.md`, and `prompts/global/requests/default.md` on protected `main`. A second operator independently validates schema, content, exact blob digests, default resolution, and the commit; record that commit before use.
+3. Run read-only shadow refresh and validation out of band. It may resolve and validate but cannot serve content, create change requests, or write GitHub. Require freshness within five minutes and zero validation/authentication failures.
+4. Set `PROMPT_READS_ENABLED=true`, leaving personal reads and router false, to serve verified common/default layers.
+5. Set `PROMPT_PERSONAL_READS_ENABLED=true`; verify two opaque users and cross-user non-discovery.
+6. Set `PROMPT_OPERATOR_WRITES_ENABLED=true` for operator global/common changes. In a separate deployment set `PROMPT_PERSONAL_WRITES_ENABLED=true` for explicit, two-confirmation personal changes. Neither authorizes autonomous proposals.
+7. Set `PROMPT_ROUTER_ENABLED=true` only after shadow routing passes. Then enable `PROMPT_AUTONOMOUS_SUGGESTIONS_ENABLED=true` with `PROMPT_SUGGESTION_COHORT_PERCENT=1` (or an approved small value). Allocation is deterministic SHA-256 bucketing of the opaque user key; raw identity is never used or logged.
+8. After the recorded observation window meets all thresholds, increase the cohort in separately stoppable deployments, finally to 100.
+
+Preview completes each stage first with Preview-only credentials/configuration. Production values must not be copied into Preview. There is no web administration interface; flags change only through the audited deployment environment.
 
 ## DeepSeek routing rollout
 
