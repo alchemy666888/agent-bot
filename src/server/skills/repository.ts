@@ -5,6 +5,7 @@ import {
   skillMarkdownSchema,
 } from "../../worker/skills/schemas";
 import type { Pool } from "pg";
+import { isTelegramActorAllowed } from "../../shared/telegram-allowlist";
 
 type Projection = SkillDraft & { revision: number };
 
@@ -54,9 +55,28 @@ export interface SkillDraftGitClient {
 export interface SkillAuthoringPolicy {
   /** Telegram identities provisioned by the operator, not supplied by a draft. */
   authorTelegramUserIds: ReadonlySet<string>;
+  /** Public usernames, without "@" and compared case-insensitively. */
+  authorTelegramUsernames?: ReadonlySet<string>;
   /** Capability IDs provisioned by the operator registry. */
   capabilityIds: ReadonlySet<string>;
   maxFileBytes?: number;
+}
+
+function authorAllowed(
+  policy: SkillAuthoringPolicy,
+  userId: string,
+  username?: string,
+): boolean {
+  return isTelegramActorAllowed(
+    {
+      ids: policy.authorTelegramUserIds,
+      ...(policy.authorTelegramUsernames
+        ? { usernames: policy.authorTelegramUsernames }
+        : {}),
+    },
+    userId,
+    username,
+  );
 }
 
 export function skillDraftDigest(content: string): string {
@@ -89,8 +109,8 @@ export class PostgresSkillAuthoringRepository {
     },
   ) {}
 
-  async begin(draft: SkillDraft): Promise<SkillDraft> {
-    if (!this.policy.authorTelegramUserIds.has(draft.ownerTelegramUserId))
+  async begin(draft: SkillDraft, username?: string): Promise<SkillDraft> {
+    if (!authorAllowed(this.policy, draft.ownerTelegramUserId, username))
       throw new Error("SKILL_AUTHOR_NOT_AUTHORIZED");
     if (!this.git) throw new Error("SKILL_GIT_REPOSITORY_REQUIRED");
     const base = await this.git.getBranchHead(this.git.defaultBranch);
@@ -144,10 +164,11 @@ export class PostgresSkillAuthoringRepository {
 
   async publish(
     draft: SkillDraft,
+    username?: string,
   ): Promise<{ number: number; url: string; state: "created" | "merged" }> {
     if (!this.git || !draft.skillName || !draft.contentDigest)
       throw new Error("SKILL_DRAFT_INCOMPLETE");
-    if (!this.policy.authorTelegramUserIds.has(draft.ownerTelegramUserId))
+    if (!authorAllowed(this.policy, draft.ownerTelegramUserId, username))
       throw new Error("SKILL_AUTHOR_NOT_AUTHORIZED");
     if (
       draft.requiredToolsFunctions.some(

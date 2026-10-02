@@ -1,6 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
+import { classifyTelegramAllowlistToken } from "../../shared/telegram-allowlist";
 
 export { readDatabaseConfig } from "../../shared/postgres/config";
 
@@ -157,26 +158,20 @@ const telegramOperatorIds = z
     const ids = new Set<string>();
 
     for (const token of tokens) {
-      if (!/^[1-9][0-9]*$/.test(token)) {
+      const classified = classifyTelegramAllowlistToken(token);
+      if (classified.kind === "invalid") {
         context.addIssue({
           code: "custom",
           message:
-            "Operator IDs must be comma-separated canonical positive Telegram numeric strings",
+            "Operator identities must be comma-separated canonical positive Telegram numeric IDs or usernames",
         });
         return z.NEVER;
       }
-      if (BigInt(token) > BigInt(Number.MAX_SAFE_INTEGER)) {
-        context.addIssue({
-          code: "custom",
-          message: "Operator ID exceeds the safe Telegram numeric range",
-        });
-        return z.NEVER;
-      }
-      if (ids.has(token)) {
+      if (ids.has(classified.value)) {
         context.addIssue({ code: "custom", message: "Duplicate operator ID" });
         return z.NEVER;
       }
-      ids.add(token);
+      ids.add(classified.value);
     }
 
     return ids;
