@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import {
+  GitHubContentsError,
   GitHubContentsTransport,
   type GitHubContentsEntry,
 } from "../github/contents-client";
@@ -13,6 +14,17 @@ import {
 
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
 const BLOB_SHA = /^[0-9a-f]{40}$/;
+const MAX_HEAD_RETRIES = 3;
+
+export class PromptMutationConflict extends Error {
+  readonly code = "PROMPT_MUTATION_CONFLICT";
+  constructor() {
+    // Deliberately does not disclose the path, current blob, or winning content.
+    super(
+      "The prompt update conflicted with another change. Please propose it again.",
+    );
+  }
+}
 
 export type StoredPromptFile = ValidatedPromptFile & {
   blobSha: string;
@@ -117,8 +129,7 @@ export class GitHubPromptStore {
         if (entry.type === "dir") {
           assertExpectedDirectory(entry.path, this.prefix);
           pending.push(entry.path);
-        }
-        else {
+        } else {
           assertExpectedFile(entry.path, this.prefix);
           files.push(entry);
         }
@@ -216,16 +227,163 @@ export class GitHubPromptStore {
       throw new TypeError("Only prompt files may be mutated");
     if (input.content !== undefined)
       validatePromptSnapshot([{ path, content: input.content, type: "file" }]);
-    const result = await this.transport.mutate({
-      ...input,
-      path,
-      branch: this.config.branch,
+    const desired =
+      input.content === undefined
+        ? null
+        : new TextEncoder().encode(input.content);
+    let expectedHead = input.expectedBranchSha;
+
+    for (let attempt = 0; attempt < MAX_HEAD_RETRIES; attempt++) {
+      const head = await this.resolveHead();
+      const current = await this.readOptional(path, head);
+      const currentBlob = current?.sha ?? null;
+
+      // The proposal is bound to the observed target version. A branch-only
+      // advance is harmless; a target advance requires a brand-new proposal.
+      if (currentBlob !== input.expectedBlobSha)
+        throw new PromptMutationConflict();
+      expectedHead = head;
+
+      try {
+        const result = await this.transport.mutate({
+          ...input,
+          path,
+          expectedBranchSha: expectedHead,
+          branch: this.config.branch,
+        });
+        const snapshot = await this.verifyWrittenResult(
+          result.commit.sha,
+          path,
+          desired,
+        );
+        this.telemetry({
+          event: "mutation_succeeded",
+          commitSha: result.commit.sha,
+          durationMs: Date.now() - started,
+        });
+        return { ...result, snapshot };
+      } catch (error) {
+        if (error instanceof GitHubContentsError && error.code === "CONFLICT")
+          continue;
+
+        // A timeout/5xx can happen after GitHub accepted the write. Reconcile
+        // against immutable content before deciding whether another write is safe.
+        if (error instanceof GitHubContentsError && error.code === "UPSTREAM") {
+          const reconciledHead = await this.resolveHead();
+          const reconciled = await this.readOptional(path, reconciledHead);
+          if (this.contentEquals(reconciled?.bytes ?? null, desired)) {
+            const snapshot = await this.verifyWrittenResult(
+              reconciledHead,
+              path,
+              desired,
+            );
+            return {
+              commit: { sha: reconciledHead },
+              content: reconciled ? { sha: reconciled.sha } : null,
+              snapshot,
+            };
+          }
+        }
+        throw error;
+      }
+    }
+    throw new PromptMutationConflict();
+  }
+
+  /** Atomic all-or-nothing reset; no sequential Contents API commits are used. */
+  async reset(input: {
+    expectedBranchSha: string;
+    changes: readonly {
+      path: string;
+      expectedBlobSha: string | null;
+      content?: string;
+    }[];
+    message: string;
+  }) {
+    if (input.changes.length === 0) throw new TypeError("Reset is empty");
+    const changes = input.changes.map((change) => {
+      const path = safePath(change.path, this.prefix);
+      if (assertExpectedFile(path, this.prefix) !== "prompt")
+        throw new TypeError("Only prompt files may be mutated");
+      if (change.content !== undefined)
+        validatePromptSnapshot([
+          { path, content: change.content, type: "file" },
+        ]);
+      return { ...change, path };
     });
-    this.telemetry({
-      event: "mutation_succeeded",
-      commitSha: result.commit.sha,
-      durationMs: Date.now() - started,
-    });
-    return result;
+    for (let attempt = 0; attempt < MAX_HEAD_RETRIES; attempt++) {
+      const head = await this.resolveHead();
+      for (const change of changes) {
+        const current = await this.readOptional(change.path, head);
+        if ((current?.sha ?? null) !== change.expectedBlobSha)
+          throw new PromptMutationConflict();
+      }
+      try {
+        const result = await this.transport.mutateTree({
+          branch: this.config.branch,
+          expectedBranchSha: head,
+          message: input.message,
+          changes,
+        });
+        if ((await this.resolveHead()) !== result.commit.sha)
+          throw new PromptMutationConflict();
+        for (const change of changes) {
+          const written = await this.readOptional(
+            change.path,
+            result.commit.sha,
+          );
+          const desired =
+            change.content === undefined
+              ? null
+              : new TextEncoder().encode(change.content);
+          if (!this.contentEquals(written?.bytes ?? null, desired))
+            throw new PromptMutationConflict();
+        }
+        return { ...result, snapshot: await this.load(result.commit.sha) };
+      } catch (error) {
+        if (error instanceof GitHubContentsError && error.code === "CONFLICT")
+          continue;
+        throw error;
+      }
+    }
+    throw new PromptMutationConflict();
+  }
+
+  private async readOptional(path: string, commitSha: string) {
+    try {
+      return await this.transport.read(path, commitSha);
+    } catch (error) {
+      if (error instanceof GitHubContentsError && error.code === "NOT_FOUND")
+        return null;
+      throw error;
+    }
+  }
+
+  private contentEquals(
+    actual: Uint8Array | null,
+    expected: Uint8Array | null,
+  ) {
+    return (
+      actual === expected ||
+      (actual !== null &&
+        expected !== null &&
+        Buffer.from(actual).equals(Buffer.from(expected)))
+    );
+  }
+
+  private async verifyWrittenResult(
+    commitSha: string,
+    path: string,
+    desired: Uint8Array | null,
+  ) {
+    // The symbolic branch must expose exactly the commit returned by the write;
+    // otherwise activation could publish a snapshot we did not create.
+    if ((await this.resolveHead()) !== commitSha)
+      throw new PromptMutationConflict();
+    const written = await this.readOptional(path, commitSha);
+    if (!this.contentEquals(written?.bytes ?? null, desired))
+      throw new PromptMutationConflict();
+    // load() performs complete hierarchy/schema validation at this exact SHA.
+    return this.load(commitSha);
   }
 }
