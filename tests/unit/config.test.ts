@@ -58,7 +58,48 @@ describe("entry-point configuration", () => {
     expect(() => readTelegramConfig(env)).toThrow();
   });
 
-  it.each(["TRUE", "yes", "1", ""])('rejects invalid boolean "%s"', (value) => {
+  it("treats blank optional settings as documented defaults", () => {
+    expect(
+      readModelConfig({
+        DEEPSEEK_API_KEY: "fixture-key",
+        DEEPSEEK_INPUT_PRICE_PER_MILLION: "1",
+        DEEPSEEK_OUTPUT_PRICE_PER_MILLION: "1",
+        ASSISTANT_SYSTEM_PROMPT: "",
+        DEEPSEEK_THINKING_ENABLED: "",
+        DEEPSEEK_REASONING_EFFORT: "",
+        DEEPSEEK_BASE_URL: "  ",
+        DEEPSEEK_ROUTING_ENABLED: "",
+        DEEPSEEK_ROUTING_MODE: "",
+        DEEPSEEK_ROUTER_TIMEOUT_MS: "",
+      }),
+    ).toMatchObject({
+      ASSISTANT_SYSTEM_PROMPT: DEFAULT_SYSTEM_PROMPT,
+      DEEPSEEK_THINKING_ENABLED: true,
+      DEEPSEEK_REASONING_EFFORT: "medium",
+      DEEPSEEK_BASE_URL: "https://api.deepseek.com",
+      DEEPSEEK_ROUTING_ENABLED: false,
+      DEEPSEEK_ROUTING_MODE: "shadow",
+      DEEPSEEK_ROUTER_TIMEOUT_MS: 3_000,
+    });
+    expect(
+      readSandboxConfig({
+        SANDBOX_NAME: "fixture-sandbox",
+        SANDBOX_REGION: "",
+        VERCEL_OIDC_TOKEN: "",
+      }),
+    ).toEqual({ SANDBOX_NAME: "fixture-sandbox", region: "sin1" });
+    expect(
+      readPromptConfig({
+        PROMPT_READS_ENABLED: "",
+        PROMPT_ROUTER_ENABLED: "",
+      }),
+    ).toMatchObject({
+      PROMPT_READS_ENABLED: false,
+      PROMPT_ROUTER_ENABLED: false,
+    });
+  });
+
+  it.each(["TRUE", "yes", "1"])('rejects invalid boolean "%s"', (value) => {
     expect(() =>
       readModelConfig({
         DEEPSEEK_API_KEY: "fixture-key",
