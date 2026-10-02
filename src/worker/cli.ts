@@ -21,6 +21,7 @@ import { writeWorkerLog } from "./observability/worker-log";
 import { createCapabilityRegistry } from "./capabilities";
 import { SkillResolver } from "./skills/resolver";
 import { skillCatalogSnapshotSchema } from "./skills/schemas";
+import type { PromptBundle } from "../shared/contracts/prompt";
 
 const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/tmp/telegram-agent";
 
@@ -44,6 +45,7 @@ const queryPayloadSchema = z
 async function telegramTurn(
   payload: Record<string, unknown>,
   correlationId: string,
+  promptBundle?: PromptBundle,
 ) {
   const input = telegramInputSchema.parse(payload.input);
   await initializeLayout(ROOT);
@@ -51,6 +53,15 @@ async function telegramTurn(
   const errors = new DurableErrorService(ROOT, locks);
   const capabilities = createCapabilityRegistry();
   const catalog = skillCatalogSnapshotSchema.parse(payload.skillCatalog);
+  const prompt = promptBundle
+    ? [
+        promptBundle.commonSystemPrompt.content,
+        promptBundle.personalOverlay?.content,
+        promptBundle.requestTemplate.content,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join("\n\n")
+    : requiredEnv("ASSISTANT_SYSTEM_PROMPT");
   const skills = new SkillResolver(
     capabilities,
     process.env.SKILLS_ENABLED === "false" ? [] : catalog.skills,
@@ -86,7 +97,7 @@ async function telegramTurn(
       capabilities,
     ),
     new TelegramClient(requiredEnv("TELEGRAM_BOT_TOKEN")),
-    requiredEnv("ASSISTANT_SYSTEM_PROMPT"),
+    prompt,
     {
       correlationId,
       recordFailure: (failure) => errors.record({ correlationId, ...failure }),
@@ -217,7 +228,13 @@ async function main() {
       try {
         data =
           request.operation === "telegramTurn"
-            ? await telegramTurn(request.payload, request.correlationId)
+            ? await telegramTurn(
+                request.payload,
+                request.correlationId,
+                request.contractVersion === 2
+                  ? request.promptBundle
+                  : undefined,
+              )
             : request.operation === "export"
               ? await createExport()
               : request.operation === "query"
@@ -254,13 +271,13 @@ async function main() {
   const response = workerResponseSchema.parse(
     failure
       ? {
-          contractVersion: 1,
+          contractVersion: request.contractVersion,
           correlationId: request.correlationId,
           ok: false,
           error: safeError(failure, "INTERNAL_ERROR", failureStage),
         }
       : {
-          contractVersion: 1,
+          contractVersion: request.contractVersion,
           correlationId: request.correlationId,
           ok: true,
           data,
