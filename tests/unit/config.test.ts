@@ -234,6 +234,14 @@ describe("entry-point configuration", () => {
       expect(config).not.toHaveProperty("NEXT_PUBLIC_PROMPT_USER_KEY_SECRET");
     });
 
+    it("accepts a Telegram username alongside numeric operator IDs", () => {
+      expect(
+        readPromptConfig({
+          PROMPT_OPERATOR_TELEGRAM_IDS: "@LuckyVickyForever,123456789",
+        }).PROMPT_OPERATOR_TELEGRAM_IDS,
+      ).toEqual(new Set(["luckyvickyforever", "123456789"]));
+    });
+
     it.each([
       "",
       "123,",

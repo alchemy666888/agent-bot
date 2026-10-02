@@ -198,7 +198,7 @@ function applyText(draft: SkillDraft, text: string): SkillDraft {
 }
 
 export interface SkillAuthoringRepository {
-  begin(draft: SkillDraft): Promise<SkillDraft>;
+  begin(draft: SkillDraft, username?: string): Promise<SkillDraft>;
   activeForOwner(ownerTelegramUserId: string): Promise<SkillDraft | undefined>;
   processedUpdate(
     ownerTelegramUserId: string,
@@ -208,6 +208,7 @@ export interface SkillAuthoringRepository {
   commitRevision(draft: SkillDraft, content: string): Promise<SkillDraft>;
   publish(
     draft: SkillDraft,
+    username?: string,
   ): Promise<{ number: number; url: string; state: "created" | "merged" }>;
 }
 
@@ -230,6 +231,7 @@ export class SkillAuthoringService {
     text: string,
     updateId: string,
     languageCode?: string,
+    username?: string,
   ): Promise<string> {
     let draft: SkillDraft | undefined =
       await this.repository.activeForOwner(userId);
@@ -241,39 +243,42 @@ export class SkillAuthoringService {
     if (!draft) {
       if (!isSkillCreationRequest(text))
         return "No active skill draft is available for this Telegram user.";
-      draft = await this.repository.begin({
-        id: uuidV7(),
-        stableId: uuidV7(),
-        ownerTelegramUserId: userId,
-        skillName: null,
-        intendedTasksDomain: null,
-        mustDo: [],
-        mustNotDo: [],
-        betterToDo: [],
-        requiredToolsFunctions: [],
-        unresolvedQuestions: [],
-        draftContent: null,
-        revisionNumber: 0,
-        status: "clarifying",
-        createdAt: now,
-        updatedAt: now,
-        installedAt: null,
-        lastProcessedUpdateId: null,
-        lastResponse: null,
-        branch: "",
-        baseCommitSha: "",
-        latestCommitSha: "",
-        skillBlobSha: null,
-        manifestBlobSha: null,
-        contentDigest: null,
-        pullRequestNumber: null,
-      });
+      draft = await this.repository.begin(
+        {
+          id: uuidV7(),
+          stableId: uuidV7(),
+          ownerTelegramUserId: userId,
+          skillName: null,
+          intendedTasksDomain: null,
+          mustDo: [],
+          mustNotDo: [],
+          betterToDo: [],
+          requiredToolsFunctions: [],
+          unresolvedQuestions: [],
+          draftContent: null,
+          revisionNumber: 0,
+          status: "clarifying",
+          createdAt: now,
+          updatedAt: now,
+          installedAt: null,
+          lastProcessedUpdateId: null,
+          lastResponse: null,
+          branch: "",
+          baseCommitSha: "",
+          latestCommitSha: "",
+          skillBlobSha: null,
+          manifestBlobSha: null,
+          contentDigest: null,
+          pullRequestNumber: null,
+        },
+        username,
+      );
     }
 
     // An approval event may have been committed just before a worker crash.
     // Installation is an idempotent write, so finish that transition first.
     if (draft.status === "approved") {
-      const published = await this.repository.publish(draft);
+      const published = await this.repository.publish(draft, username);
       const response =
         published.state === "merged"
           ? `Installed skill “${draft.skillName}” revision ${draft.revisionNumber}: pull request #${published.number} is merged into the configured base branch.`
@@ -360,7 +365,7 @@ export class SkillAuthoringService {
       );
       let published;
       try {
-        published = await this.repository.publish(draft);
+        published = await this.repository.publish(draft, username);
       } catch (error) {
         if ((error as Error).message === "SKILL_REVISION_REQUIRED") {
           const response = `Revision required: the approved branch or commit conflicts with the reviewed revision. Create and approve a new revision; remote changes were not overwritten.`;

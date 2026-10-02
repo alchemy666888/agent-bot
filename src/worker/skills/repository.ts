@@ -8,6 +8,7 @@ import { projectEvent } from "../persistence/projector";
 import type { DurableEvent } from "../persistence/schemas";
 import type { LockCoordinator } from "../locks/coordinator";
 import type { SkillDraft } from "./types";
+import { isTelegramActorAllowed } from "../../shared/telegram-allowlist";
 import { skillManifestSchema, skillMarkdownSchema } from "./schemas";
 
 type Projection = SkillDraft & { revision: number };
@@ -58,6 +59,8 @@ export interface SkillDraftGitClient {
 export interface SkillAuthoringPolicy {
   /** Telegram identities provisioned by the operator, not supplied by a draft. */
   authorTelegramUserIds: ReadonlySet<string>;
+  /** Public usernames, without "@" and compared case-insensitively. */
+  authorTelegramUsernames?: ReadonlySet<string>;
   /** Capability IDs provisioned by the operator registry. */
   capabilityIds: ReadonlySet<string>;
   maxFileBytes?: number;
@@ -149,10 +152,22 @@ export class DurableSkillDraftRepository {
 
   async publish(
     draft: SkillDraft,
+    username?: string,
   ): Promise<{ number: number; url: string; state: "created" | "merged" }> {
     if (!this.git || !draft.skillName || !draft.contentDigest)
       throw new Error("SKILL_DRAFT_INCOMPLETE");
-    if (!this.policy.authorTelegramUserIds.has(draft.ownerTelegramUserId))
+    if (
+      !isTelegramActorAllowed(
+        {
+          ids: this.policy.authorTelegramUserIds,
+          ...(this.policy.authorTelegramUsernames
+            ? { usernames: this.policy.authorTelegramUsernames }
+            : {}),
+        },
+        draft.ownerTelegramUserId,
+        username,
+      )
+    )
       throw new Error("SKILL_AUTHOR_NOT_AUTHORIZED");
     if (
       draft.requiredToolsFunctions.some(
