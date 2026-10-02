@@ -534,6 +534,9 @@ export async function dispatchTelegramInput(
   })();
   const { promptBundle, repositoryCommitSha } = turnContext;
   let skillCatalog: SkillCatalog = turnContext.skillCatalog;
+  const degradationNotices = promptDegradationNotices(promptBundle, input.text);
+  if (skillCatalog.skills.length === 0)
+    degradationNotices.push("catalog_missing");
   const promptBytes = Buffer.byteLength(JSON.stringify(promptBundle), "utf8");
   let skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
   if (
@@ -566,6 +569,7 @@ export async function dispatchTelegramInput(
       operation: "telegramTurn",
       payload: { input, skillCatalog },
       promptBundle,
+      repositoryCommitSha,
       degradationNotices: [...new Set(degradationNotices)],
       rawTelegramInput: input.text,
     },
