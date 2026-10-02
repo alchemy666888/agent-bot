@@ -2,10 +2,76 @@ import { uuidV7 } from "../../shared/ids";
 import type { SkillDraft, SkillDraftGenerator } from "./types";
 import { DurableSkillDraftRepository } from "./repository";
 
-const CREATE_SKILL =
-  /(?:^|\b)(?:create|make|build|author)\s+(?:me\s+)?(?:a\s+)?skill\b/i;
+const ENGLISH_CREATE_VERBS = new Set([
+  "create",
+  "make",
+  "build",
+  "author",
+  "generate",
+  "install",
+]);
+const ENGLISH_FILLER = new Set(["me", "a", "an", "new", "custom", "ai"]);
+const CHINESE_CREATE_VERBS = [
+  "建立",
+  "創建",
+  "创建",
+  "生成",
+  "製作",
+  "制作",
+  "安裝",
+  "安装",
+] as const;
+const CHINESE_SKILL_NOUNS = ["ai skill", "ai技能", "skill", "技能"] as const;
+const EXPLANATION_MARKERS = [
+  "how to",
+  "how do i",
+  "how can i",
+  "explain how",
+  "如何",
+  "怎麼",
+  "怎么",
+  "怎樣",
+  "怎样",
+  "教學",
+  "教学",
+] as const;
+
+function isExplanationRequest(normalized: string): boolean {
+  return EXPLANATION_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function hasEnglishCreationIntent(normalized: string): boolean {
+  const words = normalized.match(/[a-z]+/g) ?? [];
+  return words.some((word, index) => {
+    if (!ENGLISH_CREATE_VERBS.has(word)) return false;
+    let next = index + 1;
+    while (next < words.length && ENGLISH_FILLER.has(words[next]!)) next += 1;
+    return words[next] === "skill";
+  });
+}
+
+function hasChineseCreationIntent(normalized: string): boolean {
+  // Keep the verb and object in the same short clause. This avoids an
+  // unbounded `.*` accidentally joining unrelated statements.
+  const clauses = normalized.split(/[。！？!?；;\n]/);
+  return clauses.some((clause) =>
+    CHINESE_CREATE_VERBS.some((verb) => {
+      const verbAt = clause.indexOf(verb);
+      if (verbAt < 0) return false;
+      return CHINESE_SKILL_NOUNS.some((noun) => {
+        const nounAt = clause.indexOf(noun);
+        return nounAt >= 0 && Math.abs(nounAt - verbAt) <= 32;
+      });
+    }),
+  );
+}
+
 export function isSkillCreationRequest(text: string): boolean {
-  return CREATE_SKILL.test(text);
+  const normalized = text.normalize("NFKC").toLowerCase().trim();
+  if (!normalized || isExplanationRequest(normalized)) return false;
+  return (
+    hasEnglishCreationIntent(normalized) || hasChineseCreationIntent(normalized)
+  );
 }
 
 function list(value: string): string[] {
@@ -59,6 +125,23 @@ function missing(draft: SkillDraft): string[] {
       "What is BETTER TO DO when practical? Reply `BETTER TO DO: ...` (use `none` if there is no preference).",
     );
   return result;
+}
+
+function clarification(question: string, languageCode?: string): string {
+  const language = languageCode?.toLowerCase();
+  if (language?.startsWith("zh")) {
+    const translated = question.startsWith("What short")
+      ? "這個 skill 要使用什麼簡短的英文連字號名稱？"
+      : question.startsWith("What tasks")
+        ? "這個 skill 要處理哪些任務與領域？請提供一至兩個具體例子。"
+        : question.includes("always")
+          ? "這個 skill 一定要做什麼？若無特殊規則，請回答「無」。"
+          : question.includes("never")
+            ? "這個 skill 絕對不能做什麼？若無特殊規則，請回答「無」。"
+            : "在可行情況下，這個 skill 最好怎麼做？若無偏好，請回答「無」。";
+    return `我正在準備你的 skill，還需要一項資料：\n\n${translated}`;
+  }
+  return `I’m preparing your skill and need one focused detail:\n\n${question}`;
 }
 
 function applyText(draft: SkillDraft, text: string): SkillDraft {
@@ -131,6 +214,7 @@ export class SkillAuthoringService {
     userId: string,
     text: string,
     updateId: string,
+    languageCode?: string,
   ): Promise<string> {
     let draft: SkillDraft | undefined =
       await this.repository.activeForOwner(userId);
@@ -306,7 +390,10 @@ export class SkillAuthoringService {
     }
     draft = applyText(draft, text);
     if (draft.unresolvedQuestions.length) {
-      const response = `I’m preparing your skill and need one focused detail:\n\n${draft.unresolvedQuestions[0]}`;
+      const response = clarification(
+        draft.unresolvedQuestions[0]!,
+        languageCode,
+      );
       await this.repository.save(
         {
           ...draft,
