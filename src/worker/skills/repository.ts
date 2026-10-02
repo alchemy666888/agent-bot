@@ -9,6 +9,7 @@ import type { DurableEvent } from "../persistence/schemas";
 import type { LockCoordinator } from "../locks/coordinator";
 import type { SkillDraft } from "./types";
 import { isTelegramActorAllowed } from "../../shared/telegram-allowlist";
+import { alignSkillMarkdown, markdownIdentity } from "./markdown";
 import { skillManifestSchema, skillMarkdownSchema } from "./schemas";
 
 type Projection = SkillDraft & { revision: number };
@@ -70,20 +71,6 @@ export function skillDraftDigest(content: string): string {
   return `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`;
 }
 
-function markdownIdentity(content: string): {
-  name: string;
-  description: string;
-} {
-  const block = content.match(/^---\s*\n([\s\S]*?)^---\s*$/m)?.[1];
-  const name = block?.match(/^name:\s*([^\n]+)\s*$/m)?.[1]?.trim();
-  const description = block
-    ?.match(/^description:\s*([^\n]+)\s*$/m)?.[1]
-    ?.trim();
-  if (!name || !description)
-    throw new Error("SKILL_MARKDOWN_MANIFEST_MISMATCH");
-  return { name, description };
-}
-
 export class DurableSkillDraftRepository {
   private readonly events: EventStore;
 
@@ -119,8 +106,13 @@ export class DurableSkillDraftRepository {
       throw new Error("SKILL_DRAFT_BRANCH_CHANGED");
     const directory = `${this.git.controlledPrefix}/${draft.skillName}`;
     const revision = draft.revisionNumber + 1;
-    const contentDigest = skillDraftDigest(content);
-    const identity = markdownIdentity(content);
+    const document = alignSkillMarkdown(
+      content,
+      draft.skillName,
+      draft.intendedTasksDomain?.trim() || "Custom skill",
+    );
+    const contentDigest = skillDraftDigest(document);
+    const identity = markdownIdentity(document);
     if (identity.name !== draft.skillName)
       throw new Error("SKILL_MARKDOWN_MANIFEST_MISMATCH");
     const manifest = `${JSON.stringify({ schemaVersion: 1, id: draft.stableId, name: draft.skillName, description: identity.description, revision, visibility: "private", ownerTelegramUserIds: [draft.ownerTelegramUserId], allowedTelegramUserIds: [], triggers: { phrases: [], keywords: [], minimumConfidence: 1 }, tools: draft.requiredToolsFunctions, prohibitedActions: draft.mustNotDo, status: "active", authoring: { draftId: draft.id, approvedRevision: revision, contentDigest, ownerTelegramUserId: draft.ownerTelegramUserId, requestedCapabilities: draft.requiredToolsFunctions } }, null, 2)}\n`;
@@ -135,13 +127,13 @@ export class DurableSkillDraftRepository {
     const skillWrite = await this.git.putFile({
       path: `${directory}/SKILL.md`,
       branch: draft.branch,
-      content,
+      content: document,
       message,
       expectedSha: draft.skillBlobSha,
     });
     return {
       ...draft,
-      draftContent: content,
+      draftContent: document,
       revisionNumber: revision,
       manifestBlobSha: manifestWrite.sha,
       skillBlobSha: skillWrite.sha,

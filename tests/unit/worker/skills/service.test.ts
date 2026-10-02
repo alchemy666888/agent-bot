@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { LockCoordinator } from "../../../../src/worker/locks/coordinator";
 import { initializeLayout } from "../../../../src/worker/persistence/layout";
 import { DurableSkillDraftRepository } from "../../../../src/worker/skills/repository";
+import { isSkillCancellationRequest } from "../../../../src/worker/skills/cancellation";
 import {
   isSkillCreationRequest,
   SkillAuthoringService,
@@ -188,6 +189,79 @@ describe("skill authoring domain", () => {
     ).toContain("cancelled");
     expect(await repository.activeForOwner("7")).toBeUndefined();
     expect(generator.generateSkillDraft).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "stop",
+    "no, stop creating AI skill",
+    "停，不需要生成AI skill",
+    "不需要，停止",
+    "取消這個 skill",
+  ])("stops an in-progress skill interview for %j", async (text) => {
+    const { locks, repository, generator, service } = await fixture();
+    const started = await locks.withUser("7", () =>
+      service.handle("7", "Create a skill", "10"),
+    );
+    expect(started).toContain("stop");
+    expect(await service.shouldHandle("7", text)).toBe(true);
+    const response = await locks.withUser("7", () =>
+      service.handle("7", text, "11"),
+    );
+    expect(response.toLowerCase()).toMatch(/cancel|取消/);
+    expect(await repository.activeForOwner("7")).toBeUndefined();
+    expect(generator.generateSkillDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not start a draft from a refusal that also mentions creating a skill", async () => {
+    const { service } = await fixture();
+    expect(isSkillCancellationRequest("停，不需要生成AI skill")).toBe(true);
+    expect(isSkillCreationRequest("停，不需要生成AI skill")).toBe(true);
+    expect(await service.shouldHandle("7", "停，不需要生成AI skill")).toBe(
+      false,
+    );
+    expect(
+      isSkillCancellationRequest("stop the release if signatures fail"),
+    ).toBe(false);
+  });
+
+  it("keeps a task answer that mentions stop, and accepts mismatched model markdown", async () => {
+    const { locks, repository, generator, service } = await fixture();
+    generator.generateSkillDraft.mockImplementation(
+      async () => `\`\`\`markdown
+---
+name: "AI Skill"
+description: |
+  Generated from a Telegram request
+---
+
+# AI Skill
+
+Follow the constraints.
+\`\`\``,
+    );
+    await locks.withUser("42", () =>
+      service.handle("42", "Create a skill called audits", "1"),
+    );
+    const tasks = await locks.withUser("42", () =>
+      service.handle("42", "stop the release if signatures fail", "2"),
+    );
+    expect(tasks).toContain("MUST");
+    expect(await repository.activeForOwner("42")).toMatchObject({
+      skillName: "audits",
+      intendedTasksDomain: "stop the release if signatures fail",
+      status: "clarifying",
+    });
+    const ready = await locks.withUser("42", () =>
+      service.handle(
+        "42",
+        "MUST DO: verify\nMUST NOT DO: deploy\nBETTER TO DO: summarize",
+        "3",
+      ),
+    );
+    expect(ready).toContain("name: audits");
+    expect(ready).toContain("Follow the constraints.");
+    expect(ready).not.toContain('name: "AI Skill"');
+    expect(generator.generateSkillDraft).toHaveBeenCalledOnce();
   });
 
   it("treats a pull request for the exact approved commit as idempotent", async () => {

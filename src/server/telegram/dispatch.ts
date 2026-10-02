@@ -128,7 +128,7 @@ function configuredSkillAuthoringService(
           {
             source: "runtime",
             content:
-              "Write a concise SKILL.md. Return only markdown with YAML frontmatter containing name and description. Preserve all MUST, MUST NOT, and tool constraints.",
+              "Write a concise SKILL.md. Return only markdown, with no code fence. The YAML frontmatter name must be exactly the supplied name, and description must be one line. Preserve all MUST, MUST NOT, and tool constraints.",
           },
         ],
         messages: [
