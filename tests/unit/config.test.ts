@@ -155,7 +155,7 @@ describe("entry-point configuration", () => {
 
   describe("prompt hierarchy configuration", () => {
     const enabled = {
-      PROMPT_HIERARCHY_ENABLED: "true",
+      PROMPT_READS_ENABLED: "true",
       GITHUB_CONNECTOR: "github/skills-repo",
       GITHUB_PROMPTS_OWNER: "alchemy666888",
       GITHUB_PROMPTS_REPO: "skill",
@@ -167,8 +167,12 @@ describe("entry-point configuration", () => {
 
     it("defaults to disabled without requiring or contacting a repository", () => {
       expect(readPromptConfig({})).toEqual({
-        PROMPT_HIERARCHY_ENABLED: false,
-        PROMPT_HIERARCHY_WRITES_ENABLED: false,
+        PROMPT_READS_ENABLED: false,
+        PROMPT_PERSONAL_READS_ENABLED: false,
+        PROMPT_OPERATOR_WRITES_ENABLED: false,
+        PROMPT_PERSONAL_WRITES_ENABLED: false,
+        PROMPT_AUTONOMOUS_SUGGESTIONS_ENABLED: false,
+        PROMPT_SUGGESTION_COHORT_PERCENT: 0,
         PROMPT_CACHE_TTL_SECONDS: 300,
         PROMPT_CONFIRMATION_TTL_SECONDS: 600,
         PROMPT_ROUTER_CONFIDENCE_THRESHOLD: 0.75,
@@ -236,7 +240,7 @@ describe("entry-point configuration", () => {
 
     it("requires every security-critical setting when enabled", () => {
       for (const key of Object.keys(enabled)) {
-        if (key === "PROMPT_HIERARCHY_ENABLED") continue;
+        if (key === "PROMPT_READS_ENABLED") continue;
         expect(() =>
           readPromptConfig({ ...enabled, [key]: undefined }),
         ).toThrow();
@@ -250,15 +254,15 @@ describe("entry-point configuration", () => {
       expect(() =>
         readPromptConfig({
           ...enabled,
-          PROMPT_HIERARCHY_WRITES_ENABLED: "true",
+          PROMPT_OPERATOR_WRITES_ENABLED: "true",
         }),
       ).toThrow();
       expect(
         readPromptConfig({
           ...enabled,
-          PROMPT_HIERARCHY_WRITES_ENABLED: "true",
+          PROMPT_OPERATOR_WRITES_ENABLED: "true",
           GITHUB_PROMPTS_BRANCH: "main",
-        }).PROMPT_HIERARCHY_WRITES_ENABLED,
+        }).PROMPT_OPERATOR_WRITES_ENABLED,
       ).toBe(true);
     });
   });

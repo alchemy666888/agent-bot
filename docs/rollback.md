@@ -47,3 +47,15 @@ When data recovery is necessary, preserve the failed database for investigation,
 Promote the restored database only after two-user privacy tests and a dry-run restored selection pass. Rotate `DATABASE_URL`, deploy with skills/capabilities disabled, smoke test, then enable deliberately. Record the backup ID, lost interval, reconciliation decisions, commands, evidence, and approver in `docs/acceptance-evidence.md`.
 
 A replacement Sandbox needs no filesystem restoration; it hydrates application state from PostgreSQL and skill definitions from verified GitHub commits. Never recover skill definitions from Sandbox scratch files, database definition rows, or generated JSONL exports.
+
+## Prompt hierarchy rollback rehearsal
+
+Rehearse in Preview and record timestamps and metrics before Production promotion. Use configuration and redeployment only:
+
+1. Disable `PROMPT_AUTONOMOUS_SUGGESTIONS_ENABLED`, `PROMPT_OPERATOR_WRITES_ENABLED`, and `PROMPT_PERSONAL_WRITES_ENABLED` first. Confirm no new proposals, confirmations, or GitHub mutations; reconcile every uncertain GitHub result before any re-enable.
+2. Disable `PROMPT_ROUTER_ENABLED` and confirm deterministic exact/trigger/default resolution continues.
+3. If reads are unsafe, disable `PROMPT_PERSONAL_READS_ENABLED`, then `PROMPT_READS_ENABLED`.
+4. Serve the last fully verified snapshot while within its bounded freshness window, or the reviewed compiled emergency prompt. Never mix commits or use an unverified snapshot.
+5. Preserve prompt PostgreSQL rows, tables, audit records, current GitHub files, and complete GitHub history. Do not run a down migration, delete commits, rewrite history, or replay an uncertain mutation.
+
+Each switch is independently stoppable and its actuation must not mutate PostgreSQL or GitHub. Record deployment IDs, UTC start/end, last verified commit, fallback/emergency duration, reconciliation result, and approving operators. Re-enable in forward rollout order only after the triggering metric has recovered.

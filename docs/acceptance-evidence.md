@@ -41,3 +41,18 @@ safe result codes.
 
 See `docs/deployment.md` for the ordered rollout, `docs/operations.md` for
 monitoring and connector procedures, and `docs/rollback.md` for rollback rules.
+
+## PH-013 prompt rollout record
+
+Do not replace `UNRECORDED` with an assertion. Attach immutable redacted evidence; never record repository coordinates, identities, prompt content, or credentials.
+
+| Gate                  | Required evidence                                                                                                                                                                | Status     |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| Expand deployment     | Deployment ID, `20261002_prompt_persistence.sql` version/checksum, all prompt controls disabled                                                                                  | UNRECORDED |
+| Initial seed          | Independently validated `main` commit, schema/common/default blob digests, validator output, two operator approvals                                                              | UNRECORDED |
+| Rollout window        | UTC start/end for shadow, common/default reads, personal reads, operator writes, personal writes, cohort, and general stages                                                     | UNRECORDED |
+| Environment isolation | Redacted Preview/Production connector attachment and configuration-scope audit                                                                                                   | UNRECORDED |
+| Metrics               | Resolution source, refresh/direct-edit freshness, p95 resolution latency, GitHub failures, rejection/fallback, confirmations, conflicts, verified activation, emergency duration | UNRECORDED |
+| Security gates        | Zero unauthorized access and zero raw-data/content/identity/secret leakage, with dashboard query IDs                                                                             | UNRECORDED |
+| Rollback rehearsal    | Deployment IDs and UTC window proving suggestions/writes, router, personal reads, and reads disabled in order; verified snapshot/emergency result                                | UNRECORDED |
+| Approval              | Named operator approvals for every promotion and final 100% cohort                                                                                                               | UNRECORDED |

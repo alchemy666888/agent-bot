@@ -140,3 +140,23 @@ An export is useful for inspection but is not a database backup unless restorati
 ## Acceptance gate
 
 Run `pnpm test -- tests/acceptance/skills` after migrations, registry changes, authorization changes, and recovery changes. The feature remains incomplete if any requirement lacks an existing implementation module, named automated acceptance test, passing CI evidence, Preview walkthrough, and restore rehearsal.
+
+## Prompt hierarchy signals and promotion gates
+
+Emit only bounded labels and numeric values—never repository coordinates, raw user data, prompt content, identities, connector headers, or secrets. Dashboards must show resolution source (`personal`, `global`, `default`, `emergency`), cache/refresh latency, direct-edit age, GitHub outcome, validation rejection, fallback reason, confirmation completion, compare-and-set conflict, verified activation, and emergency-mode duration. Direct-edit freshness and emergency fallback are production-visible time series.
+
+Evaluate a rolling 15-minute window plus a 24-hour baseline. Stop the active stage and do not promote unless all applicable gates hold for the approved observation window:
+
+| Gate                                                              | Promotion threshold / alert                                                                         |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Unauthorized access or cross-user discovery                       | exactly zero; page immediately                                                                      |
+| Raw-data, prompt-content, identity, coordinate, or secret leakage | exactly zero; disable suggestions/writes and incident response immediately                          |
+| Direct protected-branch edit freshness                            | 100% visible within five minutes; alert at 4 minutes and stop at 5                                  |
+| p95 prompt resolution latency                                     | at or below the recorded shadow bound (default 250 ms) and no more than 20% over baseline           |
+| GitHub auth/rate-limit/unknown write outcome                      | zero auth/unknown outcomes; sufficient peak-window headroom                                         |
+| Validation rejection and emergency fallback                       | zero during promotion fixtures; otherwise within an explicitly approved baseline                    |
+| Confirmation completion/conflicts                                 | completion rate measured; no duplicate activation; conflicts remain safe and are never auto-retried |
+| Verified activation                                               | exactly one activation for each approved mutation and the next turn observes it                     |
+| Emergency duration                                                | alert immediately on entry and every five minutes until exit                                        |
+
+`GET /api/health` returns only component compatibility states. The prompt component is `disabled`, `ready`, or `degraded`; it discloses no repository, branch, connector, actor, prompt, or secret. A disabled component is compatible and does not make readiness fail. Validate the deployed schema/migration separately with privileged read-only operational tooling; do not add coordinates or migration internals to the public response.
