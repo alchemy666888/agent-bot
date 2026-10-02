@@ -448,10 +448,20 @@ export async function dispatchTelegramInput(
   }
 
   const github = readGitHubConfig();
-  let promptBundle;
-  let skillCatalog: SkillCatalog;
-  let repositoryCommitSha: string | null = null;
-  if (promptConfig.PROMPT_READS_ENABLED && services.repository) {
+  const turnContext = await (async () => {
+    if (!(promptConfig.PROMPT_READS_ENABLED && services.repository)) {
+      return {
+        promptBundle: await services.resolve({
+          userKey: "u1_" + "A".repeat(43),
+          text: input.text,
+          correlationId,
+          ...(input.languageCode ? { language: input.languageCode } : {}),
+        }),
+        skillCatalog: EMPTY_SKILL_CATALOG,
+        repositoryCommitSha: null,
+      };
+    }
+
     const identity = readRepositoryIdentityConfig();
     const skillRepository = new GitHubSkillRepository(
       createGitHubSkillsClient(
@@ -466,7 +476,7 @@ export async function dispatchTelegramInput(
       ),
       { audit: (event) => auditGitHubEvent(correlationId, event) },
     );
-    const context = await resolveRepositoryTurnContext({
+    return resolveRepositoryTurnContext({
       telegramUserId: input.userId,
       promptUserKeySecret: promptConfig.PROMPT_USER_KEY_SECRET as string,
       text: input.text,
@@ -481,16 +491,9 @@ export async function dispatchTelegramInput(
       loadSkillCatalog: (telegramUserId, commit) =>
         skillRepository.loadCatalogSnapshot({ telegramUserId }, commit),
     });
-    ({ promptBundle, skillCatalog, repositoryCommitSha } = context);
-  } else {
-    promptBundle = await services.resolve({
-      userKey: "u1_" + "A".repeat(43),
-      text: input.text,
-      correlationId,
-      ...(input.languageCode ? { language: input.languageCode } : {}),
-    });
-    skillCatalog = EMPTY_SKILL_CATALOG;
-  }
+  })();
+  const { promptBundle, repositoryCommitSha } = turnContext;
+  let skillCatalog: SkillCatalog = turnContext.skillCatalog;
   const promptBytes = Buffer.byteLength(JSON.stringify(promptBundle), "utf8");
   let skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
   if (
