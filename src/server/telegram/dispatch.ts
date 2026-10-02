@@ -301,6 +301,8 @@ function configuredPromptService(
 export async function loadSkillCatalog(
   load: () => Promise<SkillCatalog>,
   correlationId: string,
+  /** Preserve an already-resolved repository pin when degrading mid-turn. */
+  pinnedCommitSha = EMPTY_SKILL_CATALOG.commitSha,
 ): Promise<{
   catalog: SkillCatalog;
   degradationReason?: "repository_unavailable" | "catalog_missing";
@@ -327,7 +329,7 @@ export async function loadSkillCatalog(
       ...(failure.diagnostic ? { metadata: failure.diagnostic } : {}),
     });
     return {
-      catalog: EMPTY_SKILL_CATALOG,
+      catalog: { ...EMPTY_SKILL_CATALOG, commitSha: pinnedCommitSha },
       degradationReason: "repository_unavailable",
     };
   }
@@ -488,6 +490,7 @@ export async function dispatchTelegramInput(
   }
 
   const github = readGitHubConfig();
+  let skillCatalogDegradation: DegradationNotice | undefined;
   const turnContext = await (async () => {
     if (!(promptConfig.PROMPT_READS_ENABLED && services.repository)) {
       return {
@@ -528,14 +531,24 @@ export async function dispatchTelegramInput(
       resolveHead: () => services.repository!.store.resolveHead(),
       loadPromptSnapshot: (commit) => services.repository!.store.load(commit),
       resolvePrompt: (request) => services.resolve(request),
-      loadSkillCatalog: (telegramUserId, commit) =>
-        skillRepository.loadCatalogSnapshot({ telegramUserId }, commit),
+      loadSkillCatalog: async (telegramUserId, commit) => {
+        const result = await loadSkillCatalog(
+          () =>
+            skillRepository.loadCatalogSnapshot({ telegramUserId }, commit),
+          correlationId,
+          commit,
+        );
+        skillCatalogDegradation = result.degradationReason;
+        return result.catalog;
+      },
     });
   })();
   const { promptBundle, repositoryCommitSha } = turnContext;
   let skillCatalog: SkillCatalog = turnContext.skillCatalog;
   const degradationNotices = promptDegradationNotices(promptBundle, input.text);
-  if (skillCatalog.skills.length === 0)
+  if (skillCatalogDegradation)
+    degradationNotices.push(skillCatalogDegradation);
+  else if (skillCatalog.skills.length === 0)
     degradationNotices.push("catalog_missing");
   const promptBytes = Buffer.byteLength(JSON.stringify(promptBundle), "utf8");
   let skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");

@@ -144,4 +144,24 @@ describe("Telegram dispatch skill catalog", () => {
     });
     expect(log.mock.calls[0]![0]).not.toContain("private detail");
   });
+
+  it("preserves a resolved commit when a pinned catalog read fails", async () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const commit = "a".repeat(40);
+
+    await expect(
+      loadSkillCatalog(
+        async () => {
+          throw new Error("GitHub returned 404");
+        },
+        "correlation-id",
+        commit,
+      ),
+    ).resolves.toEqual({
+      catalog: { commitSha: commit, skills: [] },
+      degradationReason: "repository_unavailable",
+    });
+
+    expect(log).toHaveBeenCalledOnce();
+  });
 });
