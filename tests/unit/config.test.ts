@@ -9,6 +9,7 @@ import {
   readDashboardConfig,
   readGitHubConfig,
   readModelConfig,
+  readPromptConfig,
   readSandboxConfig,
   readTelegramConfig,
 } from "../../src/server/config";
@@ -150,6 +151,115 @@ describe("entry-point configuration", () => {
       readDatabaseConfig({ DATABASE_URL: "postgresql://user:pass@db.test/app" })
         .DATABASE_URL,
     ).toBe("postgresql://user:pass@db.test/app");
+  });
+
+  describe("prompt hierarchy configuration", () => {
+    const enabled = {
+      PROMPT_HIERARCHY_ENABLED: "true",
+      GITHUB_CONNECTOR: "github/skills-repo",
+      GITHUB_PROMPTS_OWNER: "alchemy666888",
+      GITHUB_PROMPTS_REPO: "skill",
+      GITHUB_PROMPTS_BRANCH: "feature/read-only-preview",
+      GITHUB_PROMPTS_PREFIX: "prompts/approved",
+      PROMPT_OPERATOR_TELEGRAM_IDS: "123456789,987654321",
+      PROMPT_USER_KEY_SECRET: "fixture-secret-with-at-least-32-characters",
+    };
+
+    it("defaults to disabled without requiring or contacting a repository", () => {
+      expect(readPromptConfig({})).toEqual({
+        PROMPT_HIERARCHY_ENABLED: false,
+        PROMPT_HIERARCHY_WRITES_ENABLED: false,
+        PROMPT_CACHE_TTL_SECONDS: 300,
+        PROMPT_CONFIRMATION_TTL_SECONDS: 600,
+        PROMPT_ROUTER_CONFIDENCE_THRESHOLD: 0.75,
+      });
+    });
+
+    it("loads enabled server-only settings and preserves operator IDs as strings", () => {
+      const config = readPromptConfig({
+        ...enabled,
+        NEXT_PUBLIC_PROMPT_USER_KEY_SECRET: "must-not-be-returned",
+      });
+
+      expect(config.GITHUB_PROMPTS_PREFIX).toBe("prompts/approved");
+      expect(config.PROMPT_OPERATOR_TELEGRAM_IDS).toEqual(
+        new Set(["123456789", "987654321"]),
+      );
+      expect(config).not.toHaveProperty("NEXT_PUBLIC_PROMPT_USER_KEY_SECRET");
+    });
+
+    it.each([
+      "",
+      "123,",
+      ",123",
+      "123,,456",
+      "123,123",
+      "+123",
+      "-123",
+      "0123",
+      "123, 456",
+      "9007199254740992",
+    ])("rejects malformed operator IDs %j", (ids) => {
+      expect(() =>
+        readPromptConfig({
+          ...enabled,
+          PROMPT_OPERATOR_TELEGRAM_IDS: ids,
+        }),
+      ).toThrow();
+    });
+
+    it.each([
+      "prompts/",
+      "/prompts",
+      "prompts//team",
+      "prompts/../team",
+      " prompts",
+    ])("rejects non-normalized prompt prefix %j", (prefix) => {
+      expect(() =>
+        readPromptConfig({ ...enabled, GITHUB_PROMPTS_PREFIX: prefix }),
+      ).toThrow();
+    });
+
+    it.each([
+      { PROMPT_CACHE_TTL_SECONDS: "0" },
+      { PROMPT_CACHE_TTL_SECONDS: "86401" },
+      { PROMPT_CONFIRMATION_TTL_SECONDS: "29" },
+      { PROMPT_CONFIRMATION_TTL_SECONDS: "3601" },
+      { PROMPT_ROUTER_CONFIDENCE_THRESHOLD: "-0.01" },
+      { PROMPT_ROUTER_CONFIDENCE_THRESHOLD: "1.01" },
+      { PROMPT_USER_KEY_SECRET: "weak" },
+      { PROMPT_USER_KEY_SECRET: "a".repeat(64) },
+    ])("rejects unsafe prompt setting %#", (invalid) => {
+      expect(() => readPromptConfig({ ...enabled, ...invalid })).toThrow();
+    });
+
+    it("requires every security-critical setting when enabled", () => {
+      for (const key of Object.keys(enabled)) {
+        if (key === "PROMPT_HIERARCHY_ENABLED") continue;
+        expect(() =>
+          readPromptConfig({ ...enabled, [key]: undefined }),
+        ).toThrow();
+      }
+    });
+
+    it("allows non-main read-only branches but requires main for writes", () => {
+      expect(readPromptConfig(enabled).GITHUB_PROMPTS_BRANCH).toBe(
+        "feature/read-only-preview",
+      );
+      expect(() =>
+        readPromptConfig({
+          ...enabled,
+          PROMPT_HIERARCHY_WRITES_ENABLED: "true",
+        }),
+      ).toThrow();
+      expect(
+        readPromptConfig({
+          ...enabled,
+          PROMPT_HIERARCHY_WRITES_ENABLED: "true",
+          GITHUB_PROMPTS_BRANCH: "main",
+        }).PROMPT_HIERARCHY_WRITES_ENABLED,
+      ).toBe(true);
+    });
   });
 
   it("requires and passes the PostgreSQL connection string", () => {
