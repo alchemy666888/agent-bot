@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { logStructured, safeError } from "../../../src/shared/logger";
 import { uuidV7 } from "../../../src/shared/ids";
 
@@ -75,6 +76,29 @@ describe("sanitized observability", () => {
         causeCode: "ENETUNREACH",
       },
     });
+  });
+
+  it("names invalid configuration fields without copying their values", () => {
+    let error: unknown;
+    try {
+      z.object({
+        DEEPSEEK_THINKING_ENABLED: z.enum(["true", "false"]),
+        DATABASE_URL: z.url({ protocol: /^postgres$/ }),
+      }).parse({
+        DEEPSEEK_THINKING_ENABLED: "",
+        DATABASE_URL: "https://user:super-secret@db.internal/app",
+      });
+    } catch (caught) {
+      error = caught;
+    }
+
+    const failure = safeError(error, "INTERNAL_ERROR", "dispatch");
+    expect(failure.code).toBe("CONFIGURATION_INVALID");
+    expect(failure.diagnostic?.issues).toEqual([
+      "DEEPSEEK_THINKING_ENABLED:invalid_value",
+      "DATABASE_URL:invalid_format",
+    ]);
+    expect(JSON.stringify(failure)).not.toContain("super-secret");
   });
 
   it("identifies a database DNS failure from its structured cause", () => {

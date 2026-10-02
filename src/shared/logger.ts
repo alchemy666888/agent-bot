@@ -1,3 +1,4 @@
+import { ZodError } from "zod";
 import { redact } from "./redaction";
 
 export type LogResult = "success" | "failure" | "retry" | "degraded";
@@ -70,6 +71,21 @@ export function logStructured(
   return line;
 }
 
+/** Field paths and parser codes only. Values are never copied from the error. */
+export function configurationIssues(error: unknown): string[] | undefined {
+  if (!(error instanceof ZodError)) return undefined;
+  const issues = error.issues.slice(0, 8).flatMap((issue) => {
+    const path = issue.path
+      .map((part) => String(part))
+      .filter((part) => /^[A-Za-z0-9_]+$/.test(part))
+      .join(".");
+    return path && /^[a-z0-9_]{1,40}$/.test(issue.code)
+      ? [`${path}:${issue.code}`]
+      : [];
+  });
+  return issues.length ? issues : ["environment:invalid"];
+}
+
 export function safeError(
   error: unknown,
   fallbackCode = "INTERNAL_ERROR",
@@ -83,6 +99,7 @@ export function safeError(
     kind: string;
     causeCode?: string;
     status?: number;
+    issues?: string[];
   };
 } {
   const status = (error as { status?: unknown })?.status;
@@ -98,10 +115,12 @@ export function safeError(
     error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name)
       ? error.name
       : "UnknownError";
+  const issues = configurationIssues(error);
   const candidate = error instanceof Error ? error.message : fallbackCode;
-  const code =
-    stage === "persistence-sync" &&
-    ["ENETUNREACH", "ENOTFOUND"].includes(causeCode ?? "")
+  const code = issues
+    ? "CONFIGURATION_INVALID"
+    : stage === "persistence-sync" &&
+        ["ENETUNREACH", "ENOTFOUND"].includes(causeCode ?? "")
       ? causeCode === "ENOTFOUND"
         ? "DATABASE_HOST_NOT_FOUND"
         : "DATABASE_NETWORK_UNREACHABLE"
@@ -135,6 +154,7 @@ export function safeError(
             ...(typeof status === "number" && status >= 100 && status <= 599
               ? { status }
               : {}),
+            ...(issues ? { issues } : {}),
           },
         }
       : {}),

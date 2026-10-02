@@ -65,6 +65,7 @@ export async function POST(request: Request) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
+    const failure = safeError(error, "INTERNAL_ERROR", "dispatch");
     await persistControllerLog({
       correlationId,
       component: "controller",
@@ -72,7 +73,8 @@ export async function POST(request: Request) {
       stage: "dispatch",
       result: "failure",
       durationMs: Date.now() - started,
-      code: safeError(error).code,
+      code: failure.code,
+      ...(failure.diagnostic ? { metadata: failure.diagnostic } : {}),
     });
     return NextResponse.json(
       { ok: false },

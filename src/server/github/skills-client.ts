@@ -284,8 +284,7 @@ export class GitHubSkillsClient {
       throw new TypeError("Invalid file byte limit");
     this.prefix = (config.prefix ?? "skills").replace(/\/$/, "");
     const prefixSegments = validateSegments(this.prefix);
-    if (prefixSegments[0] !== "skills")
-      throw new TypeError("Invalid skills prefix");
+    if (prefixSegments[0] !== "skills") throw new Error("SKILL_PREFIX_INVALID");
   }
 
   get controlledPrefix(): string {

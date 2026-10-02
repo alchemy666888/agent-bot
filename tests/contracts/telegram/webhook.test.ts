@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 const { dispatchTelegramInput } = vi.hoisted(() => ({
   dispatchTelegramInput: vi.fn(),
@@ -84,6 +85,32 @@ describe("Telegram webhook", () => {
     const response = await POST(request({ update_id: 2, edited_message: {} }));
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ ok: false });
+  });
+
+  it("logs configuration field names when dispatch fails before any request", async () => {
+    let failure: unknown;
+    try {
+      z.object({ DEEPSEEK_BASE_URL: z.string().url() }).parse({
+        DEEPSEEK_BASE_URL: "",
+      });
+    } catch (error) {
+      failure = error;
+    }
+    dispatchTelegramInput.mockRejectedValueOnce(failure);
+    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    const response = await POST(request({ update_id: 2, edited_message: {} }));
+
+    expect(response.status).toBe(503);
+    const event = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+    expect(event).toMatchObject({
+      operation: "telegramWebhook",
+      stage: "dispatch",
+      result: "failure",
+      code: "CONFIGURATION_INVALID",
+      metadata: { issues: ["DEEPSEEK_BASE_URL:invalid_format"] },
+    });
+    log.mockRestore();
   });
 
   it("returns a non-retryable failure reported by the worker", async () => {

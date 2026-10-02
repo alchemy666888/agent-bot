@@ -21,6 +21,15 @@ const strictBoolean = z
   .enum(["true", "false"])
   .transform((value) => value === "true");
 const boundedRouterTimeout = z.coerce.number().int().min(250).max(30_000);
+
+/**
+ * Vercel stores an empty environment value as "". Defaults only apply to
+ * unset values, so a blank optional setting must be removed before parsing.
+ */
+const blankToUnset = (value: unknown) =>
+  typeof value === "string" && value.trim() === "" ? undefined : value;
+const blankable = <T extends z.ZodType>(schema: T) =>
+  z.preprocess(blankToUnset, schema);
 const optionalConfidence = z.preprocess(
   (value) => (value === "" || value === undefined ? undefined : value),
   z.coerce.number().min(0).max(1).optional(),
@@ -29,15 +38,17 @@ const optionalConfidence = z.preprocess(
 const modelSchema = z.object({
   DEEPSEEK_API_KEY: requiredString,
   // This is a break-glass fallback, not normal hierarchy-managed prompt content.
-  ASSISTANT_SYSTEM_PROMPT: requiredString.default(
-    DEFAULT_EMERGENCY_SYSTEM_PROMPT,
+  ASSISTANT_SYSTEM_PROMPT: blankable(
+    requiredString.default(DEFAULT_EMERGENCY_SYSTEM_PROMPT),
   ),
-  DEEPSEEK_THINKING_ENABLED: strictBoolean.default(true),
-  DEEPSEEK_REASONING_EFFORT: z.literal("medium").default("medium"),
-  DEEPSEEK_BASE_URL: z.url().default("https://api.deepseek.com"),
-  DEEPSEEK_ROUTING_ENABLED: strictBoolean.default(false),
-  DEEPSEEK_ROUTING_MODE: z.enum(["shadow", "enforced"]).default("shadow"),
-  DEEPSEEK_ROUTER_TIMEOUT_MS: boundedRouterTimeout.default(3_000),
+  DEEPSEEK_THINKING_ENABLED: blankable(strictBoolean.default(true)),
+  DEEPSEEK_REASONING_EFFORT: blankable(z.literal("medium").default("medium")),
+  DEEPSEEK_BASE_URL: blankable(z.url().default("https://api.deepseek.com")),
+  DEEPSEEK_ROUTING_ENABLED: blankable(strictBoolean.default(false)),
+  DEEPSEEK_ROUTING_MODE: blankable(
+    z.enum(["shadow", "enforced"]).default("shadow"),
+  ),
+  DEEPSEEK_ROUTER_TIMEOUT_MS: blankable(boundedRouterTimeout.default(3_000)),
   DEEPSEEK_ROUTER_MIN_CONFIDENCE: optionalConfidence,
   DEEPSEEK_INPUT_PRICE_PER_MILLION: price,
   DEEPSEEK_OUTPUT_PRICE_PER_MILLION: price,
@@ -56,8 +67,8 @@ const dashboardSchema = z.object({
 
 const sandboxSchema = z.object({
   SANDBOX_NAME: requiredString,
-  SANDBOX_REGION: z.literal(SANDBOX_REGION).optional(),
-  VERCEL_OIDC_TOKEN: requiredString.optional(),
+  SANDBOX_REGION: blankable(z.literal(SANDBOX_REGION).optional()),
+  VERCEL_OIDC_TOKEN: blankable(requiredString.optional()),
 });
 
 const githubName = z
@@ -175,11 +186,13 @@ const promptConfigSchema = z
   .object({
     // Independent, server-only rollout controls. None are forwarded to the
     // browser or sandbox worker.
-    PROMPT_READS_ENABLED: strictBoolean.default(false),
-    PROMPT_PERSONAL_READS_ENABLED: strictBoolean.default(false),
-    PROMPT_OPERATOR_WRITES_ENABLED: strictBoolean.default(false),
-    PROMPT_PERSONAL_WRITES_ENABLED: strictBoolean.default(false),
-    PROMPT_AUTONOMOUS_SUGGESTIONS_ENABLED: strictBoolean.default(false),
+    PROMPT_READS_ENABLED: blankable(strictBoolean.default(false)),
+    PROMPT_PERSONAL_READS_ENABLED: blankable(strictBoolean.default(false)),
+    PROMPT_OPERATOR_WRITES_ENABLED: blankable(strictBoolean.default(false)),
+    PROMPT_PERSONAL_WRITES_ENABLED: blankable(strictBoolean.default(false)),
+    PROMPT_AUTONOMOUS_SUGGESTIONS_ENABLED: blankable(
+      strictBoolean.default(false),
+    ),
     PROMPT_SUGGESTION_COHORT_PERCENT: z.coerce
       .number()
       .int()
@@ -215,7 +228,7 @@ const promptConfigSchema = z
     ).default(600),
     // Prompt classification is independently kill-switchable. Deterministic
     // selection and the verified default remain available when it is off.
-    PROMPT_ROUTER_ENABLED: strictBoolean.default(false),
+    PROMPT_ROUTER_ENABLED: blankable(strictBoolean.default(false)),
     PROMPT_ROUTER_CONFIDENCE_THRESHOLD: optionalEnv(
       z.coerce.number().min(0).max(1),
     ).default(0.75),
