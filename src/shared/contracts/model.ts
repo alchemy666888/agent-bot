@@ -124,6 +124,63 @@ export const skillContextSchema = z
     prohibitedActions: z.array(z.string().min(1)).default([]),
   })
   .strict();
+
+export const MAX_AUTHORIZED_SKILL_COUNT = 200;
+export const MAX_AUTHORIZED_SKILL_CATALOG_BYTES = 2 * 1024 * 1024;
+const gitCommitShaSchema = z.string().regex(/^[a-f0-9]{40}$/i);
+
+/**
+ * A repository-filtered, commit-pinned skill snapshot supplied by trusted
+ * orchestration. It informs the model about the user's complete authorized
+ * catalog, but does not itself authorize any capability.
+ */
+export const authorizedSkillCatalogSchema = z
+  .object({
+    commitSha: gitCommitShaSchema,
+    skills: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(200),
+            name: z.string().trim().min(1).max(120),
+            description: z.string().trim().max(2_000).optional(),
+            commitSha: gitCommitShaSchema,
+            manifestRevision: z.number().int().positive().optional(),
+            instructions: z.string().min(1).max(1_000_000),
+            visibility: z.enum(["private", "shared", "public"]),
+            ownerTelegramUserIds: z.array(z.string().regex(/^\d+$/)).min(1),
+            allowedTelegramUserIds: z.array(z.string().regex(/^\d+$/)),
+            triggers: z
+              .object({
+                phrases: z.array(z.string().min(1).max(200)).max(100),
+                keywords: z.array(z.string().min(1).max(200)).max(100),
+                minimumConfidence: z.number().min(0).max(1),
+              })
+              .strict(),
+            tools: z.array(z.string().min(1).max(200)).max(100),
+            prohibitedActions: z.array(z.string().min(1).max(200)).max(100),
+            status: z.enum(["active", "retired"]),
+          })
+          .strict(),
+      )
+      .max(MAX_AUTHORIZED_SKILL_COUNT),
+  })
+  .strict()
+  .superRefine((catalog, context) => {
+    if (catalog.skills.some((skill) => skill.commitSha !== catalog.commitSha))
+      context.addIssue({
+        code: "custom",
+        message: "Skill catalog must be commit-pinned",
+      });
+    if (
+      new TextEncoder().encode(JSON.stringify(catalog)).byteLength >
+      MAX_AUTHORIZED_SKILL_CATALOG_BYTES
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Authorized skill catalog is too large",
+      });
+  });
 export const modelExecutionModeSchema = z.enum([
   "direct",
   "selected_skill",
@@ -146,6 +203,7 @@ export const modelRequestSchema = z
     /** Chosen by trusted orchestration; model providers must not infer or broaden it. */
     executionMode: modelExecutionModeSchema,
     skill: skillContextSchema.optional(),
+    authorizedSkillCatalog: authorizedSkillCatalogSchema.optional(),
     generalCapabilities: z.array(capabilityRequestSchema).optional(),
     signal: z.instanceof(AbortSignal).optional(),
   })
@@ -190,6 +248,9 @@ export type ModelExecutionMode = z.infer<typeof modelExecutionModeSchema>;
 export type ModelResponse = z.infer<typeof modelResponseSchema>;
 export type CapabilityRequest = z.infer<typeof capabilityRequestSchema>;
 export type SkillContext = z.infer<typeof skillContextSchema>;
+export type AuthorizedSkillCatalog = z.infer<
+  typeof authorizedSkillCatalogSchema
+>;
 export type AuthorizedSkillDescriptor = z.infer<
   typeof authorizedSkillDescriptorSchema
 >;

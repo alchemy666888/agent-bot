@@ -43,9 +43,15 @@ import type { SkillDraftGenerator } from "../../worker/skills/types";
 import { PostgresSkillAuthoringRepository } from "../skills/repository";
 import { DeepSeekProvider } from "../../worker/model/deepseek";
 import { parseTelegramAllowlist } from "../../shared/telegram-allowlist";
+import {
+  MAX_AUTHORIZED_SKILL_CATALOG_BYTES,
+  MAX_AUTHORIZED_SKILL_COUNT,
+} from "../../shared/contracts";
 
-const MAX_SKILL_CATALOG_BYTES = 4 * 1024 * 1024;
-export const MAX_WORKER_CONTEXT_BYTES = MAX_SKILL_CATALOG_BYTES;
+const MAX_SKILL_CATALOG_BYTES = MAX_AUTHORIZED_SKILL_CATALOG_BYTES;
+// The catalog crosses the worker boundary and is then serialized once more as
+// trusted model context, so budget both representations plus the prompt.
+export const MAX_WORKER_CONTEXT_BYTES = MAX_SKILL_CATALOG_BYTES * 2;
 
 const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
 
@@ -436,7 +442,7 @@ export async function dispatchTelegramInput(
   const github = readGitHubConfig();
   // Non-text updates never enter the skill invocation path. Use the only
   // authenticated Telegram identity available for text turns.
-  const skillCatalog =
+  let skillCatalog =
     input.kind === "text"
       ? await loadSkillCatalogOrEmpty(
           () =>
@@ -457,11 +463,18 @@ export async function dispatchTelegramInput(
         )
       : EMPTY_SKILL_CATALOG;
   const promptBytes = Buffer.byteLength(JSON.stringify(promptBundle), "utf8");
-  const skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
+  let skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
   if (
+    skillCatalog.skills.length > MAX_AUTHORIZED_SKILL_COUNT ||
     skillBytes > MAX_SKILL_CATALOG_BYTES ||
-    promptBytes + skillBytes > MAX_WORKER_CONTEXT_BYTES
-  )
+    promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES
+  ) {
+    // The documented safe default is an empty, zero-commit catalog. Never
+    // truncate a snapshot: that would make the advertised catalog incomplete.
+    skillCatalog = EMPTY_SKILL_CATALOG;
+    skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
+  }
+  if (promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES)
     throw new Error("WORKER_CONTEXT_TOO_LARGE");
   const sandbox = await ensureSandbox(readSandboxConfig());
   const workerPath = await installWorker(
