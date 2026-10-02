@@ -9,6 +9,7 @@ import {
   readTelegramConfig,
   readGitHubConfig,
   readPromptConfig,
+  readRepositoryIdentityConfig,
 } from "../config";
 import { ensureSandbox } from "../sandbox/controller";
 import { installWorker, invokeWorker } from "../sandbox/transport";
@@ -25,6 +26,7 @@ import type { GitHubClientEvent } from "../github/skills-client";
 import type { SkillRepositoryEvent } from "../github/skill-repository";
 import { TelegramClient } from "../../worker/telegram/client";
 import { derivePromptUserKey } from "../prompts/identity";
+import { resolveRepositoryTurnContext } from "./turn-context";
 import { PromptService } from "../prompts/service";
 import {
   parseConfirmationCallback,
@@ -70,8 +72,18 @@ type DispatchPromptServices = {
     text: string;
     language?: string;
     correlationId?: string;
+    pinnedSnapshot?: import("../prompts/github-store").VerifiedPromptSnapshot;
   }): ReturnType<PromptService["resolve"]>;
   confirmation?: Pick<PromptConfirmationService, "respond">;
+  repository?: {
+    store: GitHubPromptStore;
+    identity: {
+      connector: string;
+      owner: string;
+      repository: string;
+      branch: string;
+    };
+  };
 };
 
 let promptServices: DispatchPromptServices | undefined;
@@ -239,6 +251,15 @@ function configuredPromptService(
         });
         return emergency.resolve(input);
       }
+    },
+    repository: {
+      store,
+      identity: {
+        connector: config.GITHUB_CONNECTOR as string,
+        owner: identity.owner,
+        repository: identity.name,
+        branch: identity.branch,
+      },
     },
   };
   return repositoryPromptServices;
@@ -426,42 +447,50 @@ export async function dispatchTelegramInput(
     };
   }
 
-  // Resolve identity and freeze exactly one bundle before any sandbox exists.
-  const userKey = promptConfig.PROMPT_READS_ENABLED
-    ? derivePromptUserKey(
-        promptConfig.PROMPT_USER_KEY_SECRET as string,
-        input.userId,
-      )
-    : "u1_" + "A".repeat(43);
-  const promptBundle = await services.resolve({
-    userKey,
-    text: input.text,
-    correlationId,
-    ...(input.languageCode ? { language: input.languageCode } : {}),
-  });
   const github = readGitHubConfig();
-  // Non-text updates never enter the skill invocation path. Use the only
-  // authenticated Telegram identity available for text turns.
-  let skillCatalog =
-    input.kind === "text"
-      ? await loadSkillCatalogOrEmpty(
-          () =>
-            new GitHubSkillRepository(
-              createGitHubSkillsClient(
-                {
-                  connector: github.GITHUB_CONNECTOR,
-                  owner: github.GITHUB_SKILLS_OWNER,
-                  repository: github.GITHUB_SKILLS_REPO,
-                  branch: github.GITHUB_SKILLS_BRANCH,
-                  prefix: github.GITHUB_SKILLS_PREFIX,
-                },
-                { audit: (event) => auditGitHubEvent(correlationId, event) },
-              ),
-              { audit: (event) => auditGitHubEvent(correlationId, event) },
-            ).loadCatalogSnapshot({ telegramUserId: input.userId }),
-          correlationId,
-        )
-      : EMPTY_SKILL_CATALOG;
+  let promptBundle;
+  let skillCatalog: SkillCatalog;
+  let repositoryCommitSha: string | null = null;
+  if (promptConfig.PROMPT_READS_ENABLED && services.repository) {
+    const identity = readRepositoryIdentityConfig();
+    const skillRepository = new GitHubSkillRepository(
+      createGitHubSkillsClient(
+        {
+          connector: github.GITHUB_CONNECTOR,
+          owner: github.GITHUB_SKILLS_OWNER,
+          repository: github.GITHUB_SKILLS_REPO,
+          branch: github.GITHUB_SKILLS_BRANCH,
+          prefix: github.GITHUB_SKILLS_PREFIX,
+        },
+        { audit: (event) => auditGitHubEvent(correlationId, event) },
+      ),
+      { audit: (event) => auditGitHubEvent(correlationId, event) },
+    );
+    const context = await resolveRepositoryTurnContext({
+      telegramUserId: input.userId,
+      promptUserKeySecret: promptConfig.PROMPT_USER_KEY_SECRET as string,
+      text: input.text,
+      ...(input.languageCode ? { language: input.languageCode } : {}),
+      correlationId,
+      identity,
+      promptIdentity: services.repository.identity,
+      skillIdentity: identity,
+      resolveHead: () => services.repository!.store.resolveHead(),
+      loadPromptSnapshot: (commit) => services.repository!.store.load(commit),
+      resolvePrompt: (request) => services.resolve(request),
+      loadSkillCatalog: (telegramUserId, commit) =>
+        skillRepository.loadCatalogSnapshot({ telegramUserId }, commit),
+    });
+    ({ promptBundle, skillCatalog, repositoryCommitSha } = context);
+  } else {
+    promptBundle = await services.resolve({
+      userKey: "u1_" + "A".repeat(43),
+      text: input.text,
+      correlationId,
+      ...(input.languageCode ? { language: input.languageCode } : {}),
+    });
+    skillCatalog = EMPTY_SKILL_CATALOG;
+  }
   const promptBytes = Buffer.byteLength(JSON.stringify(promptBundle), "utf8");
   let skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
   if (
@@ -469,6 +498,8 @@ export async function dispatchTelegramInput(
     skillBytes > MAX_SKILL_CATALOG_BYTES ||
     promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES
   ) {
+    if (repositoryCommitSha !== null)
+      throw new Error("WORKER_CONTEXT_TOO_LARGE");
     // The documented safe default is an empty, zero-commit catalog. Never
     // truncate a snapshot: that would make the advertised catalog incomplete.
     skillCatalog = EMPTY_SKILL_CATALOG;
@@ -490,6 +521,7 @@ export async function dispatchTelegramInput(
       operation: "telegramTurn",
       payload: { input, skillCatalog },
       promptBundle,
+      repositoryCommitSha,
       rawTelegramInput: input.text,
     },
     workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
