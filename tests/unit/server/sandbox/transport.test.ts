@@ -12,6 +12,8 @@ function sandbox(response: unknown, exitCode = 0, stderr = ""): SandboxHandle {
     region: "sin1",
     mounts: { "/workspace": {} },
     status: "running",
+    update: vi.fn(),
+    stop: vi.fn(),
     writeFiles: vi.fn(async () => undefined),
     runCommand: vi.fn(async () => ({
       exitCode,

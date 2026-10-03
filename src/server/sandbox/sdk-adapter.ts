@@ -12,6 +12,15 @@ export interface SandboxHandle {
   region: string;
   mounts: Record<string, unknown>;
   status: string;
+  update(params: {
+    persistent?: boolean;
+    timeout?: number;
+    ports?: number[];
+    region?: "sin1";
+    failoverRegions?: string[];
+    keepLastSnapshots?: { count: number };
+  }): Promise<void>;
+  stop(): Promise<unknown>;
   writeFiles(files: { path: string; content: Buffer }[]): Promise<void>;
   runCommand(
     command: string,

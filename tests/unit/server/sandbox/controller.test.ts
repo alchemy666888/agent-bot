@@ -10,6 +10,8 @@ const handle = (): SandboxHandle => ({
   region: "sin1",
   mounts: {},
   status: "running",
+  update: vi.fn(),
+  stop: vi.fn(),
   writeFiles: vi.fn(),
   runCommand: vi.fn(),
   readFileToBuffer: vi.fn(),
@@ -38,19 +40,50 @@ describe("sandbox lifecycle", () => {
     expect(input).not.toHaveProperty("ports");
   });
 
-  it.each([
-    { name: "agent", region: "iad1" },
-    { name: "other", region: "sin1" },
-    { name: "agent", region: "sin1", routes: ["/public"] },
-  ])("fails closed for an unexpected sandbox %#", async (sandbox) => {
+  it("fails closed when the provider returns a different name", async () => {
     const sdk: SandboxSdk = {
       getOrCreateSandbox: vi.fn(async () => ({
         ...handle(),
-        ...sandbox,
+        name: "other",
       })),
     };
     await expect(ensureSandbox(config, sdk)).rejects.toThrow(
       "SANDBOX_CONFIGURATION_MISMATCH",
     );
+  });
+
+  it("reconciles an existing sandbox created with stale configuration", async () => {
+    const stale = {
+      ...handle(),
+      region: "iad1",
+      routes: ["/public"],
+    };
+    const sdk: SandboxSdk = {
+      getOrCreateSandbox: vi.fn(async () => stale),
+    };
+
+    await expect(ensureSandbox(config, sdk)).resolves.toBe(stale);
+    expect(stale.update).toHaveBeenCalledWith({
+      persistent: true,
+      region: "sin1",
+      failoverRegions: [],
+      ports: [],
+      timeout: 45 * 60 * 1000,
+      keepLastSnapshots: { count: 1 },
+    });
+    expect(stale.stop).toHaveBeenCalledOnce();
+  });
+
+  it("removes public routes without restarting a correctly placed sandbox", async () => {
+    const exposed = { ...handle(), routes: ["/public"] };
+    const sdk: SandboxSdk = {
+      getOrCreateSandbox: vi.fn(async () => exposed),
+    };
+
+    await ensureSandbox(config, sdk);
+    expect(exposed.update).toHaveBeenCalledWith(
+      expect.objectContaining({ ports: [] }),
+    );
+    expect(exposed.stop).not.toHaveBeenCalled();
   });
 });
