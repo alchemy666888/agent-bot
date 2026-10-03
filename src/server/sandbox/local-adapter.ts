@@ -64,6 +64,8 @@ function localHandle(root: string): SandboxHandle {
     region: "sin1",
     mounts: {},
     status: "running",
+    async update() {},
+    async stop() {},
     async writeFiles(files) {
       for (const file of files) {
         await mkdir(dirname(file.path), { recursive: true });

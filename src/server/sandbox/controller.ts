@@ -31,11 +31,26 @@ export async function ensureSandbox(
     keepLastSnapshots: { count: 1 },
   });
   const routes = (sandbox as { routes?: unknown }).routes;
-  if (
-    sandbox.name !== config.SANDBOX_NAME ||
-    sandbox.region !== "sin1" ||
-    (Array.isArray(routes) && routes.length > 0)
-  )
+  if (sandbox.name !== config.SANDBOX_NAME)
     throw new Error("SANDBOX_CONFIGURATION_MISMATCH");
+
+  // getOrCreate applies creation options only to a new named sandbox. Reconcile
+  // an existing sandbox as well, otherwise a sandbox first created in the SDK's
+  // default region (iad1) is returned forever and every request fails below.
+  const regionMismatch = sandbox.region !== config.region;
+  const hasPublicRoutes = Array.isArray(routes) && routes.length > 0;
+  if (regionMismatch || hasPublicRoutes) {
+    await sandbox.update({
+      persistent: true,
+      region: config.region,
+      failoverRegions: [],
+      ports: [],
+      timeout: HOBBY_SANDBOX_TIMEOUT_MS,
+      keepLastSnapshots: { count: 1 },
+    });
+    // Region changes apply to the next session. Stop the old session so the
+    // first worker command resumes it in sin1 rather than continuing in iad1.
+    if (regionMismatch && sandbox.status !== "stopped") await sandbox.stop();
+  }
   return sandbox;
 }
