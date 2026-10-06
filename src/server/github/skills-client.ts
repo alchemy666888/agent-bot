@@ -218,6 +218,14 @@ function encodePath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
+/**
+ * GitHub's git ref route treats an unencoded slash as another path segment.
+ * `heads/ai/skill-…` is therefore a 404; the branch name must use `%2F`.
+ */
+function encodeGitBranch(branch: string): string {
+  return encodeURIComponent(branch);
+}
+
 function retryDelay(response: Response, attempt: number): number {
   const retryAfter = response.headers.get("retry-after");
   if (retryAfter && /^\d+$/.test(retryAfter))
@@ -448,7 +456,7 @@ export class GitHubSkillsClient {
     const token = await this.token();
     const response = await this.request(
       token,
-      this.repoUrl(`/git/ref/heads/${encodePath(branch)}`),
+      this.repoUrl(`/git/ref/heads/${encodeGitBranch(branch)}`),
       {},
       true,
     );

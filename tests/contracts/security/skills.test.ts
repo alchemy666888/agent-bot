@@ -156,4 +156,20 @@ describe("GitHub skills client security contract", () => {
       }),
     );
   });
+
+  it("encodes slashes in a git branch so the ref API can see it", async () => {
+    const fetch = vi.fn(async () =>
+      Response.json({ object: { type: "commit", sha: "a".repeat(40) } }),
+    );
+    const client = new GitHubSkillsClient(config, {
+      tokenProvider: async () => "token",
+      fetch: fetch as typeof globalThis.fetch,
+    });
+
+    await client.getBranchHead("ai/skill-018f-018f");
+
+    const url = String(fetch.mock.calls[0]?.[0]);
+    expect(url).toContain("/git/ref/heads/ai%2Fskill-018f-018f");
+    expect(url).not.toContain("/git/ref/heads/ai/skill-");
+  });
 });
