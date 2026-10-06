@@ -9,9 +9,15 @@ vi.mock("pg", () => ({
 }));
 
 import {
+  DEFAULT_SYSTEM_PROMPT,
+  readModelConfig,
+} from "../../../../src/server/config";
+import { readDatabaseConfig } from "../../../../src/shared/postgres/config";
+import {
   dispatchTelegramInput,
   installDispatchSkillAuthoringService,
   loadSkillCatalog,
+  workerEnvironment,
 } from "../../../../src/server/telegram/dispatch";
 
 describe("Telegram dispatch skill catalog", () => {
@@ -112,6 +118,56 @@ describe("Telegram dispatch skill catalog", () => {
     } finally {
       process.env = prior;
     }
+  });
+
+  it("forwards normalized worker settings on one line", () => {
+    const certificate =
+      "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----";
+    const prior = { ...process.env };
+    Object.assign(process.env, {
+      DATABASE_URL: "postgres://user:pass@db.test/app?sslmode=require",
+      AIVEN_PG_CA: certificate,
+      SKILLS_ENABLED: " false ",
+      SKILL_MAX_TOOL_STEPS: " 5 ",
+      SKILL_EXECUTION_TIMEOUT_MS: "",
+    });
+    let env: ReturnType<typeof workerEnvironment>;
+    try {
+      env = workerEnvironment(
+        "telegram-token",
+        readModelConfig({
+          DEEPSEEK_API_KEY: "key",
+          DEEPSEEK_INPUT_PRICE_PER_MILLION: "1",
+          DEEPSEEK_OUTPUT_PRICE_PER_MILLION: "2",
+          DEEPSEEK_THINKING_ENABLED: "",
+          DEEPSEEK_BASE_URL: "",
+          DEEPSEEK_ROUTING_ENABLED: "",
+          DEEPSEEK_ROUTING_MODE: "",
+          DEEPSEEK_ROUTER_TIMEOUT_MS: "",
+          ASSISTANT_SYSTEM_PROMPT: "line one\nline two",
+        }),
+      );
+    } finally {
+      process.env = prior;
+    }
+    expect(env).toMatchObject({
+      TELEGRAM_BOT_TOKEN: "telegram-token",
+      DEEPSEEK_API_KEY: "key",
+      DEEPSEEK_BASE_URL: "https://api.deepseek.com",
+      DEEPSEEK_THINKING_ENABLED: "true",
+      DEEPSEEK_ROUTING_ENABLED: "false",
+      DEEPSEEK_ROUTING_MODE: "shadow",
+      DEEPSEEK_ROUTER_TIMEOUT_MS: "3000",
+      ASSISTANT_SYSTEM_PROMPT: "line one line two",
+      SKILLS_ENABLED: "false",
+      SKILL_MAX_TOOL_STEPS: "5",
+    });
+    expect(env.ASSISTANT_SYSTEM_PROMPT).not.toBe(DEFAULT_SYSTEM_PROMPT);
+    expect(env).not.toHaveProperty("SKILL_EXECUTION_TIMEOUT_MS");
+    expect(Object.values(env).some((value) => /[\r\n]/.test(value))).toBe(
+      false,
+    );
+    expect(readDatabaseConfig(env).AIVEN_PG_CA).toBe(certificate);
   });
 
   it("uses the validated catalog when GitHub is available", async () => {
