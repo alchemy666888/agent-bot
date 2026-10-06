@@ -13,6 +13,7 @@ import {
   readModelConfig,
 } from "../../../../src/server/config";
 import { readDatabaseConfig } from "../../../../src/shared/postgres/config";
+import { GitHubSkillsError } from "../../../../src/server/github/skills-client";
 import {
   dispatchTelegramInput,
   installDispatchSkillAuthoringService,
@@ -168,6 +169,47 @@ describe("Telegram dispatch skill catalog", () => {
       false,
     );
     expect(readDatabaseConfig(env).AIVEN_PG_CA).toBe(certificate);
+  });
+
+  it("tells the user when GitHub cannot find the skills repository", async () => {
+    const prior = { ...process.env };
+    Object.assign(process.env, {
+      TELEGRAM_BOT_TOKEN: "token",
+      TELEGRAM_WEBHOOK_SECRET: "secret",
+      DEEPSEEK_API_KEY: "key",
+      DEEPSEEK_INPUT_PRICE_PER_MILLION: "1",
+      DEEPSEEK_OUTPUT_PRICE_PER_MILLION: "2",
+      PROMPT_READS_ENABLED: "false",
+    });
+    installDispatchSkillAuthoringService({
+      shouldHandle: async () => true,
+      handle: async () => {
+        throw new GitHubSkillsError("not_found", 404, false);
+      },
+    });
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(Response.json({ ok: true, result: {} }));
+    try {
+      await expect(
+        dispatchTelegramInput({
+          kind: "text",
+          updateId: "10",
+          messageId: "10",
+          chatId: "3",
+          userId: "4",
+          text: "create a skill called notes",
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        data: { handled: "skill-authoring" },
+      });
+      expect(String(fetch.mock.calls[0]?.[1]?.body)).toContain(
+        "can't find the configured GitHub skills repository",
+      );
+    } finally {
+      process.env = prior;
+    }
   });
 
   it("uses the validated catalog when GitHub is available", async () => {
