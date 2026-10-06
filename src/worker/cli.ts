@@ -54,6 +54,10 @@ async function telegramTurn(
   degradationNotices: readonly DegradationNotice[] = [],
 ) {
   const input = telegramInputSchema.parse(payload.input);
+  // Ignored updates have no model work. Building a turn here required the
+  // emergency prompt, which the sandbox command does not inherit, so every
+  // non-text webhook failed WORKER_CONFIGURATION_INVALID and Telegram retried.
+  if (input.kind === "ignored") return { terminal: true };
   if (
     rawTelegramInput !== undefined &&
     input.kind === "text" &&
@@ -73,7 +77,7 @@ async function telegramTurn(
     : compiledEmergencyBundle(requiredEnv("ASSISTANT_SYSTEM_PROMPT"));
   const skills = new SkillResolver(
     capabilities,
-    process.env.SKILLS_ENABLED === "false" ? [] : catalog.skills,
+    envValue("SKILLS_ENABLED") === "false" ? [] : catalog.skills,
   );
   const routingEnabled = optionalStrictBoolean(
     "DEEPSEEK_ROUTING_ENABLED",
@@ -112,9 +116,9 @@ async function telegramTurn(
       recordFailure: (failure) => errors.record({ correlationId, ...failure }),
     },
     {
-      inputPricePerMillion: process.env.DEEPSEEK_INPUT_PRICE_PER_MILLION,
-      outputPricePerMillion: process.env.DEEPSEEK_OUTPUT_PRICE_PER_MILLION,
-      thinkingEnabled: process.env.DEEPSEEK_THINKING_ENABLED !== "false",
+      inputPricePerMillion: envValue("DEEPSEEK_INPUT_PRICE_PER_MILLION"),
+      outputPricePerMillion: envValue("DEEPSEEK_OUTPUT_PRICE_PER_MILLION"),
+      thinkingEnabled: envValue("DEEPSEEK_THINKING_ENABLED") !== "false",
     },
     skills,
     capabilities.generalRequests(),
@@ -169,33 +173,44 @@ async function query(payload: Record<string, unknown>) {
   return service.list(parsed.view, input);
 }
 
+function invalidWorkerConfiguration(name: string): never {
+  throw Object.assign(new Error("WORKER_CONFIGURATION_INVALID"), {
+    code: name,
+  });
+}
+
+/** Blank and whitespace match the server: they are unset, not invalid. */
+function envValue(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
 function requiredEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error("WORKER_CONFIGURATION_INVALID");
+  const value = envValue(name);
+  if (!value) invalidWorkerConfiguration(name);
   return value;
 }
 
 function optionalPositiveInteger(name: string): number | undefined {
-  const value = process.env[name];
+  const value = envValue(name);
   if (!value) return undefined;
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1)
-    throw new Error("WORKER_CONFIGURATION_INVALID");
+    invalidWorkerConfiguration(name);
   return parsed;
 }
 
 function optionalStrictBoolean(name: string, fallback: boolean): boolean {
-  const value = process.env[name];
+  const value = envValue(name);
   if (value === undefined) return fallback;
-  if (value !== "true" && value !== "false")
-    throw new Error("WORKER_CONFIGURATION_INVALID");
+  if (value !== "true" && value !== "false") invalidWorkerConfiguration(name);
   return value === "true";
 }
 
 function optionalRoutingMode(): "shadow" | "enforced" {
-  const value = process.env.DEEPSEEK_ROUTING_MODE ?? "shadow";
+  const value = envValue("DEEPSEEK_ROUTING_MODE") ?? "shadow";
   if (value !== "shadow" && value !== "enforced")
-    throw new Error("WORKER_CONFIGURATION_INVALID");
+    invalidWorkerConfiguration("DEEPSEEK_ROUTING_MODE");
   return value;
 }
 
@@ -205,11 +220,11 @@ function boundedInteger(
   maximum: number,
   fallback: number,
 ): number {
-  const value = process.env[name];
+  const value = envValue(name);
   if (value === undefined) return fallback;
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum)
-    throw new Error("WORKER_CONFIGURATION_INVALID");
+    invalidWorkerConfiguration(name);
   return parsed;
 }
 
@@ -218,11 +233,11 @@ function optionalBoundedNumber(
   minimum: number,
   maximum: number,
 ): number | undefined {
-  const value = process.env[name];
-  if (value === undefined || value === "") return undefined;
+  const value = envValue(name);
+  if (value === undefined) return undefined;
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum)
-    throw new Error("WORKER_CONFIGURATION_INVALID");
+    invalidWorkerConfiguration(name);
   return parsed;
 }
 

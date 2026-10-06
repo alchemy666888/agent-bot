@@ -184,9 +184,9 @@ globalThis.fetch = async (url, init = {}) => {
     }
   }, 15_000);
 
-  it("returns a safe structured response when an operation fails", async () => {
+  it("acknowledges ignored updates without model configuration", async () => {
     await exec("pnpm", ["worker:build"]);
-    const root = await mkdtemp(join(tmpdir(), "worker-bundle-"));
+    const root = await mkdtemp(join(tmpdir(), "worker-ignored-"));
     const correlationId = uuidV7();
     const requestPath = join(root, "request.json");
     const responsePath = join(root, "response.json");
@@ -221,6 +221,58 @@ globalThis.fetch = async (url, init = {}) => {
       expect(JSON.parse(await readFile(responsePath, "utf8"))).toEqual({
         contractVersion: 1,
         correlationId,
+        ok: true,
+        data: { terminal: true },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a safe structured response when an operation fails", async () => {
+    await exec("pnpm", ["worker:build"]);
+    const root = await mkdtemp(join(tmpdir(), "worker-bundle-"));
+    const correlationId = uuidV7();
+    const requestPath = join(root, "request.json");
+    const responsePath = join(root, "response.json");
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        contractVersion: 1,
+        correlationId,
+        operation: "telegramTurn",
+        payload: {
+          input: {
+            kind: "text",
+            updateId: "1",
+            messageId: "2",
+            chatId: "3",
+            userId: "4",
+            text: "hello",
+          },
+          skillCatalog: { commitSha: "a".repeat(40), skills: [] },
+        },
+      }),
+    );
+    const env = { ...process.env };
+    for (const name of [
+      "DATABASE_URL",
+      "TELEGRAM_BOT_TOKEN",
+      "DEEPSEEK_API_KEY",
+      "DEEPSEEK_BASE_URL",
+      "DEEPSEEK_THINKING_ENABLED",
+      "ASSISTANT_SYSTEM_PROMPT",
+    ])
+      delete env[name];
+    try {
+      await exec(
+        process.execPath,
+        ["dist/worker.mjs", "telegramTurn", requestPath, responsePath],
+        { env },
+      );
+      expect(JSON.parse(await readFile(responsePath, "utf8"))).toEqual({
+        contractVersion: 1,
+        correlationId,
         ok: false,
         error: {
           code: "WORKER_CONFIGURATION_INVALID",
@@ -229,6 +281,7 @@ globalThis.fetch = async (url, init = {}) => {
           diagnostic: {
             stage: "operation",
             kind: "Error",
+            causeCode: "ASSISTANT_SYSTEM_PROMPT",
           },
         },
       });

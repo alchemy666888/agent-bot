@@ -533,8 +533,7 @@ export async function dispatchTelegramInput(
       resolvePrompt: (request) => services.resolve(request),
       loadSkillCatalog: async (telegramUserId, commit) => {
         const result = await loadSkillCatalog(
-          () =>
-            skillRepository.loadCatalogSnapshot({ telegramUserId }, commit),
+          () => skillRepository.loadCatalogSnapshot({ telegramUserId }, commit),
           correlationId,
           commit,
         );
@@ -546,8 +545,7 @@ export async function dispatchTelegramInput(
   const { promptBundle, repositoryCommitSha } = turnContext;
   let skillCatalog: SkillCatalog = turnContext.skillCatalog;
   const degradationNotices = promptDegradationNotices(promptBundle, input.text);
-  if (skillCatalogDegradation)
-    degradationNotices.push(skillCatalogDegradation);
+  if (skillCatalogDegradation) degradationNotices.push(skillCatalogDegradation);
   else if (skillCatalog.skills.length === 0)
     degradationNotices.push("catalog_missing");
   const promptBytes = Buffer.byteLength(JSON.stringify(promptBundle), "utf8");
@@ -590,10 +588,25 @@ export async function dispatchTelegramInput(
   );
 }
 
-function workerEnvironment(
+function optionalWorkerInteger(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1)
+    throw Object.assign(new Error("WORKER_CONFIGURATION_INVALID"), {
+      code: name,
+    });
+  return String(parsed);
+}
+
+/** Values the sandbox command actually receives. Every value is one line. */
+export function workerEnvironment(
   telegramToken: string,
   model: ReturnType<typeof readModelConfig>,
 ) {
+  const skillsEnabled = process.env.SKILLS_ENABLED?.trim();
+  const skillSteps = optionalWorkerInteger("SKILL_MAX_TOOL_STEPS");
+  const skillTimeout = optionalWorkerInteger("SKILL_EXECUTION_TIMEOUT_MS");
   return {
     TELEGRAM_BOT_TOKEN: telegramToken,
     DEEPSEEK_API_KEY: model.DEEPSEEK_API_KEY,
@@ -616,12 +629,17 @@ function workerEnvironment(
     DEEPSEEK_OUTPUT_PRICE_PER_MILLION: String(
       model.DEEPSEEK_OUTPUT_PRICE_PER_MILLION,
     ),
-    ...(process.env.SKILLS_ENABLED
-      ? { SKILLS_ENABLED: process.env.SKILLS_ENABLED }
+    // v1 turns (media, edits, non-private chats) build the emergency bundle
+    // from this value. Leaving it out fails the worker before any reply.
+    ASSISTANT_SYSTEM_PROMPT: model.ASSISTANT_SYSTEM_PROMPT.replace(
+      /\s+/g,
+      " ",
+    ).trim(),
+    ...(skillsEnabled === "true" || skillsEnabled === "false"
+      ? { SKILLS_ENABLED: skillsEnabled }
       : {}),
-    ...(process.env.SKILL_MAX_TOOL_STEPS
-      ? { SKILL_MAX_TOOL_STEPS: process.env.SKILL_MAX_TOOL_STEPS }
-      : {}),
+    ...(skillSteps ? { SKILL_MAX_TOOL_STEPS: skillSteps } : {}),
+    ...(skillTimeout ? { SKILL_EXECUTION_TIMEOUT_MS: skillTimeout } : {}),
     ...databaseProcessEnv(),
   };
 }

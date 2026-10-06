@@ -352,18 +352,24 @@ describe("entry-point configuration", () => {
     ).toEqual({ DATABASE_URL: "postgres://u:p@db.test/app" });
   });
 
-  it("passes a multiline Aiven CA certificate to the worker", () => {
+  it("passes a single-line Aiven CA that the worker can restore", () => {
     const certificate =
       "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----";
-    expect(
-      databaseProcessEnv({
-        DATABASE_URL: "postgres://u:p@db.test/app?sslmode=require",
-        AIVEN_PG_CA: certificate,
-      }),
-    ).toEqual({
+    const forwarded = databaseProcessEnv({
+      DATABASE_URL: "postgres://u:p@db.test/app?sslmode=require",
+      AIVEN_PG_CA: certificate,
+    });
+    expect(forwarded.AIVEN_PG_CA).not.toMatch(/[\r\n]/);
+    expect(readDatabaseConfig(forwarded)).toEqual({
       DATABASE_URL: "postgres://u:p@db.test/app?sslmode=verify-full",
       AIVEN_PG_CA: certificate,
     });
+    expect(
+      readDatabaseConfig({
+        DATABASE_URL: "postgres://u:p@db.test/app",
+        AIVEN_PG_CA: certificate.replace(/\n/g, "\\n"),
+      }).AIVEN_PG_CA,
+    ).toBe(certificate);
   });
 
   it.each(["prefer", "require", "verify-ca"])(
