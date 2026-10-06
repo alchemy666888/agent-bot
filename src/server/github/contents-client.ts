@@ -101,7 +101,7 @@ export class GitHubContentsTransport {
 
   async resolveBranch(branch: string): Promise<string> {
     const response = await this.request(
-      `/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`,
+      `/git/ref/heads/${encodeURIComponent(branch)}`,
     );
     const value = z
       .object({
@@ -272,13 +272,10 @@ export class GitHubContentsTransport {
     const commit = z
       .object({ sha: z.string().regex(SHA) })
       .parse(await commitResponse.json());
-    await this.request(
-      `/git/refs/heads/${input.branch.split("/").map(encodeURIComponent).join("/")}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify({ sha: commit.sha, force: false }),
-      },
-    );
+    await this.request(`/git/refs/heads/${encodeURIComponent(input.branch)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ sha: commit.sha, force: false }),
+    });
     return { commit };
   }
 }

@@ -16,7 +16,10 @@ import { installWorker, invokeWorker } from "../sandbox/transport";
 import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
 import type { TelegramInput } from "./input";
-import { createGitHubSkillsClient } from "../github/skills-client";
+import {
+  createGitHubSkillsClient,
+  GitHubSkillsError,
+} from "../github/skills-client";
 import {
   GitHubSkillRepository,
   GitHubSkillAuthoringAdapter,
@@ -451,11 +454,15 @@ export async function dispatchTelegramInput(
         input.username,
       );
     } catch (error) {
-      const code = (error as Error).message;
+      const code =
+        error instanceof GitHubSkillsError && error.kind === "not_found"
+          ? "GITHUB_REPOSITORY_NOT_FOUND"
+          : (error as Error).message;
       if (
         code !== "SKILL_AUTHOR_NOT_AUTHORIZED" &&
         code !== "GITHUB_CONNECTOR_NOT_FOUND" &&
-        code !== "GITHUB_CONNECTOR_NOT_INSTALLED"
+        code !== "GITHUB_CONNECTOR_NOT_INSTALLED" &&
+        code !== "GITHUB_REPOSITORY_NOT_FOUND"
       )
         throw error;
 
@@ -476,9 +483,13 @@ export async function dispatchTelegramInput(
       response =
         code === "SKILL_AUTHOR_NOT_AUTHORIZED"
           ? "You are not authorized to create or publish skills. Ask the bot operator to allow your Telegram user ID."
-          : chinese
-            ? "還不能建立 skill，因為這個 Vercel 專案沒有連結 GitHub connector。請先建立並 attach connector，然後再傳一次。"
-            : "I can't create a skill yet because this Vercel project is not linked to a GitHub connector. Create and attach the connector, then try again.";
+          : code === "GITHUB_REPOSITORY_NOT_FOUND"
+            ? chinese
+              ? "找不到設定的 GitHub skill repository 或分支。請確認 connector 可以讀取該 repository，而且設定的分支存在。"
+              : "I can't find the configured GitHub skills repository or branch. Check that the connector can read that repository and that the configured branch exists."
+            : chinese
+              ? "還不能建立 skill，因為這個 Vercel 專案沒有連結 GitHub connector。請先建立並 attach connector，然後再傳一次。"
+              : "I can't create a skill yet because this Vercel project is not linked to a GitHub connector. Create and attach the connector, then try again.";
     }
     await client.send(input.chatId, response);
     return {
