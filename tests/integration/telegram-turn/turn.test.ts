@@ -329,7 +329,10 @@ describe("Telegram turn", () => {
 
     expect(router.route).toHaveBeenCalledOnce();
     expect(model.generate).toHaveBeenCalledWith(
-      expect.objectContaining({ generalCapabilities: capabilities }),
+      expect.objectContaining({
+        executionMode: "forced_web_search",
+        generalCapabilities: [],
+      }),
     );
   });
 
@@ -428,7 +431,7 @@ describe("Telegram turn", () => {
     );
   });
 
-  it("uses general capabilities when no skill matches", async () => {
+  it("forces native search instead of general capabilities when no skill matches", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const model = {
       generate: vi.fn(async (request: unknown) => {
@@ -473,7 +476,8 @@ describe("Telegram turn", () => {
     });
     const request = model.generate.mock.calls[0]![0];
     expect(request).not.toHaveProperty("skill");
-    expect(request.generalCapabilities).toEqual(generalCapabilities);
+    expect(request.generalCapabilities).toEqual([]);
+    expect(request.executionMode).toBe("forced_web_search");
   });
 
   it("answers an unknown explicit skill request through the general path", async () => {

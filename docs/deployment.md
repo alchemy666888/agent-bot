@@ -70,7 +70,15 @@ Each `create` flow opens or provides the GitHub App installation flow. On GitHub
 3. Grant the minimum repository permissions needed by the skill Git workflow: **Metadata: Read-only** (GitHub requires it), **Contents: Read and write** for reading definitions and creating branches/commits, and **Pull requests: Read and write** for opening and updating review PRs. Leave Administration, Actions, Checks, Deployments, Issues, Members, Secrets, Webhooks, and every organization/account permission at **No access**. If a deployment only reads immutable skills and never authors them, reduce Contents to **Read-only** and omit Pull requests.
 4. Complete the installation, return to Vercel, and verify it with `vercel connect list`. Re-run `vercel connect attach` only for the environments that should use that installation.
 
-`@vercel/connect` obtains its workload identity from `VERCEL_OIDC_TOKEN` when the Next.js server loads a skill catalog. The server resolves the configured branch once, validates every manifest and skill document at that immutable commit, and passes a schema-validated snapshot to the Sandbox worker. The snapshot is capped at 4 MiB. GitHub credentials and connector configuration are never forwarded to the worker, written to request/response files, included in prompts, or persisted in application data.
+`@vercel/connect` obtains its workload identity from `VERCEL_OIDC_TOKEN` when the Next.js server loads a skill catalog. The Telegram server resolves remote `main` once per turn, validates every manifest and skill document at that immutable commit, and passes a schema-validated snapshot to the Sandbox worker. The snapshot is capped at 4 MiB. GitHub credentials and connector configuration are never forwarded to the worker, written to request/response files, included in prompts, or persisted in application data.
+
+### Telegram runtime skill policy
+
+Telegram turns read skills only from remote `main`, pinned to its current commit SHA. `GITHUB_SKILLS_BRANCH` and `GITHUB_PROMPTS_BRANCH` cannot select another runtime branch. Skill loading runs even when `PROMPT_READS_ENABLED=false`; enabled repository prompts use the same commit and repository identity as skills. Missing or unavailable prompts fall back to the compiled prompt without preventing a skill read or answer.
+
+The Telegram dispatcher does not invoke skill authoring or consult stored drafts. Old drafts remain in storage but cannot capture ordinary messages or make runtime requests to `ai/skill-…` branches. Publish skill definitions to `main` through the repository's operator workflow.
+
+If no authorized, usable skill matches, the answer uses DeepSeek's `/responses` endpoint with native `web_search` forced on the first request. This applies with routing disabled, in shadow mode, and in enforced mode, including empty, missing, inaccessible, invalid, or oversized catalogs. Deterministic bot commands, clarifications, and refusals keep their existing responses. Search failure returns a brief limitation instead of an unverified current-facts answer.
 
 ### Prompt repository rollout
 
