@@ -206,6 +206,16 @@ export class DeepSeekProvider implements ModelProvider {
         });
       const failedSearch = searches.some((item) => item.status === "failed");
       const content = finalContent(body);
+      if (failedSearch && input.executionMode === "forced_web_search")
+        return this.recover(
+          input,
+          instructions,
+          conversation,
+          usage,
+          requestId,
+          audit,
+          true,
+        );
       if (!calls.length) {
         if (!content && searches.length) {
           if (failedSearch)

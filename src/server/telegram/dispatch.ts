@@ -9,27 +9,19 @@ import {
   readTelegramConfig,
   readGitHubConfig,
   readPromptConfig,
-  readRepositoryIdentityConfig,
 } from "../config";
 import { ensureSandbox } from "../sandbox/controller";
 import { installWorker, invokeWorker } from "../sandbox/transport";
 import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
 import type { TelegramInput } from "./input";
-import {
-  createGitHubSkillsClient,
-  GitHubSkillsError,
-} from "../github/skills-client";
-import {
-  GitHubSkillRepository,
-  GitHubSkillAuthoringAdapter,
-} from "../github/skill-repository";
+import { createGitHubSkillsClient } from "../github/skills-client";
+import { GitHubSkillRepository } from "../github/skill-repository";
 import { logStructured, safeError } from "../../shared/logger";
 import type { GitHubClientEvent } from "../github/skills-client";
 import type { SkillRepositoryEvent } from "../github/skill-repository";
 import { TelegramClient } from "../../worker/telegram/client";
 import { derivePromptUserKey } from "../prompts/identity";
-import { resolveRepositoryTurnContext } from "./turn-context";
 import { PromptService } from "../prompts/service";
 import {
   parseConfirmationCallback,
@@ -41,13 +33,8 @@ import { PromptSnapshotCache } from "../prompts/cache";
 import { PostgresPromptRepository } from "../prompts/postgres";
 import { readDatabaseConfig } from "../../shared/postgres/config";
 import { postgresPoolConfig } from "../../shared/postgres/client";
+import { createCapabilityRegistry } from "../../worker/capabilities";
 import { PromptMetadataRouter } from "../../worker/prompts/router";
-import { SkillAuthoringService } from "../skills/service";
-import type { SkillAuthoringRepository } from "../skills/service";
-import type { SkillDraftGenerator } from "../../worker/skills/types";
-import { PostgresSkillAuthoringRepository } from "../skills/repository";
-import { DeepSeekProvider } from "../../worker/model/deepseek";
-import { parseTelegramAllowlist } from "../../shared/telegram-allowlist";
 import {
   MAX_AUTHORIZED_SKILL_CATALOG_BYTES,
   MAX_AUTHORIZED_SKILL_COUNT,
@@ -120,90 +107,6 @@ type DispatchPromptServices = {
 let promptServices: DispatchPromptServices | undefined;
 let repositoryPromptServices: DispatchPromptServices | undefined;
 
-type DispatchSkillAuthoringService = Pick<
-  SkillAuthoringService,
-  "shouldHandle" | "handle"
->;
-let skillAuthoringService: DispatchSkillAuthoringService | undefined;
-let repositorySkillAuthoringService: DispatchSkillAuthoringService | undefined;
-
-/** Installs the trusted authoring coordinator; primarily used by integration wiring. */
-export function installDispatchSkillAuthoringService(
-  service?: DispatchSkillAuthoringService,
-) {
-  skillAuthoringService = service;
-}
-
-function configuredSkillAuthoringService(
-  model: ReturnType<typeof readModelConfig>,
-  github: ReturnType<typeof readGitHubConfig>,
-): DispatchSkillAuthoringService {
-  if (repositorySkillAuthoringService) return repositorySkillAuthoringService;
-  const database = readDatabaseConfig();
-  const pool = new Pool(
-    postgresPoolConfig(database.DATABASE_URL, database.AIVEN_PG_CA),
-  );
-  const client = new GitHubSkillAuthoringAdapter({
-    connector: github.GITHUB_CONNECTOR,
-    owner: github.GITHUB_SKILLS_OWNER,
-    repository: github.GITHUB_SKILLS_REPO,
-    branch: github.GITHUB_SKILLS_BRANCH,
-    prefix: github.GITHUB_SKILLS_PREFIX,
-  });
-  const authors = parseTelegramAllowlist(process.env.SKILL_AUTHOR_TELEGRAM_IDS);
-  const capabilities = new Set(
-    (process.env.SKILL_AUTHOR_CAPABILITY_IDS ?? "")
-      .split(",")
-      .map((id) => id.trim())
-      .filter(Boolean),
-  );
-  const repository: SkillAuthoringRepository =
-    new PostgresSkillAuthoringRepository(pool, client, {
-      authorTelegramUserIds: authors.ids,
-      authorTelegramUsernames: authors.usernames,
-      capabilityIds: capabilities,
-    });
-  const provider = new DeepSeekProvider({
-    apiKey: model.DEEPSEEK_API_KEY,
-    baseUrl: model.DEEPSEEK_BASE_URL,
-    thinking: model.DEEPSEEK_THINKING_ENABLED,
-    maxToolCalls: 0,
-  });
-  const generator: SkillDraftGenerator = {
-    async generateSkillDraft(draft, feedback) {
-      const result = await provider.generate({
-        executionMode: "direct",
-        trustedInstructions: [
-          {
-            source: "runtime",
-            content:
-              "Write a concise SKILL.md. Return only markdown, with no code fence. The YAML frontmatter name must be exactly the supplied name, and description must be one line. Preserve all MUST, MUST NOT, and tool constraints.",
-          },
-        ],
-        messages: [
-          {
-            role: "user",
-            content: JSON.stringify({
-              name: draft.skillName,
-              domain: draft.intendedTasksDomain,
-              mustDo: draft.mustDo,
-              mustNotDo: draft.mustNotDo,
-              betterToDo: draft.betterToDo,
-              tools: draft.requiredToolsFunctions,
-              feedback,
-            }),
-          },
-        ],
-      });
-      return result.content;
-    },
-  };
-  return (repositorySkillAuthoringService = new SkillAuthoringService(
-    repository,
-    generator,
-  ));
-}
-
 /** Installs trusted, repository-backed services without putting their authority in the worker. */
 export function installDispatchPromptServices(
   services?: DispatchPromptServices,
@@ -238,7 +141,7 @@ function configuredPromptService(
     owner: config.GITHUB_PROMPTS_OWNER as string,
     name: config.GITHUB_PROMPTS_REPO as string,
     prefix: config.GITHUB_PROMPTS_PREFIX as string,
-    branch: config.GITHUB_PROMPTS_BRANCH as string,
+    branch: "main",
   };
   const store = new GitHubPromptStore(
     new GitHubContentsTransport({
@@ -305,7 +208,7 @@ export async function loadSkillCatalog(
   load: () => Promise<SkillCatalog>,
   correlationId: string,
   /** Preserve an already-resolved repository pin when degrading mid-turn. */
-  pinnedCommitSha = EMPTY_SKILL_CATALOG.commitSha,
+  pinnedCommitSha: string | (() => string) = EMPTY_SKILL_CATALOG.commitSha,
 ): Promise<{
   catalog: SkillCatalog;
   degradationReason?: "repository_unavailable" | "catalog_missing";
@@ -332,7 +235,13 @@ export async function loadSkillCatalog(
       ...(failure.diagnostic ? { metadata: failure.diagnostic } : {}),
     });
     return {
-      catalog: { ...EMPTY_SKILL_CATALOG, commitSha: pinnedCommitSha },
+      catalog: {
+        ...EMPTY_SKILL_CATALOG,
+        commitSha:
+          typeof pinnedCommitSha === "function"
+            ? pinnedCommitSha()
+            : pinnedCommitSha,
+      },
       degradationReason: "repository_unavailable",
     };
   }
@@ -376,7 +285,10 @@ export async function dispatchTelegramInput(
   correlationId = uuidV7(),
 ) {
   const telegram = readTelegramConfig();
-  const promptConfig = readPromptConfig();
+  const promptConfig = readPromptConfig({
+    ...process.env,
+    GITHUB_PROMPTS_BRANCH: "main",
+  });
   const client = new TelegramClient(telegram.TELEGRAM_BOT_TOKEN);
   if (input.kind === "callback") {
     // Capabilities are consumed only by the trusted confirmation coordinator.
@@ -415,8 +327,21 @@ export async function dispatchTelegramInput(
     };
   }
   const model = readModelConfig();
-  const services =
-    promptServices ?? configuredPromptService(promptConfig, model);
+  let services: DispatchPromptServices;
+  try {
+    services = promptServices ?? configuredPromptService(promptConfig, model);
+  } catch (error) {
+    const failure = safeError(error, "PROMPT_REPOSITORY_UNAVAILABLE", "prompt");
+    logStructured({
+      correlationId,
+      component: "controller",
+      operation: "prompt.resolve",
+      stage: "prompt-repository",
+      result: "degraded",
+      code: failure.code,
+    });
+    services = emergencyPromptService(model.ASSISTANT_SYSTEM_PROMPT);
+  }
   if (input.kind !== "text") {
     // Preserve the legacy worker behavior for non-model updates while keeping
     // prompt resolution and identity material out of that path.
@@ -438,123 +363,122 @@ export async function dispatchTelegramInput(
     );
   }
 
-  // Authoring is classified and executed entirely inside the trusted server boundary.
-  // Neither connector credentials nor repository authority are included in worker input.
-  const authoring =
-    skillAuthoringService ??
-    configuredSkillAuthoringService(model, readGitHubConfig());
-  if (await authoring.shouldHandle(input.userId, input.text)) {
-    let response: string;
-    try {
-      response = await authoring.handle(
-        input.userId,
-        input.text,
-        input.updateId,
-        input.languageCode,
-        input.username,
-      );
-    } catch (error) {
-      const code =
-        error instanceof GitHubSkillsError && error.kind === "not_found"
-          ? "GITHUB_REPOSITORY_NOT_FOUND"
-          : (error as Error).message;
-      if (
-        code !== "SKILL_AUTHOR_NOT_AUTHORIZED" &&
-        code !== "GITHUB_CONNECTOR_NOT_FOUND" &&
-        code !== "GITHUB_CONNECTOR_NOT_INSTALLED" &&
-        code !== "GITHUB_REPOSITORY_NOT_FOUND"
-      )
-        throw error;
-
-      // These are permanent project/policy results. Acknowledge them so
-      // Telegram does not retry the same update.
-      logStructured({
-        correlationId,
-        component: "controller",
-        operation: "skill.authoring",
-        stage:
-          code === "SKILL_AUTHOR_NOT_AUTHORIZED"
-            ? "authorization"
-            : "skill-repository",
-        result: "failure",
-        code,
+  // Telegram conversations only consume published skills. Stored authoring
+  // drafts never intercept messages or introduce a draft branch into a turn.
+  let resolvedCommit = EMPTY_SKILL_CATALOG.commitSha;
+  const catalogResult = await loadSkillCatalog(
+    async () => {
+      const github = readGitHubConfig({
+        ...process.env,
+        GITHUB_SKILLS_BRANCH: "main",
       });
-      const chinese = input.languageCode?.toLowerCase().startsWith("zh");
-      response =
-        code === "SKILL_AUTHOR_NOT_AUTHORIZED"
-          ? "You are not authorized to create or publish skills. Ask the bot operator to allow your Telegram user ID."
-          : code === "GITHUB_REPOSITORY_NOT_FOUND"
-            ? chinese
-              ? "找不到設定的 GitHub skill repository 或分支。請確認 connector 可以讀取該 repository，而且設定的分支存在。"
-              : "I can't find the configured GitHub skills repository or branch. Check that the connector can read that repository and that the configured branch exists."
-            : chinese
-              ? "還不能建立 skill，因為這個 Vercel 專案沒有連結 GitHub connector。請先建立並 attach connector，然後再傳一次。"
-              : "I can't create a skill yet because this Vercel project is not linked to a GitHub connector. Create and attach the connector, then try again.";
-    }
-    await client.send(input.chatId, response);
-    return {
-      contractVersion: 1 as const,
-      correlationId,
-      ok: true as const,
-      data: { handled: "skill-authoring" as const },
-    };
-  }
-
-  const github = readGitHubConfig();
-  let skillCatalogDegradation: DegradationNotice | undefined;
-  const turnContext = await (async () => {
-    if (!(promptConfig.PROMPT_READS_ENABLED && services.repository)) {
-      return {
-        promptBundle: await services.resolve({
-          userKey: "u1_" + "A".repeat(43),
-          text: input.text,
-          correlationId,
-          ...(input.languageCode ? { language: input.languageCode } : {}),
-        }),
-        skillCatalog: EMPTY_SKILL_CATALOG,
-        repositoryCommitSha: null,
-      };
-    }
-
-    const identity = readRepositoryIdentityConfig();
-    const skillRepository = new GitHubSkillRepository(
-      createGitHubSkillsClient(
+      const client = createGitHubSkillsClient(
         {
           connector: github.GITHUB_CONNECTOR,
           owner: github.GITHUB_SKILLS_OWNER,
           repository: github.GITHUB_SKILLS_REPO,
-          branch: github.GITHUB_SKILLS_BRANCH,
+          branch: "main",
           prefix: github.GITHUB_SKILLS_PREFIX,
         },
         { audit: (event) => auditGitHubEvent(correlationId, event) },
-      ),
-      { audit: (event) => auditGitHubEvent(correlationId, event) },
-    );
-    return resolveRepositoryTurnContext({
-      telegramUserId: input.userId,
-      promptUserKeySecret: promptConfig.PROMPT_USER_KEY_SECRET as string,
-      text: input.text,
-      ...(input.languageCode ? { language: input.languageCode } : {}),
+      );
+      // Resolve the remote head for every turn; never reuse a symbolic-ref cache.
+      const head = await client.getBranchHead("main");
+      if (!/^[0-9a-f]{40}$/.test(head))
+        throw new Error("INVALID_REPOSITORY_COMMIT");
+      resolvedCommit = head;
+      const catalog = await new GitHubSkillRepository(client, {
+        audit: (event) => auditGitHubEvent(correlationId, event),
+      }).loadCatalogSnapshot({ telegramUserId: input.userId }, resolvedCommit);
+      const capabilities = createCapabilityRegistry();
+      return {
+        ...catalog,
+        skills: catalog.skills.filter((skill) => {
+          try {
+            capabilities.requests(skill.tools);
+            return true;
+          } catch {
+            logStructured({
+              correlationId,
+              component: "controller",
+              operation: "skill.catalog_load",
+              stage: "skill-repository",
+              result: "degraded",
+              code: "SKILL_CAPABILITY_UNAVAILABLE",
+            });
+            return false;
+          }
+        }),
+      };
+    },
+    correlationId,
+    () => resolvedCommit,
+  );
+  const skillCatalogDegradation = catalogResult.degradationReason;
+  const repositoryCommitSha =
+    resolvedCommit === EMPTY_SKILL_CATALOG.commitSha ? null : resolvedCommit;
+  const promptInput = {
+    userKey: promptConfig.PROMPT_USER_KEY_SECRET
+      ? derivePromptUserKey(
+          promptConfig.PROMPT_USER_KEY_SECRET as string,
+          input.userId,
+        )
+      : "u1_" + "A".repeat(43),
+    text: input.text,
+    correlationId,
+    ...(input.languageCode ? { language: input.languageCode } : {}),
+  };
+  let promptBundle: Awaited<ReturnType<DispatchPromptServices["resolve"]>>;
+  try {
+    if (promptConfig.PROMPT_READS_ENABLED && services.repository) {
+      const github = readGitHubConfig({
+        ...process.env,
+        GITHUB_SKILLS_BRANCH: "main",
+      });
+      const identity = services.repository.identity;
+      if (
+        !repositoryCommitSha ||
+        identity.branch !== "main" ||
+        identity.connector !== github.GITHUB_CONNECTOR ||
+        identity.owner !== github.GITHUB_SKILLS_OWNER ||
+        identity.repository !== github.GITHUB_SKILLS_REPO
+      )
+        throw new Error("REPOSITORY_IDENTITY_MISMATCH");
+      const pinnedSnapshot =
+        await services.repository.store.load(repositoryCommitSha);
+      if (pinnedSnapshot.commitSha !== repositoryCommitSha)
+        throw new Error("REPOSITORY_COMMIT_MISMATCH");
+      promptBundle = await services.resolve({ ...promptInput, pinnedSnapshot });
+    } else {
+      promptBundle = await services.resolve(promptInput);
+    }
+    if (
+      promptBundle.repositoryCommitSha !== null &&
+      promptBundle.repositoryCommitSha !== repositoryCommitSha
+    )
+      throw new Error("REPOSITORY_COMMIT_MISMATCH");
+  } catch (error) {
+    const failure = safeError(error, "PROMPT_REPOSITORY_UNAVAILABLE", "prompt");
+    logStructured({
       correlationId,
-      identity,
-      promptIdentity: services.repository.identity,
-      skillIdentity: identity,
-      resolveHead: () => services.repository!.store.resolveHead(),
-      loadPromptSnapshot: (commit) => services.repository!.store.load(commit),
-      resolvePrompt: (request) => services.resolve(request),
-      loadSkillCatalog: async (telegramUserId, commit) => {
-        const result = await loadSkillCatalog(
-          () => skillRepository.loadCatalogSnapshot({ telegramUserId }, commit),
-          correlationId,
-          commit,
-        );
-        skillCatalogDegradation = result.degradationReason;
-        return result.catalog;
-      },
+      component: "controller",
+      operation: "prompt.resolve",
+      stage: "prompt-repository",
+      result: "degraded",
+      code: failure.code,
     });
-  })();
-  const { promptBundle, repositoryCommitSha } = turnContext;
-  let skillCatalog: SkillCatalog = turnContext.skillCatalog;
+    promptBundle = await emergencyPromptService(
+      model.ASSISTANT_SYSTEM_PROMPT,
+    ).resolve(promptInput);
+  }
+  // Compiled prompts can accompany skills pinned to main without fetching any
+  // prompt files. Keep the worker's single-commit contract intact in that case.
+  promptBundle = {
+    ...promptBundle,
+    repositoryCommitSha,
+    turnPin: { ...promptBundle.turnPin, commitSha: repositoryCommitSha },
+  };
+  let skillCatalog: SkillCatalog = catalogResult.catalog;
   const degradationNotices = promptDegradationNotices(promptBundle, input.text);
   if (skillCatalogDegradation) degradationNotices.push(skillCatalogDegradation);
   else if (skillCatalog.skills.length === 0)
@@ -566,11 +490,9 @@ export async function dispatchTelegramInput(
     skillBytes > MAX_SKILL_CATALOG_BYTES ||
     promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES
   ) {
-    if (repositoryCommitSha !== null)
-      throw new Error("WORKER_CONTEXT_TOO_LARGE");
-    // The documented safe default is an empty, zero-commit catalog. Never
-    // truncate a snapshot: that would make the advertised catalog incomplete.
-    skillCatalog = EMPTY_SKILL_CATALOG;
+    // Preserve main's pin while dropping an unusable catalog in its entirety.
+    // Never truncate a snapshot or allow its size to block web-search fallback.
+    skillCatalog = { ...EMPTY_SKILL_CATALOG, commitSha: resolvedCommit };
     if (!degradationNotices.includes("catalog_too_large"))
       degradationNotices.push("catalog_too_large");
     skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");

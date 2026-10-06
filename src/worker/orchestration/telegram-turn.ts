@@ -431,8 +431,8 @@ export class TelegramTurn {
                       (error as Error)?.message === "ROUTER_OUTPUT_INVALID"
                     )
                       continue;
-                    // Provider failures and timeouts fail safely to the direct
-                    // answer path; the sanitized failed run is still recorded.
+                    // Provider failures and timeouts fall back to native
+                    // web search; the sanitized failed run is still recorded.
                     break;
                   }
 
@@ -511,8 +511,8 @@ export class TelegramTurn {
                   if (decision.kind === "unavailable")
                     answer =
                       "I can’t perform that action because no authorized capability is available, and web search cannot perform it.";
-                  // direct and the bounded invalid-selection fallback both
-                  // intentionally execute without capabilities.
+                  // Direct classifications and invalid selections use the
+                  // mandatory search fallback below.
                   break;
                 }
               } else {
@@ -537,11 +537,16 @@ export class TelegramTurn {
                 for (const run of routerRuns)
                   run.disagreement = shadowRouteKind !== existingRoute;
               }
-              if (!resolution || resolution.kind === "none")
+              if (!resolution || resolution.kind === "none") {
+                // Search is the mandatory answer fallback in every router mode.
+                // A classifier cannot turn a missing skill into an unsearched answer.
+                executionMode = "forced_web_search";
+                routedCapabilities = [];
                 fallbackReason =
                   command?.kind === "fallback"
                     ? command.reason
                     : "no_skill_match";
+              }
               if (answer) {
                 // The router produced a deterministic clarification or refusal.
               } else if (resolution?.kind === "ambiguous") {

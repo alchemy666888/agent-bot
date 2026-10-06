@@ -89,9 +89,9 @@ async function run(text: string) {
 }
 
 describe("trusted authorized skill catalog", () => {
-  it("includes the complete filtered, commit-pinned catalog on direct requests", async () => {
+  it("includes the complete filtered, commit-pinned catalog on search fallback requests", async () => {
     const [request] = await run("hello there");
-    expect(request.executionMode).toBe("direct");
+    expect(request.executionMode).toBe("forced_web_search");
     expect(request.authorizedSkillCatalog?.commitSha).toBe(commitSha);
     expect(request.authorizedSkillCatalog?.skills.map(({ id }) => id)).toEqual([
       reports.id,

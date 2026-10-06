@@ -177,6 +177,29 @@ describe("model adapter", () => {
       "failed or produced no useful results",
     );
   });
+  it("does not accept a factual answer accompanying a failed forced search", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          output: [{ type: "web_search_call", id: "ws", status: "failed" }],
+          output_text: "It is definitely sunny today.",
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ output_text: "I could not verify current weather." }),
+      );
+    const result = await new DeepSeekProvider(
+      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "weather" }],
+    });
+    expect(result.content).toBe("I could not verify current weather.");
+    expect(result.outputRecovery).toMatchObject({ triggered: true });
+  });
+
   it("uses DeepSeek web_search instead of a client function with the same name", async () => {
     const fetcher = vi.fn(
       async () =>

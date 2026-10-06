@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { LockCoordinator } from "../../../src/worker/locks/coordinator";
 import { initializeLayout } from "../../../src/worker/persistence/layout";
 import {
@@ -9,10 +9,6 @@ import {
   type SkillDraftGitClient,
 } from "../../../src/worker/skills/repository";
 import { SkillAuthoringService } from "../../../src/worker/skills/service";
-import {
-  dispatchTelegramInput,
-  installDispatchSkillAuthoringService,
-} from "../../../src/server/telegram/dispatch";
 
 const BASE_SHA = "0".repeat(40);
 const AUTHOR = "42";
@@ -115,27 +111,24 @@ class GitHubAdapterFake implements SkillDraftGitClient {
 }
 
 let root = "";
-let priorEnvironment: NodeJS.ProcessEnv;
-let telegramFetch: ReturnType<typeof vi.spyOn>;
+let coordinator: {
+  handle(
+    userId: string,
+    text: string,
+    updateId: string,
+    languageCode?: string,
+  ): Promise<string>;
+};
+let answers: string[] = [];
 
-beforeEach(() => {
-  priorEnvironment = { ...process.env };
-  Object.assign(process.env, {
-    TELEGRAM_BOT_TOKEN: "test-token",
-    TELEGRAM_WEBHOOK_SECRET: "test-secret",
-    DEEPSEEK_API_KEY: "model-key",
-    DEEPSEEK_INPUT_PRICE_PER_MILLION: "0",
-    DEEPSEEK_OUTPUT_PRICE_PER_MILLION: "0",
-  });
-  telegramFetch = vi
-    .spyOn(globalThis, "fetch")
-    .mockResolvedValue(Response.json({ ok: true, result: {} }));
-});
+// Authoring remains testable as a standalone service; Telegram turns no longer
+// invoke it or allow a stored draft to capture ordinary conversation.
+function installAuthoringCoordinator(service: typeof coordinator) {
+  coordinator = service;
+}
 
 afterEach(async () => {
-  installDispatchSkillAuthoringService(undefined);
-  telegramFetch.mockRestore();
-  process.env = priorEnvironment;
+  answers = [];
   if (root) await rm(root, { recursive: true, force: true });
   root = "";
 });
@@ -160,8 +153,7 @@ async function fixture(options?: {
     ),
   };
   const service = new SkillAuthoringService(root, repository, generator);
-  installDispatchSkillAuthoringService({
-    shouldHandle: (userId, text) => service.shouldHandle(userId, text),
+  installAuthoringCoordinator({
     handle: (userId, text, updateId, languageCode) =>
       locks.withUser(userId, () =>
         service.handle(userId, text, updateId, languageCode),
@@ -170,44 +162,38 @@ async function fixture(options?: {
   return { git, locks, repository, generator, service };
 }
 
-function textInput(updateId: string, text: string, userId = AUTHOR) {
-  return {
-    kind: "text" as const,
-    updateId,
-    messageId: updateId,
-    chatId: "22",
+async function dispatch(
+  updateId: string,
+  text: string,
+  userId = AUTHOR,
+  languageCode?: string,
+) {
+  const response = await coordinator.handle(
     userId,
     text,
-  };
-}
-
-async function dispatch(updateId: string, text: string, userId = AUTHOR) {
-  return dispatchTelegramInput(
-    textInput(updateId, text, userId),
-    `correlation-${updateId}`,
+    updateId,
+    languageCode,
   );
+  answers.push(response);
+  return response;
 }
 
-function sentText(call = telegramFetch.mock.calls.length - 1) {
-  const body = JSON.parse(String(telegramFetch.mock.calls[call]![1]?.body)) as {
-    text: string;
-  };
-  return body.text;
+function sentText(call = answers.length - 1) {
+  return answers[call]!;
 }
 
-describe("Telegram skill authoring", () => {
+describe("standalone durable skill authoring", () => {
   it("authors, durably revises, explicitly approves, and publishes the reviewed files", async () => {
     const { git, locks, repository, generator } = await fixture();
 
-    await expect(dispatch("501", COMPLETE_REQUEST)).resolves.toMatchObject({
-      data: { handled: "skill-authoring" },
-    });
+    await expect(dispatch("501", COMPLETE_REQUEST)).resolves.toContain(
+      "Approve: /skill_approve 1",
+    );
     expect(sentText()).toContain("Approve: /skill_approve 1");
 
     // Recreate the coordinator to prove the next Telegram turn resumes from durable state.
     const recovered = new SkillAuthoringService(root, repository, generator);
-    installDispatchSkillAuthoringService({
-      shouldHandle: (userId, text) => recovered.shouldHandle(userId, text),
+    installAuthoringCoordinator({
       handle: (userId, text, updateId, languageCode) =>
         locks.withUser(userId, () =>
           recovered.handle(userId, text, updateId, languageCode),
@@ -246,33 +232,21 @@ describe("Telegram skill authoring", () => {
     ).toBeUndefined();
   });
 
-  it("routes the screenshot-equivalent Chinese request into clarification, not the model", async () => {
+  it("clarifies an explicit Chinese authoring request", async () => {
     const { repository } = await fixture();
-    const modelAnswer = vi.fn();
-
-    await dispatchTelegramInput(
-      { ...textInput("510", "幫我建立一個 AI skill"), languageCode: "zh-TW" },
-      "chinese-authoring",
-    ).then(modelAnswer);
-
-    expect(modelAnswer).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { handled: "skill-authoring" } }),
-    );
+    await dispatch("510", "幫我建立一個 AI skill", AUTHOR, "zh-TW");
     expect(sentText()).toContain("還需要一項資料");
-    expect(sentText()).toContain("英文連字號名稱");
     expect(await repository.activeForOwner(AUTHOR)).toMatchObject({
       status: "clarifying",
     });
   });
 
-  it("acknowledges an unauthorized author without making the webhook retry", async () => {
+  it("rejects an unauthorized author", async () => {
     await fixture({ authors: [] });
     await dispatch("520", COMPLETE_REQUEST);
-    await expect(dispatch("521", "/skill_approve 1")).resolves.toMatchObject({
-      data: { handled: "skill-authoring" },
-    });
-    expect(sentText()).toContain("not authorized");
-    expect(sentText()).toContain("Telegram user ID");
+    await expect(dispatch("521", "/skill_approve 1")).rejects.toThrow(
+      "SKILL_AUTHOR_NOT_AUTHORIZED",
+    );
   });
 
   it("rejects an unregistered requested capability", async () => {
@@ -310,8 +284,7 @@ describe("Telegram skill authoring", () => {
     const { locks, repository, generator } = await fixture();
     await dispatch("560", COMPLETE_REQUEST);
     const recovered = new SkillAuthoringService(root, repository, generator);
-    installDispatchSkillAuthoringService({
-      shouldHandle: (userId, text) => recovered.shouldHandle(userId, text),
+    installAuthoringCoordinator({
       handle: (userId, text, updateId, languageCode) =>
         locks.withUser(userId, () =>
           recovered.handle(userId, text, updateId, languageCode),
