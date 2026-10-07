@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { REPLY_STYLE_GUIDANCE } from "./reply-style";
 import {
   modelResponseSchema,
   type ModelProvider,
@@ -135,7 +136,7 @@ export class DeepSeekProvider implements ModelProvider {
         })),
       DEEPSEEK_WEB_SEARCH,
     ];
-    instructions = [instructions, WEB_SEARCH_GUIDANCE]
+    instructions = [instructions, WEB_SEARCH_GUIDANCE, REPLY_STYLE_GUIDANCE]
       .filter(Boolean)
       .join("\n\n");
     const conversation: unknown[] = input.messages

@@ -14,7 +14,7 @@ afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 describe("Telegram turn", () => {
-  it("stores and sends one combined sanitized degradation notice", async () => {
+  it("keeps all degradation diagnostics out of stored and delivered answers", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const conversations = new ConversationService();
     const telegram = {
@@ -25,7 +25,18 @@ describe("Telegram turn", () => {
       new LockCoordinator(root),
       new UpdateRepository(root),
       conversations,
-      { generate: vi.fn(async () => ({ content: "Useful answer" })) },
+      {
+        generate: vi.fn(async () => ({
+          content: [
+            "已解碼你的請求：「香港今天有什麼新聞」。",
+            "Useful answer",
+            "",
+            "⚠️ 提醒：以上為搜尋引擎抓取的即時報導，具體時間與發展以各新聞機構最新更新為準。",
+            "",
+            "需要我針對其中某一則新聞深入整理嗎？😊",
+          ].join("\n"),
+        })),
+      },
       telegram,
       "system",
       undefined,
@@ -37,7 +48,15 @@ describe("Telegram turn", () => {
       60_000,
       { mode: "enforced" },
       undefined,
-      ["repository_unavailable", "request_prompt_missing"],
+      [
+        "repository_unavailable",
+        "catalog_missing",
+        "catalog_too_large",
+        "stale_snapshot",
+        "system_prompt_missing",
+        "request_prompt_missing",
+        "compiled_emergency_prompt",
+      ],
     );
     await turn.handle({
       kind: "text",
@@ -49,11 +68,7 @@ describe("Telegram turn", () => {
     });
 
     const delivered = telegram.send.mock.calls[0]?.[1];
-    expect(delivered).toContain("Useful answer");
-    expect(delivered).toContain(
-      "GitHub connection and skill list were unavailable",
-    );
-    expect(delivered).toContain("requested prompt was unavailable");
+    expect(delivered).toBe("Useful answer");
     expect(telegram.send).toHaveBeenCalledTimes(1);
     const context = await conversations.context("4", "system");
     expect(context.messages.at(-1)?.content).toBe(delivered);
@@ -67,7 +82,10 @@ describe("Telegram turn", () => {
         .mockResolvedValueOnce({
           content: '<tool_calls><invoke name="Search"></invoke></tool_calls>',
         })
-        .mockResolvedValueOnce({ content: "Recovered final answer" }),
+        .mockResolvedValueOnce({
+          content:
+            "已解碼你的請求：「find the answer」。\nRecovered final answer",
+        }),
     };
     const telegram = {
       typing: vi.fn(async () => {}),
@@ -573,7 +591,11 @@ describe("Telegram turn", () => {
     const conversations = new ConversationService();
     conversations.contact({ id: "4", at: new Date().toISOString() });
     conversations.add("4", "user", "hello");
-    const assistant = conversations.add("4", "assistant", "stored final");
+    const assistant = conversations.add(
+      "4",
+      "assistant",
+      "stored final\n\n⚠️ Some defaults were used because the GitHub connection and skill list were unavailable, the built-in emergency prompt was used.",
+    );
     await updates.save({
       updateId: "6",
       stage: "model_complete",

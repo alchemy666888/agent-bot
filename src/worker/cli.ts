@@ -298,6 +298,16 @@ async function main() {
             stage: "complete",
             result: failure ? "failure" : "success",
             durationMs: Date.now() - started,
+            ...(request.contractVersion === 2 &&
+            request.degradationNotices.length
+              ? {
+                  metadata: {
+                    degradationNotices: [
+                      ...new Set(request.degradationNotices),
+                    ],
+                  },
+                }
+              : {}),
             ...(failure ? { code: safeError(failure).code } : {}),
           },
           store,
