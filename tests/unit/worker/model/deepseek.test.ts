@@ -5,9 +5,41 @@ import {
   DeepSeekProvider,
 } from "../../../../src/worker/model/deepseek";
 import { retryTransient } from "../../../../src/worker/model/retry";
+import { REPLY_STYLE_GUIDANCE } from "../../../../src/worker/model/reply-style";
 import { calculateCost } from "../../../../src/worker/model/usage";
 import { CapabilityRegistry } from "../../../../src/worker/capabilities/registry";
 describe("model adapter", () => {
+  it.each([
+    "direct",
+    "forced_web_search",
+    "selected_tools",
+    "selected_skill",
+  ] as const)("applies reply style in %s mode", async (executionMode) => {
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      expect(body.instructions).toContain(REPLY_STYLE_GUIDANCE);
+      return Response.json({ output_text: "Useful answer" });
+    });
+    await new DeepSeekProvider(
+      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode,
+      messages: [{ role: "user", content: "hello" }],
+      ...(executionMode === "selected_skill"
+        ? {
+            skill: {
+              id: "example",
+              version: "1",
+              instructions: "Help with the request",
+              capabilities: [],
+              prohibitedActions: [],
+            },
+          }
+        : {}),
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
   it.each([
     '<tool_calls><invoke name="Search"></invoke></tool_calls>',
     '<invoke name="Search">',
@@ -173,6 +205,7 @@ describe("model adapter", () => {
       tool_choice: { type: "web_search" },
     });
     expect(recoveryBody.tools).toBeUndefined();
+    expect(recoveryBody.instructions).toContain(REPLY_STYLE_GUIDANCE);
     expect(recoveryBody.instructions).toContain(
       "failed or produced no useful results",
     );
