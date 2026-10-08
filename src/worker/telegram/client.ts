@@ -64,12 +64,18 @@ export class TelegramClient {
     chatId: string,
     text: string,
     buttons?: readonly { text: string; callbackData: string }[],
+    replyToMessageId?: string,
   ) {
     const formatted = formatTelegramText(text);
-    for (const chunk of chunkTelegramText(formatted)) {
+    const chunks = chunkTelegramText(formatted);
+    for (let index = 0; index < chunks.length; index++) {
+      const chunk = chunks[index]!;
       const response = await this.call("sendMessage", {
         chat_id: chatId,
         text: chunk,
+        ...(index === 0 && replyToMessageId
+          ? { reply_parameters: { message_id: Number(replyToMessageId) } }
+          : {}),
         ...(buttons?.length
           ? {
               reply_markup: {

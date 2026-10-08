@@ -144,7 +144,7 @@ async function telegramTurn(
   );
   await turn.handle(input);
   const proposal =
-    input.kind === "text"
+    input.kind === "text" && input.chatScope !== "group"
       ? detectPromptChangeProposal(input.text, bundle)
       : null;
   return { terminal: true, ...(proposal ? { proposal } : {}) };

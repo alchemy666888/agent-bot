@@ -17,7 +17,10 @@ import { handleCommand } from "../commands";
 import { LockCoordinator } from "../locks/coordinator";
 import { UpdateRepository } from "../updates/repository";
 import type { TelegramClient } from "../telegram/client";
-import type { TelegramInput } from "../../server/telegram/input";
+import {
+  conversationScopeKey,
+  type TelegramInput,
+} from "../../server/telegram/input";
 import { retryTransient } from "../model/retry";
 import type { UpdateState } from "../updates/state-machine";
 import type { SkillResolver } from "../skills/resolver";
@@ -114,6 +117,7 @@ export class TelegramTurn {
     originalRequest: string,
     userId: string,
     signal: AbortSignal,
+    includeSkillCatalog = true,
   ): Promise<{ answer: string; recovered?: ModelResponse }> {
     answer = answer === undefined ? undefined : cleanReplyBoilerplate(answer);
     if (answer?.trim() && !containsInternalProtocol(answer)) return { answer };
@@ -143,7 +147,7 @@ export class TelegramTurn {
               messages: [...safeHistory, turn.currentRequest],
             }),
         generalCapabilities: [],
-        ...(this.authorizedSkillCatalog
+        ...(includeSkillCatalog && this.authorizedSkillCatalog
           ? { authorizedSkillCatalog: this.authorizedSkillCatalog }
           : {}),
         signal,
@@ -161,7 +165,15 @@ export class TelegramTurn {
     if (input.kind === "ignored") return;
     if (input.kind === "unsupported") {
       await retryTransient(
-        () => this.telegram.send(input.chatId, "Please send a text message."),
+        () =>
+          input.replyToMessageId
+            ? this.telegram.send(
+                input.chatId,
+                "Please send a text message.",
+                undefined,
+                input.replyToMessageId,
+              )
+            : this.telegram.send(input.chatId, "Please send a text message."),
         isTransient,
       );
       return;
@@ -173,7 +185,19 @@ export class TelegramTurn {
       await this.telegram.acknowledgeCallback?.(input.callbackQueryId);
       return;
     }
-    await this.locks.withUser(input.userId, async () => {
+    const scopeKey = conversationScopeKey(input);
+    const group = input.chatScope === "group";
+    const skills = group ? undefined : this.skills;
+    const deliver = (text: string) =>
+      input.replyToMessageId
+        ? this.telegram.send(
+            input.chatId,
+            text,
+            undefined,
+            input.replyToMessageId,
+          )
+        : this.telegram.send(input.chatId, text);
+    await this.locks.withUser(scopeKey, async () => {
       const existing = await this.updates.get(input.updateId);
       if (existing?.telegramUserId && existing.telegramUserId !== input.userId)
         throw new Error("UPDATE_ACTOR_MISMATCH");
@@ -184,23 +208,30 @@ export class TelegramTurn {
         return;
       const at = new Date().toISOString();
       if (!existing)
-        await this.checkpoint(input.userId, {
+        await this.checkpoint(scopeKey, {
           updateId: input.updateId,
           telegramUserId: input.userId,
           stage: "received",
           updatedAt: at,
         });
       await this.conversations.contact({
-        id: input.userId,
+        id: scopeKey,
         username: input.username,
         languageCode: input.languageCode,
         at,
       });
-      const command = handleCommand(
-        input.text,
-        this.skills?.commandCatalog(input.userId),
-        input.userId,
-      );
+      const groupPrivateCommand =
+        group &&
+        /^\s*\/(?:skills|skill|use|prompt(?:-propose)?)(?:@[A-Za-z0-9_]+)?(?:\s|$)/i.test(
+          input.text,
+        );
+      const command = groupPrivateCommand
+        ? { kind: "reply" as const, text: "請在私聊使用這個指令。" }
+        : handleCommand(
+            input.text,
+            skills?.commandCatalog(input.userId),
+            input.userId,
+          );
       const unknownCommand = /^\s*\/[A-Za-z0-9_]+(?:@\S+)?(?:\s|$)/.test(
         input.text,
       );
@@ -217,17 +248,17 @@ export class TelegramTurn {
             ? command.request
             : input.text;
       if (input.text === "/new")
-        await this.conversations.newConversation(input.userId);
+        await this.conversations.newConversation(scopeKey);
       let requestMessageId: string | null = null;
       if (!existing || existing.stage === "received") {
         const userMessage = await this.conversations.add(
-          input.userId,
+          scopeKey,
           "user",
           routedText,
           at,
         );
         requestMessageId = userMessage.id;
-        await this.checkpoint(input.userId, {
+        await this.checkpoint(scopeKey, {
           updateId: input.updateId,
           telegramUserId: input.userId,
           stage: "prompt_saved",
@@ -268,7 +299,7 @@ export class TelegramTurn {
             else {
               if (!command && this.router && this.routing.mode === "shadow") {
                 const shadowContext = await this.conversations.context(
-                  input.userId,
+                  scopeKey,
                   this.composed(routedText),
                 );
                 try {
@@ -286,7 +317,7 @@ export class TelegramTurn {
                           .slice(0, -1)
                           .slice(-20),
                         authorizedSkills:
-                          this.skills?.routingCatalog(input.userId) ?? [],
+                          skills?.routingCatalog(input.userId) ?? [],
                         availableTools: this.capabilityRegistry
                           ? this.capabilityRegistry.generalRequests()
                           : [...this.generalCapabilities],
@@ -297,7 +328,7 @@ export class TelegramTurn {
                           request: routedText,
                           conversationContext: [],
                           authorizedSkills:
-                            this.skills?.routingCatalog(input.userId) ?? [],
+                            skills?.routingCatalog(input.userId) ?? [],
                           availableTools: this.capabilityRegistry
                             ? this.capabilityRegistry.generalRequests()
                             : [...this.generalCapabilities],
@@ -325,14 +356,14 @@ export class TelegramTurn {
               if (command?.kind === "fallback") {
                 resolution = { kind: "none" as const };
               } else if (command?.kind === "invoke") {
-                resolution = this.skills?.resolve(
+                resolution = skills?.resolve(
                   routedText,
                   input.userId,
                   command.invocation.skill.id ?? command.invocation.skill.name,
                 );
               } else if (this.router && this.routing.mode === "enforced") {
                 preparedContext = await this.conversations.context(
-                  input.userId,
+                  scopeKey,
                   this.composed(routedText),
                 );
                 const messages = preparedContext.messages.filter(
@@ -342,8 +373,7 @@ export class TelegramTurn {
                     role: "user" | "assistant";
                   } => message.role !== "system",
                 );
-                let skillCatalog =
-                  this.skills?.routingCatalog(input.userId) ?? [];
+                let skillCatalog = skills?.routingCatalog(input.userId) ?? [];
                 let toolCatalog = this.capabilityRegistry
                   ? this.capabilityRegistry.generalRequests()
                   : [...this.generalCapabilities];
@@ -415,7 +445,7 @@ export class TelegramTurn {
                   }
 
                   if (decision.kind === "skill") {
-                    const current = this.skills?.resolveRouted(
+                    const current = skills?.resolveRouted(
                       decision.selectedSkillId,
                       input.userId,
                     );
@@ -494,7 +524,7 @@ export class TelegramTurn {
                   break;
                 }
               } else {
-                resolution = this.skills?.resolve(routedText, input.userId);
+                resolution = skills?.resolve(routedText, input.userId);
               }
               if (resolution?.kind === "selected")
                 executionMode = "selected_skill";
@@ -542,7 +572,7 @@ export class TelegramTurn {
                 const context =
                   preparedContext ??
                   (await this.conversations.context(
-                    input.userId,
+                    scopeKey,
                     this.composed(routedText),
                   ));
                 generated = await retryTransient(
@@ -551,7 +581,7 @@ export class TelegramTurn {
                       ...context,
                       executionMode,
                       generalCapabilities: routedCapabilities,
-                      ...(this.authorizedSkillCatalog
+                      ...(!group && this.authorizedSkillCatalog
                         ? {
                             authorizedSkillCatalog: this.authorizedSkillCatalog,
                           }
@@ -577,13 +607,10 @@ export class TelegramTurn {
               stage: "model",
               error,
               updateId: input.updateId,
-              userId: input.userId,
+              userId: scopeKey,
             });
-            await retryTransient(
-              () => this.telegram.send(input.chatId, GENERIC_FAILURE),
-              isTransient,
-            );
-            await this.checkpoint(input.userId, {
+            await retryTransient(() => deliver(GENERIC_FAILURE), isTransient);
+            await this.checkpoint(scopeKey, {
               updateId: input.updateId,
               telegramUserId: input.userId,
               stage: "failed",
@@ -594,8 +621,9 @@ export class TelegramTurn {
           const validation = await this.validateFinalAnswer(
             answer,
             routedText,
-            input.userId,
+            scopeKey,
             turnController.signal,
+            !group,
           );
           answer = validation.answer;
           if (validation.recovered) {
@@ -603,7 +631,7 @@ export class TelegramTurn {
             fallbackReason = "model_output_recovery";
           }
           const assistant = await this.conversations.add(
-            input.userId,
+            scopeKey,
             "assistant",
             answer,
           );
@@ -612,7 +640,7 @@ export class TelegramTurn {
               await this.conversations.recordModelRun?.({
                 id: uuidV7(),
                 runKind: "router",
-                userId: input.userId,
+                userId: scopeKey,
                 provider: "deepseek",
                 model: "deepseek-v4-pro",
                 thinkingEnabled: this.accounting.thinkingEnabled,
@@ -655,7 +683,7 @@ export class TelegramTurn {
             await this.conversations.recordModelRun?.({
               id: uuidV7(),
               runKind: "answer",
-              userId: input.userId,
+              userId: scopeKey,
               provider: "deepseek",
               model: "deepseek-v4-pro",
               thinkingEnabled: this.accounting.thinkingEnabled,
@@ -704,7 +732,7 @@ export class TelegramTurn {
               degradationNotices: [...new Set(this.degradationNotices)],
               createdAt: new Date().toISOString(),
             });
-          await this.checkpoint(input.userId, {
+          await this.checkpoint(scopeKey, {
             updateId: input.updateId,
             telegramUserId: input.userId,
             stage: "model_complete",
@@ -717,26 +745,24 @@ export class TelegramTurn {
         const finalValidation = await this.validateFinalAnswer(
           answer,
           routedText,
-          input.userId,
+          scopeKey,
           turnController.signal,
+          !group,
         );
         const finalAnswer = finalValidation.answer;
         if (!finalAnswer) throw new Error("ASSISTANT_RESPONSE_MISSING");
         try {
-          await retryTransient(
-            () => this.telegram.send(input.chatId, finalAnswer),
-            isTransient,
-          );
+          await retryTransient(() => deliver(finalAnswer), isTransient);
         } catch (error) {
           await this.observability?.recordFailure({
             stage: "delivery",
             error,
             updateId: input.updateId,
-            userId: input.userId,
+            userId: scopeKey,
           });
           throw error;
         }
-        await this.checkpoint(input.userId, {
+        await this.checkpoint(scopeKey, {
           updateId: input.updateId,
           telegramUserId: input.userId,
           stage: "delivery_complete",

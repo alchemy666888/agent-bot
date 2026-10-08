@@ -35,10 +35,47 @@ describe("Telegram contract", () => {
     });
     expect(JSON.stringify(value)).not.toContain("private");
   });
-  it("ignores groups and edited messages", () =>
+  it("ignores edited messages and non-group chats", () => {
     expect(
       extractTelegramInput({ update_id: 1, edited_message: {} }).kind,
-    ).toBe("ignored"));
+    ).toBe("ignored");
+    expect(
+      extractTelegramInput({
+        update_id: 2,
+        message: {
+          message_id: 3,
+          chat: { id: -100, type: "channel" },
+          from: { id: 4 },
+          text: "hi",
+        },
+      }).kind,
+    ).toBe("ignored");
+  });
+  it("accepts group text that does not mention the bot", () => {
+    const value = extractTelegramInput({
+      update_id: 8,
+      message: {
+        message_id: 9,
+        chat: { id: -100123, type: "supergroup", title: "交易討論" },
+        from: { id: 4, first_name: "Ada", username: "u" },
+        text: "大家好",
+      },
+    });
+    expect(value).toEqual({
+      kind: "text",
+      updateId: "8",
+      messageId: "9",
+      chatId: "-100123",
+      userId: "4",
+      username: "u",
+      languageCode: undefined,
+      text: "大家好",
+      chatScope: "group",
+      replyToMessageId: "9",
+    });
+    expect(JSON.stringify(value)).not.toContain("交易討論");
+    expect(JSON.stringify(value)).not.toContain("Ada");
+  });
   it("extracts only bounded opaque callbacks from private chats", () => {
     expect(
       extractTelegramInput({
@@ -98,6 +135,18 @@ describe("Telegram contract", () => {
     expect(JSON.parse(request.mock.calls[0]![1]!.body as string)).toEqual({
       chat_id: "3",
       text: "Result\n• exact response",
+    });
+  });
+  it("replies to the group message that was addressed", async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+    const client = new TelegramClient("fixture-token", request);
+    await client.send("-100123", "你好", undefined, "9");
+    expect(JSON.parse(request.mock.calls[0]![1]!.body as string)).toEqual({
+      chat_id: "-100123",
+      text: "你好",
+      reply_parameters: { message_id: 9 },
     });
   });
 });

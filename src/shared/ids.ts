@@ -7,6 +7,14 @@ export function telegramId(value: string | number | bigint): string {
   return text;
 }
 
+/** Private chats are positive. Groups and supergroups are negative. */
+export function telegramChatId(value: string | number | bigint): string {
+  const text = String(value);
+  if (!/^-?[1-9]\d*$/.test(text))
+    throw new TypeError("Invalid Telegram chat identifier");
+  return text;
+}
+
 export function uuidV7(now = Date.now()): string {
   const bytes = randomBytes(16);
   let time = BigInt(now);

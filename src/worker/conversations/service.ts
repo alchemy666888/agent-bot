@@ -1,4 +1,11 @@
 import { uuidV7, telegramId } from "../../shared/ids";
+
+/** Group transcripts use `group` plus the chat id, which is not a user id. */
+function profileId(id: string | number | bigint): string {
+  const text = String(id);
+  if (/^group-?[1-9]\d*$/.test(text)) return text;
+  return telegramId(text);
+}
 import type { ModelRequest } from "../../shared/contracts";
 import type { ComposedTurn } from "../prompts/composer";
 
@@ -32,7 +39,7 @@ export class ConversationService {
     languageCode?: string;
     at: string;
   }): UserProfile {
-    const id = telegramId(input.id);
+    const id = profileId(input.id);
     const prior = this.users.get(id);
     const user = {
       telegramUserId: id,

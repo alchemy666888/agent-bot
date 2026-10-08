@@ -418,12 +418,17 @@ export async function dispatchTelegramInput(
   const repositoryCommitSha =
     resolvedCommit === EMPTY_SKILL_CATALOG.commitSha ? null : resolvedCommit;
   const promptInput = {
-    userKey: promptConfig.PROMPT_USER_KEY_SECRET
-      ? derivePromptUserKey(
-          promptConfig.PROMPT_USER_KEY_SECRET as string,
-          input.userId,
-        )
-      : "u1_" + "A".repeat(43),
+    // Group replies use shared prompts only, so a personal overlay cannot
+    // be written into a room the owner does not control.
+    userKey:
+      input.chatScope === "group"
+        ? "group"
+        : promptConfig.PROMPT_USER_KEY_SECRET
+          ? derivePromptUserKey(
+              promptConfig.PROMPT_USER_KEY_SECRET as string,
+              input.userId,
+            )
+          : "u1_" + "A".repeat(43),
     text: input.text,
     correlationId,
     ...(input.languageCode ? { language: input.languageCode } : {}),

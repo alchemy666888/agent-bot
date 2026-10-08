@@ -703,4 +703,77 @@ describe("Telegram turn", () => {
       "provider body",
     );
   });
+
+  it("answers an unmentioned group message without private history", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const conversations = new ConversationService();
+    conversations.add("4", "user", "private secret");
+    conversations.add("4", "assistant", "private reply");
+    const generate = vi.fn(async () => ({ content: "群組回覆" }));
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      conversations,
+      { generate },
+      telegram,
+      "system",
+    ).handle({
+      kind: "text",
+      updateId: "8",
+      messageId: "9",
+      chatId: "-100123",
+      userId: "4",
+      text: "大家好",
+      chatScope: "group",
+      replyToMessageId: "9",
+    });
+    expect(JSON.stringify(generate.mock.calls)).not.toContain("private secret");
+    expect(JSON.stringify(generate.mock.calls)).toContain("大家好");
+    expect(telegram.send).toHaveBeenCalledWith(
+      "-100123",
+      "群組回覆",
+      undefined,
+      "9",
+    );
+    expect(
+      conversations.context("4", "system").messages.map((m) => m.content),
+    ).toEqual(["system", "private secret", "private reply"]);
+  });
+
+  it("does not run skill commands from a group", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const generate = vi.fn(async () => ({ content: "should not run" }));
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      { generate },
+      telegram,
+      "system",
+    ).handle({
+      kind: "text",
+      updateId: "10",
+      messageId: "11",
+      chatId: "-42",
+      userId: "4",
+      text: "/skills",
+      chatScope: "group",
+      replyToMessageId: "11",
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(telegram.send).toHaveBeenCalledWith(
+      "-42",
+      "請在私聊使用這個指令。",
+      undefined,
+      "11",
+    );
+  });
 });
