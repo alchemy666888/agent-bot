@@ -14,6 +14,8 @@ import {
   readSandboxConfig,
   readTelegramConfig,
 } from "../../src/server/config";
+import { PROMPT_FILE_MAX_BYTES } from "../../src/shared/contracts/prompt";
+import { compiledEmergencyBundle } from "../../src/worker/prompts/bundle";
 
 describe("entry-point configuration", () => {
   it("uses approved model defaults", () => {
@@ -31,6 +33,13 @@ describe("entry-point configuration", () => {
       DEEPSEEK_ROUTING_MODE: "shadow",
       DEEPSEEK_ROUTER_TIMEOUT_MS: 3_000,
     });
+    expect(DEFAULT_SYSTEM_PROMPT.startsWith("# Role\n")).toBe(true);
+    expect(
+      new TextEncoder().encode(DEFAULT_SYSTEM_PROMPT).byteLength,
+    ).toBeLessThanOrEqual(PROMPT_FILE_MAX_BYTES);
+    expect(
+      compiledEmergencyBundle(DEFAULT_SYSTEM_PROMPT).commonSystemPrompt.content,
+    ).toBe(DEFAULT_SYSTEM_PROMPT);
   });
 
   it.each([
