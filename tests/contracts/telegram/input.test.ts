@@ -153,6 +153,38 @@ describe("Telegram contract", () => {
       "選擇 A | 選擇 B 都可以",
     );
   });
+  it("removes leading bars from the one-sentence summary section", () => {
+    expect(
+      formatTelegramText(
+        [
+          "前文保留 | 這裡的直線。",
+          "",
+          "> 這則引用要留下",
+          "",
+          "四、一句話總結",
+          "| AI 股能在 5% 美債收益率下繼續漲，靠的是「現在就能兌現的盈利",
+          "> + 真實訂單 + 資金抱團」三件事，暫時壓過了折現率上升的估值傷",
+          "| 害。但這不是高利率失效。",
+          "",
+          "五、後記",
+          "> 這則引用也要留下",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "前文保留 | 這裡的直線。",
+        "│ 這則引用要留下",
+        "",
+        "四、一句話總結",
+        "AI 股能在 5% 美債收益率下繼續漲，靠的是「現在就能兌現的盈利",
+        "+ 真實訂單 + 資金抱團」三件事，暫時壓過了折現率上升的估值傷",
+        "害。但這不是高利率失效。",
+        "",
+        "五、後記",
+        "│ 這則引用也要留下",
+      ].join("\n"),
+    );
+  });
   it("removes Markdown punctuation while retaining readable structure", () => {
     expect(
       formatTelegramText(

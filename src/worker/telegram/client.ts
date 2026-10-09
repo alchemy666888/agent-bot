@@ -105,13 +105,44 @@ function convertMarkdownTables(text: string): string {
   return output.join("\n");
 }
 
+const SUMMARY_HEADING = /^四[、.．]\s*一句話總結/;
+const NEXT_SECTION = /^(?:[一二三四五六七八九十]+|[0-9]{1,2})[、.．]/;
+
+/** Drop a leading blockquote or table bar from one line. */
+function stripLeadingBar(line: string): string {
+  return line.replace(/^[ \t]*[|│]\s?/, "");
+}
+
+/**
+ * The one-sentence summary is often wrapped in a quote or a one-column table.
+ * Those bars are noise in that section; leave the same markers elsewhere.
+ */
+function stripSummarySectionBars(text: string): string {
+  let inSummary = false;
+  return text
+    .split("\n")
+    .map((line) => {
+      const bare = stripLeadingBar(line).trim();
+      if (!inSummary && SUMMARY_HEADING.test(bare)) {
+        inSummary = true;
+        return stripLeadingBar(line);
+      }
+      if (inSummary && NEXT_SECTION.test(bare) && !SUMMARY_HEADING.test(bare)) {
+        inSummary = false;
+        return line;
+      }
+      return inSummary ? stripLeadingBar(line) : line;
+    })
+    .join("\n");
+}
+
 /**
  * Turn the small Markdown subset commonly returned by the model into readable
  * Telegram plain text. Sending plain text avoids leaking Markdown punctuation
  * when the model produces syntax that Telegram's parser does not accept.
  */
 export function formatTelegramText(text: string): string {
-  return convertMarkdownTables(text.replace(/\r\n?/g, "\n"))
+  const formatted = convertMarkdownTables(text.replace(/\r\n?/g, "\n"))
     .replace(/^\s*```[^\n]*\n?/gm, "")
     .replace(/^\s*#{1,6}\s+/gm, "")
     .replace(/^\s*>\s?/gm, "│ ")
@@ -125,8 +156,8 @@ export function formatTelegramText(text: string): string {
     .replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1$2")
     .replace(/`([^`\n]+)`/g, "$1")
     .replace(/\\([_*#[\]()~`>+\-=|{}.!])/g, "$1")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .replace(/\n{3,}/g, "\n\n");
+  return stripSummarySectionBars(formatted).trim();
 }
 
 export class TelegramClient {
