@@ -25,7 +25,7 @@ describe("Telegram skill invocation", () => {
         id: "reports",
         name: "Reports",
         description: "Reports",
-        commitSha: "a".repeat(40),
+        versionId: "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d1",
         manifestRevision: 1,
         instructions: "Use cited data.",
         visibility: "private",

@@ -364,7 +364,7 @@ describe("Telegram turn", () => {
     const skills = new SkillResolver(new CapabilityRegistry(), [
       {
         id: "safe-files",
-        commitSha: "a".repeat(40),
+        versionId: "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d1",
         name: "Safe files",
         instructions: "Help with files.",
         triggers: { keywords: ["files"], minimumConfidence: 1 },
@@ -411,7 +411,7 @@ describe("Telegram turn", () => {
     const skills = new SkillResolver(new CapabilityRegistry(), [
       {
         id: "weather",
-        commitSha: "a".repeat(40),
+        versionId: "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d1",
         name: "Weather",
         description: "Weather forecasts",
         instructions: "Use the weather procedure.",

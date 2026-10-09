@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { derivePromptUserKey } from "../../../src/server/prompts/identity";
 import { resolveRepositoryTurnContext } from "../../../src/server/telegram/turn-context";
 import type { PromptBundle } from "../../../src/shared/contracts/prompt";
+import { EMPTY_SKILL_CATALOG_TOKEN } from "../../../src/worker/skills/schemas";
 
 const commit = "a".repeat(40);
 const identity = {
@@ -12,6 +13,10 @@ const identity = {
   branch: "main",
 };
 const secret = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG";
+const emptyCatalog = {
+  catalogToken: EMPTY_SKILL_CATALOG_TOKEN,
+  skills: [],
+};
 
 function bundle(sha: string): PromptBundle {
   return {
@@ -47,7 +52,7 @@ const snapshot = (sha = commit) => ({
 });
 
 describe("repository-backed Telegram turn context", () => {
-  it("derives the personal prompt path key and pins authorized skills to one head", async () => {
+  it("derives the personal prompt path key and loads skills independently of the prompt head", async () => {
     const refs: string[] = [];
     const resolvedKeys: string[] = [];
     const context = await resolveRepositoryTurnContext({
@@ -56,17 +61,15 @@ describe("repository-backed Telegram turn context", () => {
       text: "hello",
       identity,
       promptIdentity: identity,
-      skillIdentity: identity,
       resolveHead: async () => commit,
       loadPromptSnapshot: async (ref) => (refs.push(ref), snapshot(ref)),
       resolvePrompt: async (input) => {
         resolvedKeys.push(input.userKey);
         return bundle(input.pinnedSnapshot.commitSha);
       },
-      loadSkillCatalog: async (userId, ref) => {
-        refs.push(ref);
-        // Simulates repository-side authorization: only this actor receives it.
-        return { commitSha: ref, skills: userId === "424242" ? [] : [] };
+      loadSkillCatalog: async (userId) => {
+        refs.push(userId);
+        return emptyCatalog;
       },
     });
     const userKey = derivePromptUserKey(secret, "424242");
@@ -74,8 +77,9 @@ describe("repository-backed Telegram turn context", () => {
     expect(`prompts/users/${userKey}/system/preferences.md`).toMatch(
       /^prompts\/users\/u1_[A-Za-z0-9_-]{43}\/system\/preferences\.md$/,
     );
-    expect(refs).toEqual([commit, commit]);
+    expect(refs).toEqual([commit, "424242"]);
     expect(context.repositoryCommitSha).toBe(commit);
+    expect(context.skillCatalog).toEqual(emptyCatalog);
   });
 
   it("is unaffected by branch movement after its single head read", async () => {
@@ -87,32 +91,27 @@ describe("repository-backed Telegram turn context", () => {
       text: "hello",
       identity,
       promptIdentity: identity,
-      skillIdentity: identity,
       resolveHead,
       loadPromptSnapshot: async (ref) => (observed.push(ref), snapshot(ref)),
       resolvePrompt: async ({ pinnedSnapshot }) =>
         bundle(pinnedSnapshot.commitSha),
-      loadSkillCatalog: async (_actor, ref) => (
-        observed.push(ref),
-        { commitSha: ref, skills: [] }
-      ),
+      loadSkillCatalog: async () => emptyCatalog,
     });
     expect(resolveHead).toHaveBeenCalledOnce();
-    expect(observed).toEqual([commit, commit]);
+    expect(observed).toEqual([commit]);
   });
 
-  it("rejects identity or immutable-ref disagreement", async () => {
+  it("rejects prompt identity or immutable-ref disagreement", async () => {
     const base = {
       telegramUserId: "7",
       promptUserKeySecret: secret,
       text: "hello",
       identity,
       promptIdentity: identity,
-      skillIdentity: identity,
       resolveHead: async () => commit,
       loadPromptSnapshot: async () => snapshot(),
-      resolvePrompt: async () => bundle(commit),
-      loadSkillCatalog: async () => ({ commitSha: "b".repeat(40), skills: [] }),
+      resolvePrompt: async () => bundle("b".repeat(40)),
+      loadSkillCatalog: async () => emptyCatalog,
     };
     await expect(resolveRepositoryTurnContext(base)).rejects.toThrow(
       "REPOSITORY_COMMIT_MISMATCH",
@@ -120,7 +119,8 @@ describe("repository-backed Telegram turn context", () => {
     await expect(
       resolveRepositoryTurnContext({
         ...base,
-        skillIdentity: { ...identity, repository: "other" },
+        resolvePrompt: async () => bundle(commit),
+        promptIdentity: { ...identity, repository: "other" },
       }),
     ).rejects.toThrow("REPOSITORY_IDENTITY_MISMATCH");
   });

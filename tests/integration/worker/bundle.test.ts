@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { uuidV7 } from "../../../src/shared/ids";
+import { EMPTY_SKILL_CATALOG_TOKEN } from "../../../src/worker/skills/schemas";
 
 const exec = promisify(execFile);
 
@@ -92,7 +93,7 @@ globalThis.fetch = async (url, init = {}) => {
             userId: "104",
             text: "contract smoke input",
           },
-          skillCatalog: { commitSha: sha, skills: [] },
+          skillCatalog: { catalogToken: EMPTY_SKILL_CATALOG_TOKEN, skills: [] },
         },
         promptBundle: {
           schemaVersion: 1,
@@ -198,7 +199,10 @@ globalThis.fetch = async (url, init = {}) => {
         operation: "telegramTurn",
         payload: {
           input: { kind: "ignored", updateId: "1" },
-          skillCatalog: { commitSha: "a".repeat(40), skills: [] },
+          skillCatalog: {
+            catalogToken: EMPTY_SKILL_CATALOG_TOKEN,
+            skills: [],
+          },
         },
       }),
     );
@@ -250,7 +254,10 @@ globalThis.fetch = async (url, init = {}) => {
             userId: "4",
             text: "hello",
           },
-          skillCatalog: { commitSha: "a".repeat(40), skills: [] },
+          skillCatalog: {
+            catalogToken: EMPTY_SKILL_CATALOG_TOKEN,
+            skills: [],
+          },
         },
       }),
     );

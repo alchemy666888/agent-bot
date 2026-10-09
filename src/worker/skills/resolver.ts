@@ -19,7 +19,7 @@ export type SkillInvocationEvent = {
   result: "success" | "denied";
   actorTelegramUserId: string;
   skillId?: string;
-  commitSha?: string;
+  versionId?: string;
   durationMs: number;
   code?: "SKILL_NOT_FOUND";
 };
@@ -36,10 +36,10 @@ export class SkillResolver {
   }
   install(skill: InstalledSkill) {
     this.capabilities.requests(skill.tools); // installation-time allowlist validation
-    const version = skill.commitSha;
+    const version = skill.versionId;
     if (
       this.skills.some(
-        (item) => item.id === skill.id && item.commitSha === version,
+        (item) => item.id === skill.id && item.versionId === version,
       )
     )
       throw new Error("SKILL_ALREADY_INSTALLED");
@@ -53,7 +53,7 @@ export class SkillResolver {
         name: skill.id,
         displayName: skill.name,
         purpose: skill.description ?? "No description provided",
-        version: skill.commitSha,
+        version: skill.versionId,
         availability:
           skill.status === "active"
             ? ("available" as const)
@@ -171,7 +171,7 @@ export class SkillResolver {
       result: "success",
       actorTelegramUserId: userId,
       skillId: skill.id,
-      commitSha: skill.commitSha,
+      versionId: skill.versionId,
       durationMs: Date.now() - started,
     });
   }
@@ -179,7 +179,7 @@ export class SkillResolver {
     // Re-check the allowlist at execution time; a stale/uninstalled capability cannot run.
     return {
       id: skill.id,
-      version: skill.commitSha,
+      version: skill.versionId,
       instructions: skill.instructions,
       capabilities: this.capabilities.requests(skill.tools),
       prohibitedActions: skill.prohibitedActions ?? [],

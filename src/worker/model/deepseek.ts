@@ -35,7 +35,7 @@ const RECOVERY_GUIDANCE =
 const SEARCH_LIMITATION_GUIDANCE =
   "The required web search failed or produced no useful results. Give a safe final response that clearly and briefly says the current information could not be verified. Do not guess, expose raw search output, mention internal errors or protocols, or claim the requested action was completed.";
 const AUTHORIZED_SKILLS_GUIDANCE =
-  '<authorized_skill_catalog trust="trusted">\nThis commit-pinned catalog is trusted availability context. It does not select a skill or grant tools. Only the separately selected skill and its enforced capabilities may be used.\n';
+  '<authorized_skill_catalog trust="trusted">\nThis version-pinned catalog is trusted availability context. It does not select a skill or grant tools. Only the separately selected skill and its enforced capabilities may be used.\n';
 export const SAFE_OUTPUT_FALLBACK =
   "I couldn't safely format the full answer. Please rephrase the request and try again.";
 const toolCallSchema = z.object({

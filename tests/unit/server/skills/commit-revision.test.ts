@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
-import {
-  PostgresSkillAuthoringRepository,
-  type SkillDraftGitClient,
-} from "../../../../src/server/skills/repository";
+import { PostgresSkillAuthoringRepository } from "../../../../src/server/skills/repository";
+import { MemorySkillDefinitionStore } from "../../../../src/worker/skills/definition-store";
 import type { SkillDraft } from "../../../../src/worker/skills/types";
 import { markdownIdentity } from "../../../../src/worker/skills/markdown";
-
-const HEAD = "a".repeat(40);
 
 function draft(): SkillDraft {
   const now = "2026-10-02T00:00:00.000Z";
@@ -30,42 +26,22 @@ function draft(): SkillDraft {
     installedAt: null,
     lastProcessedUpdateId: null,
     lastResponse: null,
-    branch: "ai/skill-draft",
-    baseCommitSha: HEAD,
-    latestCommitSha: HEAD,
-    skillBlobSha: null,
-    manifestBlobSha: null,
+    versionId: null,
     contentDigest: null,
-    pullRequestNumber: null,
   };
 }
 
 describe("skill revision commit", () => {
   it("publishes model markdown whose frontmatter does not match the skill name", async () => {
-    const files = new Map<string, string>();
-    const git: SkillDraftGitClient = {
-      controlledPrefix: "skills",
-      defaultBranch: "main",
-      getBranchHead: async () => HEAD,
-      createBranch: async (_branch, base) => base,
-      readFile: async (path) => ({
-        sha: "b".repeat(40),
-        content: files.get(path) ?? "",
-      }),
-      compareCommits: async () => ({ status: "ahead", files: [] }),
-      putFile: async (input) => {
-        files.set(input.path, input.content);
-        return { sha: "c".repeat(40), commitSha: "d".repeat(40) };
+    const definitions = new MemorySkillDefinitionStore();
+    const repository = new PostgresSkillAuthoringRepository(
+      {} as Pool,
+      definitions,
+      {
+        authorTelegramUserIds: new Set(["42"]),
+        capabilityIds: new Set(),
       },
-      openPullRequest: async () => {
-        throw new Error("unused");
-      },
-      listPullRequests: async () => [],
-    };
-    const repository = new PostgresSkillAuthoringRepository({} as Pool, git, {
-      authorTelegramUserIds: new Set(["42"]),
-      capabilityIds: new Set(),
-    });
+    );
     const model = [
       "```markdown",
       "---",
@@ -78,13 +54,12 @@ describe("skill revision commit", () => {
     ].join("\n");
 
     const committed = await repository.commitRevision(draft(), model);
-    const skill = files.get("skills/ai-skill/SKILL.md") ?? "";
-    const manifest = JSON.parse(
-      files.get("skills/ai-skill/manifest.json") ?? "{}",
-    ) as {
-      name: string;
-      description: string;
-    };
+    const stored = await definitions.getVersion(
+      committed.stableId,
+      committed.versionId!,
+    );
+    const skill = stored?.instructions ?? "";
+    const manifest = stored?.manifest ?? { name: "", description: "" };
 
     expect(markdownIdentity(skill)).toEqual({
       name: "ai-skill",

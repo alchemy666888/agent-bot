@@ -137,7 +137,7 @@ async function telegramTurn(
     optionalPositiveInteger("SKILL_EXECUTION_TIMEOUT_MS") ?? 60_000,
     { mode: routingMode, minimumConfidence: routerMinimumConfidence },
     Object.freeze({
-      commitSha: authorizedSkillCatalog.commitSha,
+      catalogToken: authorizedSkillCatalog.catalogToken,
       skills: [...authorizedSkillCatalog.skills],
     }),
     degradationNotices,

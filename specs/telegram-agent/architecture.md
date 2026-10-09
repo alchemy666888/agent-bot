@@ -1,40 +1,21 @@
-# Architecture: GitHub-backed skill definitions
+# Architecture: PostgreSQL-backed skill definitions
 
-Status: Approved target architecture.
+Status: Approved target architecture. Prompt documents remain on GitHub.
 
 ## Source of truth and repository contract
 
-GitHub is the sole durable source of truth for skill definitions. A skill is usable only when its files exist on the protected default branch at an approved commit. Git commit SHAs are immutable skill versions; mutable branch names, tags, pull-request numbers, and PostgreSQL rows are never version identifiers.
+PostgreSQL is the sole durable source of truth for skill definitions. A skill is usable only when its current `skill_versions` row is `published` and the parent `skills` row is `active`. Version ids are immutable. Draft and pending rows are not executable. GitHub is not read or written on the skill path; a one-time import may copy an existing GitHub tree into these tables.
 
-```text
-skills/
-  <skill-id>/
-    SKILL.md          # model instructions
-    manifest.json     # identity, metadata, policy request, and lifecycle status
-    README.md         # optional human-facing documentation
-archive/
-  skills/
-    <skill-id>/       # retired skill files, moved without changing skill-id
-```
+`skills` holds the stable id, name, owner, visibility, and lifecycle status. `skill_versions` holds each revision's manifest and `SKILL.md` body. Published and retired content columns are immutable. A catalog snapshot's token is the digest of the version ids in that snapshot. Execution pins `versionId` and does not advance to a later revision. Unknown schema versions, invalid fields, and undeclared capabilities fail closed.
 
-`<skill-id>` is a stable, lowercase, URL-safe identifier and must equal `manifest.json`'s `id`. `SKILL.md` contains only model instructions. `manifest.json` has a versioned JSON schema and requires `schemaVersion`, `id`, `displayName`, `owner`, `triggers`, `capabilities`, and `status`. The active tree permits only `status: active`; unknown schema versions, invalid fields, missing files, path/ID mismatches, and undeclared capabilities fail closed. `README.md` is descriptive and non-normative.
-
-The protected default branch contains only reviewed and approved operational state. Drafts and proposed revisions exist on short-lived branches and pull requests, never in PostgreSQL or the default branch. Required checks validate layout, schemas, IDs, ownership, capability policy, links, and generated catalog indexes. CODEOWNERS/rulesets require the skill owner and designated operator reviewers; only the merge service may update the protected branch. Direct and force pushes are prohibited.
-
-Retired skills do **not** remain under `skills/`. A retirement PR moves the directory to `archive/skills/<skill-id>/` and changes its manifest status to `disabled`. Archived definitions remain reviewable but cannot be discovered, selected, or executed. Restoration requires a new authorized PR that moves the directory back, sets `status` to `active`, and passes all checks. Hard deletion and reuse of a retired ID are prohibited.
+Owner approval moves a draft revision to `pending`. An approver publish sets that version to `published` and points `skills.current_version_id` at it. Retirement inserts a `retired` version and marks the skill retired. Rows are not deleted and retired ids are not reused.
 
 ## Resolution and execution
 
-Catalog listing and deterministic discovery read a validated checkout or generated index for one default-branch commit. Selection records the repository-relative path, full commit SHA, and skill ID. At invocation, the worker obtains a verified copy of that exact commit, verifies that path and manifest match the selected ID and were active at that commit, then pins the run to it. It never silently falls forward to a branch head. Capability authorization remains the intersection of the manifest request, operator policy, actor authorization, parameter validation, and required confirmation.
+Catalog listing reads current published versions and returns only those the actor may see. Invocation loads the pinned version id, checks that it is still published on an active skill, and authorizes capabilities as the intersection of the manifest request, operator policy, and the actor. It never substitutes a newer version.
 
-## PostgreSQL boundary
+## Authorization and recovery
 
-PostgreSQL is an operational store, not a skill-definition store. It **must not** contain `SKILL.md` bodies, manifest bodies, definition snapshots, revisions, diffs, draft or review content, searchable copies, embeddings, or archives. Those belong only to Git/GitHub.
+Author, approver, retiree, and capability grants come from operator policy, not from the stored manifest. Audit events record the action, actor, skill id, and version id without copying the instruction body.
 
-When operationally required, PostgreSQL may retain only references and events: repository identity/path, full commit SHA, selected skill ID, conversation selection, invocation and capability audit data, idempotency/delivery state, and pull-request number/status. These rows are not proof that a definition is approved; authorization resolves the referenced commit against repository policy. Audit data is sanitized and must not copy skill content.
-
-## Change, authorization, and recovery
-
-Creation, revision, capability changes, activation, retirement, and restoration use pull requests. Telegram may collect answers transiently, but durable draft material is committed to a user-authorized branch. Explicit Telegram approval may authorize opening or approving a PR, but cannot bypass GitHub review or branch protection. Webhook processing is idempotent and signature-verified and records only the resulting PR/commit reference.
-
-Recovery is Git-native: restore the protected default branch or an individual skill by reverting or cherry-picking known reviewed commits through a pull request. Disaster recovery restores the repository from a verified GitHub mirror/bundle and confirms commit reachability, signatures, branch protection, and validation checks before execution resumes. PostgreSQL backup/restore covers operational references and audits only; after restoration every reference is reconciled to an existing immutable commit, and unresolved references fail closed.
+Recovery is a PostgreSQL restore of `skills`, `skill_versions`, and `skill_audit_events`. After restore, execution still fails closed unless the pinned version id exists, is published, and the skill is active. Prompt recovery stays on GitHub.

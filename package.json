@@ -22,7 +22,8 @@
     "test:e2e": "playwright test",
     "worker:build": "node scripts/worker-artifact.mjs build",
     "worker:verify": "node scripts/worker-artifact.mjs verify",
-    "skills:migrate-to-github": "node scripts/migrate-skills-to-github.mjs"
+    "skills:migrate-to-github": "node scripts/migrate-skills-to-github.mjs",
+    "skills:import-from-github": "node scripts/import-skills-from-github.mjs"
   },
   "dependencies": {
     "@vercel/connect": "^2.3.4",

@@ -74,7 +74,7 @@ Each `create` flow opens or provides the GitHub App installation flow. On GitHub
 
 ### Telegram runtime skill policy
 
-Telegram turns read skills only from remote `main`, pinned to its current commit SHA. `GITHUB_SKILLS_BRANCH` and `GITHUB_PROMPTS_BRANCH` cannot select another runtime branch. Skill loading runs even when `PROMPT_READS_ENABLED=false`; enabled repository prompts use the same commit and repository identity as skills. Missing or unavailable prompts fall back to the compiled prompt without preventing a skill read or answer.
+Telegram turns read skill definitions from PostgreSQL (`skills` and `skill_versions`). Prompt documents still come from GitHub. `GITHUB_PROMPTS_BRANCH` cannot select a runtime branch other than `main`. Skill loading runs even when `PROMPT_READS_ENABLED=false`. Missing or unavailable prompts fall back to the compiled prompt without preventing a skill read or answer.
 
 The Telegram dispatcher does not invoke skill authoring or consult stored drafts. Old drafts remain in storage but cannot capture ordinary messages or make runtime requests to `ai/skill-…` branches. Publish skill definitions to `main` through the repository's operator workflow.
 

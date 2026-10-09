@@ -3,6 +3,13 @@
 Migrations are run explicitly by the privileged deployment job. Application
 startup must not execute DDL.
 
+## Skill definitions
+
+`20261009_skill_definitions.sql` creates `skills`, immutable `skill_versions`, and
+`skill_audit_events`. Apply it before `skills:import-from-github`. Application
+roles need DML only. Rollback is by disabling skill reads, not by dropping the
+tables. Published version content cannot be updated; retirement adds a new row.
+
 ## Prompt persistence (PH-003)
 
 `20261002_prompt_persistence.sql` is an expand-only migration and is safe to
