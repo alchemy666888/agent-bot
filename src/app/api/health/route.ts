@@ -2,6 +2,7 @@ import {
   readDashboardConfig,
   readDatabaseConfig,
   readModelConfig,
+  readNewsMcpConfig,
   readPromptConfig,
   readSandboxConfig,
   readTelegramConfig,
@@ -19,6 +20,7 @@ export function GET(): Response {
     dashboard: valid(readDashboardConfig),
     sandbox: valid(readSandboxConfig),
     postgres: valid(readDatabaseConfig),
+    newsMcp: valid(readNewsMcpConfig),
     prompts: promptHealth(),
   } as const;
   const ready = Object.values(components).every(

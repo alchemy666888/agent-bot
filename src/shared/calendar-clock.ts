@@ -82,9 +82,30 @@ export type CalendarClock = {
   year: number;
   month: number;
   day: number;
+  hour: number;
+  minute: number;
   weekday: string;
   timeZone: string;
+  source: "news_mcp" | "local_fallback";
 };
+
+/** Absolute date or time named in a user request. Missing fields were not named. */
+export type SpecifiedDateTime = {
+  year?: number;
+  month?: number;
+  day?: number;
+  hour?: number;
+  minute?: number;
+};
+
+export const UNAVAILABLE_CLOCK_RULE =
+  "The news-mcp clock is unavailable. Do not invent the current year, month, day, hour, or minute. If the user specifies an absolute historical or future date or time, use only that specified value for web search and the answer. Otherwise say the current date and time could not be read and do not present unverified news as current.";
+
+export function unavailableClockRule(request = ""): string {
+  const specified = userSpecifiedDateTimes(request).slice(0, 5);
+  if (!specified.length) return UNAVAILABLE_CLOCK_RULE;
+  return `${UNAVAILABLE_CLOCK_RULE} The user specified: ${specified.map(formatSpecified).join(", ")}. Use that specified date and time for web search and the answer.`;
+}
 
 export function assistantTimeZone(
   value = process.env.ASSISTANT_TIMEZONE,
@@ -116,19 +137,26 @@ export function calendarClock(
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
   }).formatToParts(now);
   const read = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
   const year = Number(read("year"));
   const month = Number(read("month"));
   const day = Number(read("day"));
+  const hour = Number(read("hour"));
   return {
     isoDate: `${read("year")}-${read("month")}-${read("day")}`,
     year,
     month,
     day,
+    hour: hour === 24 ? 0 : hour,
+    minute: Number(read("minute")),
     weekday: read("weekday") || weekdayName(year, month, day),
     timeZone,
+    source: "local_fallback",
   };
 }
 
@@ -138,8 +166,13 @@ export function trustedCalendarContext(
   return [
     { key: "current_date", value: clock.isoDate },
     { key: "current_year", value: String(clock.year) },
+    { key: "current_month", value: String(clock.month) },
+    { key: "current_day", value: String(clock.day) },
+    { key: "current_hour", value: String(clock.hour) },
+    { key: "current_minute", value: String(clock.minute) },
     { key: "weekday", value: clock.weekday },
     { key: "timezone", value: clock.timeZone },
+    { key: "clock_source", value: clock.source },
   ];
 }
 
@@ -161,22 +194,179 @@ export function clockFromInstructions(
   const weekday = instructions.match(
     /(?:^|\n)weekday:\s*(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\b/,
   );
+  const hour = boundedField(instructions, "current_hour", 0, 23);
+  const minute = boundedField(instructions, "current_minute", 0, 59);
+  const source = instructions.match(
+    /(?:^|\n)clock_source:\s*(news_mcp|local_fallback)\b/,
+  );
   return {
     isoDate: `${date[1]}-${date[2]}-${date[3]}`,
     year,
     month,
     day,
+    hour: hour ?? fallback.hour,
+    minute: minute ?? fallback.minute,
     weekday: weekday?.[1] ?? weekdayName(year, month, day),
     timeZone: zone?.[1] ?? fallback.timeZone,
+    source:
+      source?.[1] === "news_mcp" || source?.[1] === "local_fallback"
+        ? source[1]
+        : fallback.source,
   };
 }
 
-export function calendarYearRule(clock: CalendarClock): string {
-  return `The trusted clock is ${clock.weekday}, ${clock.isoDate} (${clock.timeZone}). For news, calendars, and upcoming events, search with ${clock.year} and mention only events confirmed for the requested dates in ${clock.year}. A prior-year item that shares the month and day is a different event. Do not list a central-bank speech, data release, holiday, or earnings date from another year unless a ${clock.year} source schedules it again. Compute every weekday from ${clock.year}.`;
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function clockLabel(clock: CalendarClock): string {
+  const origin = clock.source === "news_mcp" ? "news-mcp" : "server";
+  return `The trusted ${origin} clock is ${clock.weekday}, ${clock.isoDate} ${pad(clock.hour)}:${pad(clock.minute)} (${clock.timeZone}). Year ${clock.year}, month ${clock.month}, day ${clock.day}, hour ${clock.hour}, minute ${clock.minute}.`;
+}
+
+export function formatSpecified(spec: SpecifiedDateTime): string {
+  const date =
+    spec.year !== undefined &&
+    spec.month !== undefined &&
+    spec.day !== undefined
+      ? `${spec.year}-${pad(spec.month)}-${pad(spec.day)}`
+      : spec.year !== undefined && spec.month !== undefined
+        ? `${spec.year}-${pad(spec.month)}`
+        : spec.year !== undefined
+          ? String(spec.year)
+          : "";
+  if (spec.hour === undefined) return date;
+  const time = `${pad(spec.hour)}:${pad(spec.minute ?? 0)}`;
+  return date ? `${date} ${time}` : time;
+}
+
+/** Dates and clock times the user named. Relative words such as "today" are not matches. */
+export function userSpecifiedDateTimes(request: string): SpecifiedDateTime[] {
+  const text = visibleUserRequest(request);
+  const found: Array<SpecifiedDateTime & { start: number; end: number }> = [];
+  const overlaps = (start: number, end: number) =>
+    found.some((item) => start < item.end && end > item.start);
+  const add = (match: RegExpMatchArray, spec: SpecifiedDateTime) => {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (overlaps(start, end) || !validSpecified(spec)) return;
+    found.push({ ...spec, start, end });
+  };
+
+  for (const match of text.matchAll(
+    /\b(20\d{2})-(\d{2})-(\d{2})(?:[T\s](\d{2}):(\d{2}))?\b/g,
+  ))
+    add(match, {
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+      ...(match[4] !== undefined
+        ? { hour: Number(match[4]), minute: Number(match[5]) }
+        : {}),
+    });
+  for (const match of text.matchAll(/\b(20\d{2})[/.](\d{1,2})[/.](\d{1,2})\b/g))
+    add(match, {
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+    });
+  for (const match of text.matchAll(
+    /(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?(?:\s*(上午|下午|晚上|凌晨)?\s*(\d{1,2})\s*(?:[:：]|點|点|時|时)\s*(\d{1,2})?)?/g,
+  )) {
+    const hour = namedHour(match[5], match[4]);
+    add(match, {
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+      ...(hour === undefined
+        ? {}
+        : { hour, minute: match[6] === undefined ? 0 : Number(match[6]) }),
+    });
+  }
+  for (const match of text.matchAll(
+    /\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*)\s+(\d{1,2})(?:st|nd|rd|th)?\s*,?\s*(20\d{2})(?:\s+at\s+(\d{1,2})(?::(\d{2}))?(?:\s*(am|pm))?|\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b)?/gi,
+  )) {
+    const month = ENGLISH_MONTH[match[1]!.toLowerCase()];
+    if (!month) continue;
+    const hourText = match[4] ?? match[7];
+    const minuteText = match[5] ?? match[8];
+    const hour = namedHour(hourText, match[4] ? match[6] : match[9]);
+    add(match, {
+      year: Number(match[3]),
+      month,
+      day: Number(match[2]),
+      ...(hour === undefined
+        ? {}
+        : { hour, minute: minuteText === undefined ? 0 : Number(minuteText) }),
+    });
+  }
+  for (const match of text.matchAll(
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*)\s+(20\d{2})\b/gi,
+  )) {
+    const month = ENGLISH_MONTH[match[2]!.toLowerCase()];
+    if (!month) continue;
+    add(match, {
+      year: Number(match[3]),
+      month,
+      day: Number(match[1]),
+    });
+  }
+  for (const match of text.matchAll(/(20\d{2})\s*年\s*(\d{1,2})\s*月/g))
+    add(match, { year: Number(match[1]), month: Number(match[2]) });
+  for (const match of text.matchAll(/\b(20\d{2})\b/g))
+    add(match, { year: Number(match[1]) });
+  for (const match of text.matchAll(
+    /(上午|下午|晚上|凌晨)\s*(\d{1,2})\s*(?:點|点|時|时)(?:\s*(\d{1,2}))?/g,
+  )) {
+    const hour = namedHour(match[2], match[1]);
+    if (hour === undefined) continue;
+    add(match, {
+      hour,
+      minute: match[3] === undefined ? 0 : Number(match[3]),
+    });
+  }
+  for (const match of text.matchAll(/\b(\d{1,2}):(\d{2})\s*(am|pm)\b/gi)) {
+    const hour = namedHour(match[1], match[3]);
+    if (hour === undefined) continue;
+    add(match, { hour, minute: Number(match[2]) });
+  }
+  return found.map(({ year, month, day, hour, minute }) => ({
+    ...(year === undefined ? {} : { year }),
+    ...(month === undefined ? {} : { month }),
+    ...(day === undefined ? {} : { day }),
+    ...(hour === undefined ? {} : { hour }),
+    ...(minute === undefined ? {} : { minute }),
+  }));
+}
+
+export function applicableSpecifications(
+  clock: CalendarClock,
+  request: string,
+): SpecifiedDateTime[] {
+  return userSpecifiedDateTimes(request).filter((spec) => {
+    if (spec.hour !== undefined || spec.minute !== undefined) return true;
+    if (spec.month !== undefined || spec.day !== undefined) return true;
+    return spec.year !== undefined && spec.year !== clock.year;
+  });
+}
+
+export function datetimeOperatingRule(
+  clock: CalendarClock,
+  request = "",
+): string {
+  const specified = applicableSpecifications(clock, request).slice(0, 5);
+  if (specified.length) {
+    return `${clockLabel(clock)} The user specified this historical or future date and time: ${specified.map(formatSpecified).join(", ")}. For web search and the answer, use the user-specified date and time instead of the current clock.`;
+  }
+  return `${clockLabel(clock)} For news, calendars, and upcoming events, search with year ${clock.year}, month ${clock.month}, day ${clock.day}, hour ${clock.hour}, and minute ${clock.minute}. Mention only events confirmed for the requested dates in ${clock.year}. A prior-year item that shares the month and day is a different event. Do not list a central-bank speech, data release, holiday, or earnings date from another year unless a ${clock.year} source schedules it again. Compute every weekday from ${clock.year}.`;
+}
+
+export function calendarYearRule(clock: CalendarClock, request = ""): string {
+  return datetimeOperatingRule(clock, request);
 }
 
 export function staleCalendarCorrection(clock: CalendarClock): string {
-  return `The previous draft lists news or events that do not belong to ${clock.year}. The trusted clock is ${clock.weekday}, ${clock.isoDate} (${clock.timeZone}). Search again for the user's requested period in ${clock.year} only. Drop every event supported only by an earlier year, including a central-bank speech, data release, holiday, or earnings date that merely shares the month and day. Recompute each weekday for ${clock.year}. If an event cannot be confirmed for ${clock.year}, omit it.`;
+  return `The previous draft lists news or events that do not belong to ${clock.year}. The trusted clock is ${clock.weekday}, ${clock.isoDate} ${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")} (${clock.timeZone}). Search again for the user's requested period in ${clock.year} only. Drop every event supported only by an earlier year, including a central-bank speech, data release, holiday, or earnings date that merely shares the month and day. Recompute each weekday for ${clock.year}. If an event cannot be confirmed for ${clock.year}, omit it.`;
 }
 
 /** Decode a Telegram input envelope so relative dates are visible to checks. */
@@ -211,6 +401,58 @@ export function answerConflictsWithCalendar(
   if (!requestNeedsCurrentCalendar(request, clock.year)) return false;
   if (hasForeignFullDate(answer, clock.year)) return true;
   return hasWeekdayMismatch(answer, clock.year);
+}
+
+function boundedField(
+  instructions: string,
+  key: string,
+  min: number,
+  max: number,
+): number | undefined {
+  const match = instructions.match(
+    new RegExp(`(?:^|\\n)${key}:\\s*(\\d{1,2})\\b`),
+  );
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return value >= min && value <= max ? value : undefined;
+}
+
+function namedHour(
+  hour: string | undefined,
+  meridiem: string | undefined,
+): number | undefined {
+  if (hour === undefined) return undefined;
+  const value = Number(hour);
+  if (!Number.isInteger(value) || value < 0 || value > 23) return undefined;
+  const marker = meridiem?.toLowerCase();
+  if (marker === "pm" || marker === "下午" || marker === "晚上")
+    return value < 12 ? value + 12 : value;
+  if (marker === "am" || marker === "上午" || marker === "凌晨")
+    return value === 12 ? 0 : value;
+  return value;
+}
+
+function validSpecified(spec: SpecifiedDateTime): boolean {
+  if (spec.month !== undefined && (spec.month < 1 || spec.month > 12))
+    return false;
+  if (spec.day !== undefined && (spec.day < 1 || spec.day > 31)) return false;
+  if (
+    spec.year !== undefined &&
+    spec.month !== undefined &&
+    spec.day !== undefined &&
+    !validDate(spec.year, spec.month, spec.day)
+  )
+    return false;
+  if (spec.hour !== undefined && (spec.hour < 0 || spec.hour > 23))
+    return false;
+  if (spec.minute !== undefined && (spec.minute < 0 || spec.minute > 59))
+    return false;
+  return (
+    spec.year !== undefined ||
+    spec.month !== undefined ||
+    spec.day !== undefined ||
+    spec.hour !== undefined
+  );
 }
 
 function validDate(year: number, month: number, day: number): boolean {

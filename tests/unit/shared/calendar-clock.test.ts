@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   answerConflictsWithCalendar,
   calendarClock,
+  calendarYearRule,
   civilWeekday,
+  userSpecifiedDateTimes,
   visibleUserRequest,
 } from "../../../src/shared/calendar-clock";
 
@@ -19,8 +21,13 @@ describe("calendar clock", () => {
     expect(clock).toMatchObject({
       isoDate: "2026-10-09",
       year: 2026,
+      month: 10,
+      day: 9,
+      hour: 14,
+      minute: 41,
       weekday: "Friday",
       timeZone: "Asia/Hong_Kong",
+      source: "local_fallback",
     });
     expect(civilWeekday(2026, 10, 13)).toBe(2);
     expect(civilWeekday(2025, 10, 13)).toBe(1);
@@ -60,5 +67,29 @@ describe("calendar clock", () => {
     expect(
       answerConflictsWithCalendar(`週一（10/13）\n${powell}`, clock, envelope),
     ).toBe(true);
+  });
+
+  it("keeps the news-mcp clock unless the user names another date or time", () => {
+    expect(userSpecifiedDateTimes("下個星期有什麼新聞？")).toEqual([]);
+    expect(calendarYearRule(clock, "今天香港天氣")).toContain(
+      "hour 14, minute 41",
+    );
+    expect(calendarYearRule(clock, "今天香港天氣")).not.toContain(
+      "user specified",
+    );
+    expect(userSpecifiedDateTimes("2024年3月15日下午3點30分的新聞")).toEqual([
+      { year: 2024, month: 3, day: 15, hour: 15, minute: 30 },
+    ]);
+    expect(calendarYearRule(clock, "請查 2020-05-04 的新聞")).toContain(
+      "2020-05-04",
+    );
+    expect(calendarYearRule(clock, "March 15, 2024 at 3:30 pm")).toContain(
+      "2024-03-15 15:30",
+    );
+    expect(userSpecifiedDateTimes("2026年的新聞")).toEqual([{ year: 2026 }]);
+    expect(calendarYearRule(clock, "2026年的新聞")).not.toContain(
+      "user specified",
+    );
+    expect(calendarYearRule(clock, "2019 年發生了什麼？")).toContain("2019");
   });
 });

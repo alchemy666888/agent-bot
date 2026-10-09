@@ -8,6 +8,7 @@ import {
   clockFromInstructions,
   staleCalendarCorrection,
   trustedCalendarContext,
+  unavailableClockRule,
   visibleUserRequest,
 } from "../../shared/calendar-clock";
 import {
@@ -31,7 +32,7 @@ type Output = {
 };
 const DEEPSEEK_WEB_SEARCH = { type: "web_search" } as const;
 export const WEB_SEARCH_GUIDANCE =
-  "For questions that depend on current or local facts, such as weather, news, prices, schedules, or upcoming events, use web search before answering. Resolve today, this week, next week, and this year from the trusted current_date and current_year, and include that year in the search. Use only results for that year. Do not carry over a prior year's event because the month and day match. Answer from the search results without appending source names or links. Say that a search returned nothing only when the tool result is actually empty.";
+  "For questions that depend on current or local facts, such as weather, news, prices, schedules, or upcoming events, use web search before answering. By default, resolve today, this week, next week, and this year from the trusted news-mcp clock and include that year, month, day, hour, and minute in the search. If the user specifies a historical or future date or time, search that specified value instead of the current clock. Use only results for the chosen date. Do not carry over a prior year's event because the month and day match. Answer from the search results without appending source names or links. Say that a search returned nothing only when the tool result is actually empty.";
 type ResponsesBody = {
   id?: string;
   output_text?: string;
@@ -148,22 +149,34 @@ export class DeepSeekProvider implements ModelProvider {
         })),
       DEEPSEEK_WEB_SEARCH,
     ];
-    const clock = clockFromInstructions(
-      instructions,
-      calendarClock(
-        this.config.now?.() ?? new Date(),
-        this.config.timeZone ?? assistantTimeZone(),
-      ),
+    const userRequest = visibleUserRequest(
+      [...input.messages].reverse().find((message) => message.role === "user")
+        ?.content ?? "",
     );
-    const clockFacts = instructions.includes(`current_date: ${clock.isoDate}`)
-      ? ""
-      : trustedCalendarContext(clock)
-          .map(({ key, value }) => `${key}: ${value}`)
-          .join("\n");
+    const clockUnavailable = /(?:^|\n)clock_source:\s*unavailable\b/.test(
+      instructions,
+    );
+    const clock = clockUnavailable
+      ? undefined
+      : clockFromInstructions(
+          instructions,
+          calendarClock(
+            this.config.now?.() ?? new Date(),
+            this.config.timeZone ?? assistantTimeZone(),
+          ),
+        );
+    const clockFacts =
+      !clock || instructions.includes(`current_date: ${clock.isoDate}`)
+        ? ""
+        : trustedCalendarContext(clock)
+            .map(({ key, value }) => `${key}: ${value}`)
+            .join("\n");
     instructions = [
       instructions,
       clockFacts,
-      calendarYearRule(clock),
+      clock
+        ? calendarYearRule(clock, userRequest)
+        : unavailableClockRule(userRequest),
       WEB_SEARCH_GUIDANCE,
       REPLY_STYLE_GUIDANCE,
     ]
@@ -173,10 +186,6 @@ export class DeepSeekProvider implements ModelProvider {
       .filter((m) => m.role !== "system")
       .map(({ role, content }) => ({ role, content }));
     const initialConversation = [...conversation];
-    const userRequest = visibleUserRequest(
-      [...input.messages].reverse().find((message) => message.role === "user")
-        ?.content ?? "",
-    );
     const usage = { inputTokens: 0, outputTokens: 0 };
     let requestId: string | undefined;
     let calendarRetried = false;
@@ -289,6 +298,7 @@ export class DeepSeekProvider implements ModelProvider {
             audit,
           );
         if (
+          clock &&
           content &&
           answerConflictsWithCalendar(content, clock, userRequest)
         ) {

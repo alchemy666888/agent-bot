@@ -13,9 +13,16 @@ vi.mock("../../../../src/server/sandbox/transport", () => ({
     data: { handled: "telegramTurn" },
   })),
 }));
-const { skillQuery } = vi.hoisted(() => ({
+const { skillQuery, fetchNewsMcpClock } = vi.hoisted(() => ({
   skillQuery: vi.fn(async () => ({ rows: [] as Record<string, unknown>[] })),
+  fetchNewsMcpClock: vi.fn(),
 }));
+vi.mock("../../../../src/server/news-mcp/datetime", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../../src/server/news-mcp/datetime")
+  >("../../../../src/server/news-mcp/datetime");
+  return { ...actual, fetchNewsMcpClock };
+});
 vi.mock("pg", () => ({
   Pool: class {
     query(...args: unknown[]) {
@@ -65,6 +72,21 @@ describe("Telegram dispatch skill catalog", () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     skillQuery.mockReset();
     skillQuery.mockResolvedValue({ rows: [] });
+    fetchNewsMcpClock.mockReset();
+    fetchNewsMcpClock.mockResolvedValue({
+      ok: true,
+      clock: {
+        isoDate: "2026-10-09",
+        year: 2026,
+        month: 10,
+        day: 9,
+        hour: 14,
+        minute: 41,
+        weekday: "Friday",
+        timeZone: "Asia/Hong_Kong",
+        source: "news_mcp",
+      },
+    });
   });
 
   const input = {
@@ -126,11 +148,12 @@ describe("Telegram dispatch skill catalog", () => {
     });
   });
 
-  it("pins news and event answers to the current calendar year", async () => {
+  it("pins news and event answers to the news-mcp clock", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-10-09T06:41:00.000Z"));
+    vi.setSystemTime(new Date("1999-01-01T00:00:00.000Z"));
     try {
       await dispatchTelegramInput(input);
+      expect(fetchNewsMcpClock).toHaveBeenCalled();
       const request = vi.mocked(invokeWorker).mock.calls[0]![2] as {
         promptBundle: {
           trustedRuntimeContext: Array<{ key: string; value: string }>;
@@ -140,13 +163,47 @@ describe("Telegram dispatch skill catalog", () => {
         expect.arrayContaining([
           { key: "current_date", value: "2026-10-09" },
           { key: "current_year", value: "2026" },
+          { key: "current_month", value: "10" },
+          { key: "current_day", value: "9" },
+          { key: "current_hour", value: "14" },
+          { key: "current_minute", value: "41" },
           { key: "weekday", value: "Friday" },
           { key: "timezone", value: "Asia/Hong_Kong" },
+          { key: "clock_source", value: "news_mcp" },
         ]),
       );
+      const env = vi.mocked(invokeWorker).mock.calls[0]![3] as Record<
+        string,
+        string
+      >;
+      expect(env).not.toHaveProperty("NEWS_MCP_API_KEY");
+      expect(env).not.toHaveProperty("NEWS-MCP-API-KEY");
+      expect(JSON.stringify(request)).not.toContain("NEWS_MCP_API_KEY");
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not invent the current clock when news-mcp is unavailable", async () => {
+    fetchNewsMcpClock.mockResolvedValue({
+      ok: false,
+      code: "NEWS_MCP_UNAVAILABLE",
+    });
+    await dispatchTelegramInput(input);
+    const request = vi.mocked(invokeWorker).mock.calls[0]![2] as {
+      promptBundle: {
+        trustedRuntimeContext: Array<{ key: string; value: string }>;
+      };
+    };
+    expect(request.promptBundle.trustedRuntimeContext).toContainEqual({
+      key: "clock_source",
+      value: "unavailable",
+    });
+    expect(
+      request.promptBundle.trustedRuntimeContext.some(
+        (item) => item.key === "current_date",
+      ),
+    ).toBe(false);
   });
 
   it("continues to the worker when PostgreSQL is unavailable", async () => {

@@ -21,6 +21,7 @@ describe("health route", () => {
         dashboard: "degraded",
         sandbox: "degraded",
         postgres: "degraded",
+        newsMcp: "degraded",
         prompts: "disabled",
       },
     });
@@ -39,6 +40,7 @@ describe("health route", () => {
       APP_URL: "https://example.test",
       SANDBOX_NAME: "sandbox-name",
       DATABASE_URL: "postgresql://user:pass@localhost:5432/app",
+      NEWS_MCP_API_KEY: "00000000-0000-4000-8000-000000000000",
     });
     const response = GET();
     const body = JSON.stringify(await response.json());

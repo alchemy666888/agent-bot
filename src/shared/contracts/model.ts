@@ -99,6 +99,7 @@ export const routingRequestSchema = z
       .max(20),
     authorizedSkills: z.array(authorizedSkillDescriptorSchema).max(200),
     availableTools: z.array(availableToolDescriptorSchema).max(200),
+    trustedClock: z.string().trim().min(1).max(2_000).optional(),
     signal: z.instanceof(AbortSignal).optional(),
   })
   .strict()

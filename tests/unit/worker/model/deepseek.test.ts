@@ -694,4 +694,64 @@ describe("model adapter", () => {
     controller.abort(new Error("cancelled"));
     await expect(pending).rejects.toThrow("cancelled");
   });
+
+  it("searches a user-specified date instead of the current clock", async () => {
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { instructions: string };
+      expect(body.instructions).toContain("current_year: 2026");
+      expect(body.instructions).toContain("2024-03-15 15:00");
+      expect(body.instructions).toContain("user-specified date and time");
+      return Response.json({ output_text: "2024年3月15日的新聞摘要。" });
+    });
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "fixture",
+        baseUrl: "https://example.test",
+        thinking: false,
+        now: () => new Date("2026-10-09T06:41:00.000Z"),
+        timeZone: "Asia/Hong_Kong",
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "2024年3月15日下午3點的新聞" }],
+    });
+    expect(result.content).toContain("2024年3月15日");
+  });
+
+  it("keeps an injected news-mcp clock instead of the server clock", async () => {
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { instructions: string };
+      expect(body.instructions).toContain("current_date: 2024-01-02");
+      expect(body.instructions).toContain("current_hour: 8");
+      expect(body.instructions).toContain("current_minute: 5");
+      expect(body.instructions).toContain("news-mcp");
+      expect(body.instructions).not.toContain("current_date: 2026-10-09");
+      return Response.json({ output_text: "ok" });
+    });
+    await new DeepSeekProvider(
+      {
+        apiKey: "fixture",
+        baseUrl: "https://example.test",
+        thinking: false,
+        now: () => new Date("2026-10-09T06:41:00.000Z"),
+        timeZone: "Asia/Hong_Kong",
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "direct",
+      trustedInstructions: [
+        { source: "runtime", content: "current_date: 2024-01-02" },
+        { source: "runtime", content: "current_year: 2024" },
+        { source: "runtime", content: "current_month: 1" },
+        { source: "runtime", content: "current_day: 2" },
+        { source: "runtime", content: "current_hour: 8" },
+        { source: "runtime", content: "current_minute: 5" },
+        { source: "runtime", content: "weekday: Tuesday" },
+        { source: "runtime", content: "timezone: Asia/Hong_Kong" },
+        { source: "runtime", content: "clock_source: news_mcp" },
+      ],
+      messages: [{ role: "user", content: "今天的新聞" }],
+    });
+  });
 });

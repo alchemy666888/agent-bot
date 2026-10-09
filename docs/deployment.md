@@ -82,6 +82,8 @@ The Telegram dispatcher does not invoke skill authoring or consult stored drafts
 
 If no authorized, usable skill matches, the answer uses DeepSeek's `/responses` endpoint with native `web_search` forced on the first request. This applies with routing disabled, in shadow mode, and in enforced mode, including empty, missing, inaccessible, invalid, or oversized catalogs. Deterministic bot commands, clarifications, and refusals keep their existing responses. Search failure returns a brief limitation instead of an unverified current-facts answer.
 
+Every Telegram turn reads the current year, month, day, hour, and minute from News MCP (`get_current_datetime` at `NEWS_MCP_URL`, default `https://news-mcp.vercel.app/api/mcp`) before web search and model requests. Set `NEWS_MCP_API_KEY` to the UUID bearer token (`Authorization: Bearer`). `NEWS-MCP-API-KEY` is accepted as the same value. The key stays on the Next.js server and is not copied into the Sandbox. When that clock cannot be read, the turn does not invent the current time. If the user names a historical or future date or time, search and the answer use that specified value instead of the sampled clock.
+
 ### Prompt repository rollout
 
 Use a dedicated prompt connector rather than the skill-authoring connector. Install it on the private prompt repository only, with **Metadata: Read-only** and **Contents: Read and write**. Grant no Pull requests, Administration, Checks, Secrets, Webhooks, organization, or account permissions. Prompt changes commit only after application confirmation and compare-and-set validation; adding PR permission is outside this rollout.
