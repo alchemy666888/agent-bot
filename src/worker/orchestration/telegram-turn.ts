@@ -163,6 +163,12 @@ export class TelegramTurn {
   }
   async handle(input: TelegramInput) {
     if (input.kind === "ignored") return;
+    // Never answer a group or supergroup, even if a caller bypasses extraction.
+    if (
+      (input.kind === "text" && input.chatScope === "group") ||
+      ("chatId" in input && input.chatId.startsWith("-"))
+    )
+      return;
     if (input.kind === "unsupported") {
       await retryTransient(
         () =>
