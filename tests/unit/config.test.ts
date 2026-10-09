@@ -68,6 +68,42 @@ describe("entry-point configuration", () => {
     expect(() => readTelegramConfig(env)).toThrow();
   });
 
+  it("parses ALLOW_USERS usernames and numeric ids", () => {
+    expect(
+      readTelegramConfig({
+        TELEGRAM_BOT_TOKEN: "token",
+        TELEGRAM_WEBHOOK_SECRET: "secret",
+        ALLOW_USERS: " @LuckyVickyForever , 123456789 ",
+      }).ALLOW_USERS,
+    ).toEqual({
+      ids: new Set(["123456789"]),
+      usernames: new Set(["luckyvickyforever"]),
+    });
+  });
+
+  it("accepts Allow_USERS as the same whitelist", () => {
+    expect(
+      readTelegramConfig({
+        TELEGRAM_BOT_TOKEN: "token",
+        TELEGRAM_WEBHOOK_SECRET: "secret",
+        Allow_USERS: "luckyvickyforever,another_user",
+      }).ALLOW_USERS.usernames,
+    ).toEqual(new Set(["luckyvickyforever", "another_user"]));
+  });
+
+  it.each(["not a user", "luckyvickyforever,luckyvickyforever", "ab"])(
+    "rejects malformed ALLOW_USERS %j",
+    (allowUsers) => {
+      expect(() =>
+        readTelegramConfig({
+          TELEGRAM_BOT_TOKEN: "token",
+          TELEGRAM_WEBHOOK_SECRET: "secret",
+          ALLOW_USERS: allowUsers,
+        }),
+      ).toThrow();
+    },
+  );
+
   it("treats blank optional settings as documented defaults", () => {
     expect(
       readModelConfig({
@@ -212,8 +248,8 @@ describe("entry-point configuration", () => {
       readTelegramConfig({
         TELEGRAM_BOT_TOKEN: "token",
         TELEGRAM_WEBHOOK_SECRET: "secret",
-      }),
-    ).toBeTruthy();
+      }).ALLOW_USERS,
+    ).toEqual({ ids: new Set(), usernames: new Set() });
     expect(
       readDashboardConfig({
         DASHBOARD_SECRET: "any non-empty value",

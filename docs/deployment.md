@@ -78,6 +78,8 @@ Telegram turns read skill definitions from PostgreSQL (`skills` and `skill_versi
 
 The Telegram dispatcher does not invoke skill authoring or consult stored drafts. Old drafts remain in storage but cannot capture ordinary messages or make runtime requests to `ai/skill-…` branches. Publish skill definitions to `main` through the repository's operator workflow.
 
+`ALLOW_USERS` is the bot access whitelist. Set it in both Production and Preview, for example `ALLOW_USERS=luckyvickyforever`. Separate further accounts with commas. Usernames do not include `@`. An account that is not listed gets a fixed refusal and never reaches the worker. The value stays on the server and is not copied into the worker environment. `Allow_USERS` is accepted as the same variable.
+
 If no authorized, usable skill matches, the answer uses DeepSeek's `/responses` endpoint with native `web_search` forced on the first request. This applies with routing disabled, in shadow mode, and in enforced mode, including empty, missing, inaccessible, invalid, or oversized catalogs. Deterministic bot commands, clarifications, and refusals keep their existing responses. Search failure returns a brief limitation instead of an unverified current-facts answer.
 
 ### Prompt repository rollout

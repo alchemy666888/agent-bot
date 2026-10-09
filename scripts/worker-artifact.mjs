@@ -58,6 +58,7 @@ async function verifyReleaseArtifact() {
     const prohibitedNames = [
       "PROMPT_USER_KEY_SECRET",
       "PROMPT_OPERATOR_TELEGRAM_IDS",
+      "ALLOW_USERS",
       "GITHUB_TOKEN",
     ];
     const leakedNames = prohibitedNames.filter((name) =>

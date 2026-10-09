@@ -35,6 +35,7 @@ import { compiledEmergencyBundle } from "../../../../src/worker/prompts/bundle";
 import type { GitHubPromptStore } from "../../../../src/server/prompts/github-store";
 import { SkillAuthoringService } from "../../../../src/server/skills/service";
 import { EMPTY_SKILL_CATALOG_TOKEN } from "../../../../src/worker/skills/schemas";
+import { TELEGRAM_ACCESS_DENIED_TEXT } from "../../../../src/server/telegram/access";
 import {
   dispatchTelegramInput,
   installDispatchPromptServices,
@@ -58,6 +59,7 @@ describe("Telegram dispatch skill catalog", () => {
       GITHUB_SKILLS_REPO: "skill",
       GITHUB_SKILLS_BRANCH: "ai/obsolete-draft",
       DATABASE_URL: "postgres://user:pass@db.test/app",
+      ALLOW_USERS: "4",
     }))
       vi.stubEnv(key, value);
     vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -270,6 +272,7 @@ describe("Telegram dispatch skill catalog", () => {
     });
     expect(env.ASSISTANT_SYSTEM_PROMPT).not.toBe(DEFAULT_SYSTEM_PROMPT);
     expect(env).not.toHaveProperty("SKILL_EXECUTION_TIMEOUT_MS");
+    expect(env).not.toHaveProperty("ALLOW_USERS");
     expect(Object.values(env).some((value) => /[\r\n]/.test(value))).toBe(
       false,
     );
@@ -305,5 +308,58 @@ describe("Telegram dispatch skill catalog", () => {
       code: "SKILL_CATALOG_UNAVAILABLE",
     });
     expect(log.mock.calls[0]![0]).not.toContain("private detail");
+  });
+
+  it("refuses a Telegram account that is not on ALLOW_USERS", async () => {
+    vi.stubEnv("ALLOW_USERS", "luckyvickyforever,another_user");
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      dispatchTelegramInput({ ...input, username: "someoneelse" }),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(invokeWorker).not.toHaveBeenCalled();
+    expect(skillQuery).not.toHaveBeenCalled();
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1].body));
+    expect(body).toEqual({
+      chat_id: "3",
+      text: TELEGRAM_ACCESS_DENIED_TEXT,
+    });
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      "https://api.telegram.org/bottoken/sendMessage",
+    );
+  });
+
+  it("matches an allowlisted username without @ and ignores case", async () => {
+    vi.stubEnv("ALLOW_USERS", "@LuckyVickyForever");
+    await dispatchTelegramInput({
+      ...input,
+      username: "luckyvickyforever",
+    });
+    expect(invokeWorker).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a callback from an account that is not allowlisted", async () => {
+    vi.stubEnv("ALLOW_USERS", "luckyvickyforever");
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await dispatchTelegramInput({
+      kind: "callback",
+      updateId: "9",
+      callbackQueryId: "callback-id",
+      messageId: "8",
+      chatId: "3",
+      userId: "4",
+      username: "someoneelse",
+      data: "y_abcdefghijklmnopqrstuvwxyz123456",
+    });
+
+    expect(invokeWorker).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(fetchMock.mock.calls[1]![1].body))).toEqual({
+      callback_query_id: "callback-id",
+    });
   });
 });

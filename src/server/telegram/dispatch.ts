@@ -13,6 +13,7 @@ import { ensureSandbox } from "../sandbox/controller";
 import { installWorker, invokeWorker } from "../sandbox/transport";
 import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
+import { TELEGRAM_ACCESS_DENIED_TEXT, telegramUpdateAllowed } from "./access";
 import type { TelegramInput } from "./input";
 import { logStructured, safeError } from "../../shared/logger";
 import { PostgresSkillDefinitionStore } from "../skills/postgres-definition-store";
@@ -285,6 +286,31 @@ export async function dispatchTelegramInput(
     GITHUB_PROMPTS_BRANCH: "main",
   });
   const client = new TelegramClient(telegram.TELEGRAM_BOT_TOKEN);
+  if (!telegramUpdateAllowed(telegram.ALLOW_USERS, input)) {
+    if ("chatId" in input)
+      await client.send(
+        input.chatId,
+        TELEGRAM_ACCESS_DENIED_TEXT,
+        undefined,
+        "replyToMessageId" in input ? input.replyToMessageId : undefined,
+      );
+    if (input.kind === "callback")
+      await client.acknowledgeCallback(input.callbackQueryId);
+    logStructured({
+      correlationId,
+      component: "controller",
+      operation: "telegram.allowlist",
+      stage: "access",
+      result: "failure",
+      code: "TELEGRAM_USER_NOT_ALLOWLISTED",
+    });
+    return {
+      contractVersion: 1 as const,
+      correlationId,
+      ok: true as const,
+      data: { acknowledged: true },
+    };
+  }
   if (input.kind === "callback") {
     // Capabilities are consumed only by the trusted confirmation coordinator.
     // They are never copied into a worker request or model-visible history.

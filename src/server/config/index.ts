@@ -1,7 +1,11 @@
 import "server-only";
 
 import { z } from "zod";
-import { classifyTelegramAllowlistToken } from "../../shared/telegram-allowlist";
+import {
+  classifyTelegramAllowlistToken,
+  parseStrictTelegramAllowlist,
+  type TelegramAllowlist,
+} from "../../shared/telegram-allowlist";
 import { DEFAULT_EMERGENCY_SYSTEM_PROMPT_TEXT } from "../prompts/default-system-prompt";
 
 export { readDatabaseConfig } from "../../shared/postgres/config";
@@ -56,9 +60,33 @@ const modelSchema = z.object({
   DEEPSEEK_OUTPUT_PRICE_PER_MILLION: price,
 });
 
+const emptyAllowlist = (): TelegramAllowlist => ({
+  ids: new Set(),
+  usernames: new Set(),
+});
+
+const allowUsers = z.string().transform((value, context): TelegramAllowlist => {
+  const parsed = parseStrictTelegramAllowlist(value);
+  if (!parsed.ok) {
+    context.addIssue({
+      code: "custom",
+      message:
+        parsed.reason === "duplicate"
+          ? "Duplicate ALLOW_USERS entry"
+          : "ALLOW_USERS must be comma-separated Telegram usernames or numeric IDs",
+    });
+    return z.NEVER;
+  }
+  return parsed.allowlist;
+});
+
 const telegramSchema = z.object({
   TELEGRAM_BOT_TOKEN: requiredString,
   TELEGRAM_WEBHOOK_SECRET: requiredString,
+  // Unset or blank denies every account. Usernames are stored without "@".
+  ALLOW_USERS: blankable(allowUsers.optional()).transform(
+    (value) => value ?? emptyAllowlist(),
+  ),
 });
 
 const dashboardSchema = z.object({
@@ -309,7 +337,15 @@ export function readModelConfig(
 export function readTelegramConfig(
   env: Record<string, string | undefined> = process.env,
 ): TelegramConfig {
-  return telegramSchema.parse(env);
+  // Accept the name from the operator note as well as the canonical uppercase key.
+  const allowUsersValue = env.ALLOW_USERS?.trim()
+    ? env.ALLOW_USERS
+    : env.Allow_USERS;
+  return telegramSchema.parse(
+    allowUsersValue === undefined
+      ? env
+      : { ...env, ALLOW_USERS: allowUsersValue },
+  );
 }
 
 export function readDashboardConfig(

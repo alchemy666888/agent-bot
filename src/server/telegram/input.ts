@@ -77,6 +77,8 @@ export type TelegramInput =
       updateId: string;
       chatId: string;
       replyToMessageId?: string;
+      userId?: string;
+      username?: string;
     }
   | { kind: "ignored"; updateId: string };
 
@@ -120,6 +122,11 @@ export const telegramInputSchema: z.ZodType<TelegramInput> =
         updateId: z.string().regex(/^\d+$/),
         chatId: z.string().regex(chatIdPattern),
         replyToMessageId: z.string().regex(/^\d+$/).optional(),
+        userId: z
+          .string()
+          .regex(/^[1-9]\d*$/)
+          .optional(),
+        username: z.string().optional(),
       })
       .strict(),
     z
@@ -163,13 +170,21 @@ export function extractTelegramInput(raw: unknown): TelegramInput {
     return { kind: "ignored", updateId };
   const chatId = telegramChatId(update.message.chat.id);
   const replyToMessageId = String(update.message.message_id);
-  if (!update.message.text || !update.message.from)
+  if (!update.message.text || !update.message.from) {
+    const from = update.message.from;
     return {
       kind: "unsupported",
       updateId,
       chatId,
       ...(chatType === "private" ? {} : { replyToMessageId }),
+      ...(from
+        ? {
+            userId: telegramId(from.id),
+            username: from.username,
+          }
+        : {}),
     };
+  }
   return {
     kind: "text",
     updateId,

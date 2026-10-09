@@ -38,6 +38,26 @@ export function parseTelegramAllowlist(
   return { ids, usernames };
 }
 
+/** Empty input is an empty allowlist. Invalid or repeated entries fail closed. */
+export function parseStrictTelegramAllowlist(
+  value: string,
+):
+  | { ok: true; allowlist: TelegramAllowlist }
+  | { ok: false; reason: "invalid" | "duplicate" } {
+  const ids = new Set<string>();
+  const usernames = new Set<string>();
+  for (const raw of value.split(",")) {
+    const token = raw.trim();
+    if (!token) continue;
+    const classified = classifyTelegramAllowlistToken(token);
+    if (classified.kind === "invalid") return { ok: false, reason: "invalid" };
+    const bucket = classified.kind === "id" ? ids : usernames;
+    if (bucket.has(classified.value)) return { ok: false, reason: "duplicate" };
+    bucket.add(classified.value);
+  }
+  return { ok: true, allowlist: { ids, usernames } };
+}
+
 export function isTelegramActorAllowed(
   allowlist: { ids: ReadonlySet<string>; usernames?: ReadonlySet<string> },
   userId: string,

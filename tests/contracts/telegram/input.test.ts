@@ -35,6 +35,42 @@ describe("Telegram contract", () => {
     });
     expect(JSON.stringify(value)).not.toContain("private");
   });
+  it("keeps sender identity on non-text messages", () => {
+    expect(
+      extractTelegramInput({
+        update_id: 3,
+        message: {
+          message_id: 4,
+          chat: { id: 5, type: "private" },
+          from: { id: 6, first_name: "private", username: "LuckyVickyForever" },
+          photo: [],
+        },
+      }),
+    ).toEqual({
+      kind: "unsupported",
+      updateId: "3",
+      chatId: "5",
+      userId: "6",
+      username: "LuckyVickyForever",
+    });
+    expect(
+      JSON.stringify(
+        extractTelegramInput({
+          update_id: 3,
+          message: {
+            message_id: 4,
+            chat: { id: 5, type: "private" },
+            from: {
+              id: 6,
+              first_name: "private",
+              username: "LuckyVickyForever",
+            },
+            photo: [],
+          },
+        }),
+      ),
+    ).not.toContain("private");
+  });
   it("ignores edited messages and non-group chats", () => {
     expect(
       extractTelegramInput({ update_id: 1, edited_message: {} }).kind,
