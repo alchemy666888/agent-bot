@@ -21,7 +21,7 @@ type Output = {
 };
 const DEEPSEEK_WEB_SEARCH = { type: "web_search" } as const;
 const WEB_SEARCH_GUIDANCE =
-  "For questions that depend on current or local facts, such as weather, news, prices, or schedules, use web search before answering. Answer from the search results and include source links. Say that a search returned nothing only when the tool result is actually empty.";
+  "For questions that depend on current or local facts, such as weather, news, prices, or schedules, use web search before answering. Answer from the search results without appending source names or links. Say that a search returned nothing only when the tool result is actually empty.";
 type ResponsesBody = {
   id?: string;
   output_text?: string;
