@@ -2,12 +2,13 @@ import "server-only";
 
 import { z } from "zod";
 import { classifyTelegramAllowlistToken } from "../../shared/telegram-allowlist";
+import { DEFAULT_EMERGENCY_SYSTEM_PROMPT_TEXT } from "../prompts/default-system-prompt";
 
 export { readDatabaseConfig } from "../../shared/postgres/config";
 
 export const SANDBOX_REGION = "sin1" as const;
 export const DEFAULT_EMERGENCY_SYSTEM_PROMPT =
-  "You are a helpful, accurate, and safe general-purpose assistant. Reply in the language of the user's latest message unless they request another language.";
+  DEFAULT_EMERGENCY_SYSTEM_PROMPT_TEXT;
 /** @deprecated Use DEFAULT_EMERGENCY_SYSTEM_PROMPT. */
 export const DEFAULT_SYSTEM_PROMPT = DEFAULT_EMERGENCY_SYSTEM_PROMPT;
 
