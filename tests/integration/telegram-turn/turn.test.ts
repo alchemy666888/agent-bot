@@ -704,6 +704,59 @@ describe("Telegram turn", () => {
     );
   });
 
+  it("retries routing and generation together after a non-transient failure", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const signals: AbortSignal[] = [];
+    const abortedAtStart: boolean[] = [];
+    const model = {
+      generate: vi.fn(async (request: { signal?: AbortSignal }) => {
+        if (request.signal) {
+          signals.push(request.signal);
+          abortedAtStart.push(request.signal.aborted);
+        }
+        if (signals.length === 1) throw new Error("TURN_TIMEOUT");
+        return { content: "retried answer" };
+      }),
+    };
+    const route = vi.fn(async () => ({
+      kind: "direct" as const,
+      confidence: 1,
+      rationale: "general",
+    }));
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      model,
+      telegram,
+      "system",
+      undefined,
+      undefined,
+      undefined,
+      [],
+      { route },
+      undefined,
+      60_000,
+      { mode: "enforced" },
+    ).handle({
+      kind: "text",
+      updateId: "7",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "hello",
+    });
+    expect(route).toHaveBeenCalledTimes(2);
+    expect(model.generate).toHaveBeenCalledTimes(2);
+    expect(signals[0]).not.toBe(signals[1]);
+    expect(abortedAtStart).toEqual([false, false]);
+    expect(telegram.send).toHaveBeenCalledWith("3", "retried answer");
+  });
+
   it("answers an unmentioned group message without private history", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const conversations = new ConversationService();

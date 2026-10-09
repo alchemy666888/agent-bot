@@ -270,8 +270,10 @@ export class TelegramTurn {
         () => void this.telegram.typing(input.chatId).catch(() => undefined),
         4_000,
       );
-      const turnController = new AbortController();
-      const turnTimer = setTimeout(
+      // Reassigned on each whole-request attempt so a timed-out signal cannot
+      // abort the retry. The timer callback reads the current controller.
+      let turnController = new AbortController();
+      let turnTimer = setTimeout(
         () => turnController.abort(new Error("TURN_TIMEOUT")),
         this.turnTimeoutMs,
       );
@@ -294,329 +296,365 @@ export class TelegramTurn {
             | "skill_unavailable"
             | "model_output_recovery"
             | undefined;
-          try {
-            if (deterministic) answer = deterministic;
-            else {
-              if (!command && this.router && this.routing.mode === "shadow") {
-                const shadowContext = await this.conversations.context(
-                  scopeKey,
-                  this.composed(routedText),
-                );
-                try {
-                  const routed = this.router.routeWithMetadata
-                    ? await this.router.routeWithMetadata({
-                        request: routedText,
-                        conversationContext: shadowContext.messages
-                          .filter(
-                            (
-                              message,
-                            ): message is typeof message & {
-                              role: "user" | "assistant";
-                            } => message.role !== "system",
-                          )
-                          .slice(0, -1)
-                          .slice(-20),
-                        authorizedSkills:
-                          skills?.routingCatalog(input.userId) ?? [],
-                        availableTools: this.capabilityRegistry
-                          ? this.capabilityRegistry.generalRequests()
-                          : [...this.generalCapabilities],
-                        signal: turnController.signal,
-                      })
-                    : {
-                        decision: await this.router.route({
+          // An exception retries the whole answer request: routing, context,
+          // and generation. Per-call retries do not cover timeouts, and they
+          // leave a failed classification in place.
+          const requestAttempts = 3;
+          for (
+            let requestAttempt = 0;
+            requestAttempt < requestAttempts;
+            requestAttempt++
+          ) {
+            if (requestAttempt > 0) {
+              clearTimeout(turnTimer);
+              turnController = new AbortController();
+              turnTimer = setTimeout(
+                () => turnController.abort(new Error("TURN_TIMEOUT")),
+                this.turnTimeoutMs,
+              );
+              generated = undefined;
+              latencyMs = 0;
+              resolution = undefined;
+              routedCapabilities = this.generalCapabilities;
+              executionMode = "direct";
+              preparedContext = undefined;
+              routerRuns.length = 0;
+              shadowRouteKind = undefined;
+              fallbackReason = undefined;
+              answer = undefined;
+              await new Promise((resolve) =>
+                setTimeout(resolve, 25 * requestAttempt),
+              );
+            }
+            try {
+              if (deterministic) answer = deterministic;
+              else {
+                if (!command && this.router && this.routing.mode === "shadow") {
+                  const shadowContext = await this.conversations.context(
+                    scopeKey,
+                    this.composed(routedText),
+                  );
+                  try {
+                    const routed = this.router.routeWithMetadata
+                      ? await this.router.routeWithMetadata({
                           request: routedText,
-                          conversationContext: [],
+                          conversationContext: shadowContext.messages
+                            .filter(
+                              (
+                                message,
+                              ): message is typeof message & {
+                                role: "user" | "assistant";
+                              } => message.role !== "system",
+                            )
+                            .slice(0, -1)
+                            .slice(-20),
                           authorizedSkills:
                             skills?.routingCatalog(input.userId) ?? [],
                           availableTools: this.capabilityRegistry
                             ? this.capabilityRegistry.generalRequests()
                             : [...this.generalCapabilities],
                           signal: turnController.signal,
-                        }),
-                        run: { latencyMs: 0 },
-                      };
-                  shadowRouteKind = routed.decision.kind;
-                  routerRuns.push({
-                    ...routed.run,
-                    routingMode: "shadow",
-                    fallbackReason:
-                      this.routing.minimumConfidence !== undefined &&
-                      routed.decision.confidence <
-                        this.routing.minimumConfidence
-                        ? "low_confidence"
-                        : routed.run.fallbackReason,
-                  });
-                } catch (error) {
-                  const failed = (error as { run?: RouterRunMetadata }).run;
-                  if (failed)
-                    routerRuns.push({ ...failed, routingMode: "shadow" });
-                }
-              }
-              if (command?.kind === "fallback") {
-                resolution = { kind: "none" as const };
-              } else if (command?.kind === "invoke") {
-                resolution = skills?.resolve(
-                  routedText,
-                  input.userId,
-                  command.invocation.skill.id ?? command.invocation.skill.name,
-                );
-              } else if (this.router && this.routing.mode === "enforced") {
-                preparedContext = await this.conversations.context(
-                  scopeKey,
-                  this.composed(routedText),
-                );
-                const messages = preparedContext.messages.filter(
-                  (
-                    message,
-                  ): message is typeof message & {
-                    role: "user" | "assistant";
-                  } => message.role !== "system",
-                );
-                let skillCatalog = skills?.routingCatalog(input.userId) ?? [];
-                let toolCatalog = this.capabilityRegistry
-                  ? this.capabilityRegistry.generalRequests()
-                  : [...this.generalCapabilities];
-                resolution = { kind: "none" as const };
-                routedCapabilities = [];
-                // One initial classification and at most one bounded recovery
-                // classification. Invalid IDs are removed before recovery.
-                for (
-                  let routingAttempt = 0;
-                  routingAttempt < 2;
-                  routingAttempt++
-                ) {
-                  let decision: RoutingDecision;
-                  try {
-                    const routingRequest = {
-                      request: routedText,
-                      conversationContext: messages.slice(0, -1).slice(-20),
-                      authorizedSkills: skillCatalog,
-                      availableTools: toolCatalog,
-                      signal: turnController.signal,
-                    };
-                    if (this.router.routeWithMetadata) {
-                      const routed = await retryTransient(
-                        () => this.router!.routeWithMetadata!(routingRequest),
-                        isTransient,
-                      );
-                      decision = routed.decision;
-                      const lowConfidence =
-                        this.routing.minimumConfidence !== undefined &&
-                        decision.confidence < this.routing.minimumConfidence;
-                      routerRuns.push({
-                        ...routed.run,
-                        routingMode: "enforced",
-                        rerouteCount: routingAttempt,
-                        ...(lowConfidence
-                          ? { fallbackReason: "low_confidence" as const }
-                          : {}),
-                      });
-                      if (lowConfidence) {
-                        decision = {
-                          kind: "direct",
-                          confidence: decision.confidence,
-                          rationale: "Below configured confidence threshold",
+                        })
+                      : {
+                          decision: await this.router.route({
+                            request: routedText,
+                            conversationContext: [],
+                            authorizedSkills:
+                              skills?.routingCatalog(input.userId) ?? [],
+                            availableTools: this.capabilityRegistry
+                              ? this.capabilityRegistry.generalRequests()
+                              : [...this.generalCapabilities],
+                            signal: turnController.signal,
+                          }),
+                          run: { latencyMs: 0 },
                         };
-                      }
-                    } else {
-                      decision = await retryTransient(
-                        () => this.router!.route(routingRequest),
-                        isTransient,
-                      );
-                    }
+                    shadowRouteKind = routed.decision.kind;
+                    routerRuns.push({
+                      ...routed.run,
+                      routingMode: "shadow",
+                      fallbackReason:
+                        this.routing.minimumConfidence !== undefined &&
+                        routed.decision.confidence <
+                          this.routing.minimumConfidence
+                          ? "low_confidence"
+                          : routed.run.fallbackReason,
+                    });
                   } catch (error) {
-                    const failedRun = (error as { run?: RouterRunMetadata })
-                      ?.run;
-                    if (failedRun)
-                      routerRuns.push({
-                        ...failedRun,
-                        routingMode: "enforced",
-                        rerouteCount: routingAttempt,
-                      });
-                    if (
-                      routingAttempt === 0 &&
-                      (error as Error)?.message === "ROUTER_OUTPUT_INVALID"
-                    )
-                      continue;
-                    // Provider failures and timeouts fall back to native
-                    // web search; the sanitized failed run is still recorded.
-                    break;
+                    const failed = (error as { run?: RouterRunMetadata }).run;
+                    if (failed)
+                      routerRuns.push({ ...failed, routingMode: "shadow" });
                   }
-
-                  if (decision.kind === "skill") {
-                    const current = skills?.resolveRouted(
-                      decision.selectedSkillId,
-                      input.userId,
-                    );
-                    if (current?.kind === "selected") {
-                      resolution = current;
-                      executionMode = "selected_skill";
-                      break;
-                    }
-                    skillCatalog = skillCatalog.filter(
-                      ({ id }) => id !== decision.selectedSkillId,
-                    );
-                    if (routingAttempt === 0) continue;
-                    break;
-                  }
-                  if (
-                    decision.kind === "tool" ||
-                    decision.kind === "web_search_fallback"
-                  ) {
-                    if (decision.kind === "web_search_fallback") {
-                      // Provider-native search stays in this answer request;
-                      // it is not routed through the function registry.
-                      routedCapabilities = [];
-                      executionMode = "forced_web_search";
-                      break;
-                    }
-                    const selectedId = decision.selectedToolId;
-                    // Fetch a fresh general catalog at execution time to close
-                    // the catalog/authorization race.
-                    const currentGeneral = this.capabilityRegistry
-                      ? this.capabilityRegistry.generalRequests()
-                      : [...this.generalCapabilities];
-                    const selected = currentGeneral.filter(
-                      ({ id }) => id === selectedId,
-                    );
-                    if (selected.length === 1) {
-                      routedCapabilities = this.capabilityRegistry
-                        ? this.capabilityRegistry.requests([selectedId])
-                        : selected;
-                      executionMode = "selected_tools";
-                      break;
-                    }
-                    toolCatalog = toolCatalog.filter(
-                      ({ id }) => id !== selectedId,
-                    );
-                    if (routingAttempt === 0) continue;
-                    break;
-                  }
-                  if (decision.kind === "ambiguous") {
-                    const authorizedIds = new Set([
-                      ...skillCatalog.map(({ id }) => id),
-                      ...toolCatalog.map(({ id }) => id),
-                    ]);
-                    const choices = decision.candidateIds.filter((id) =>
-                      authorizedIds.has(id),
-                    );
-                    if (choices.length >= 2) {
-                      answer = `I need clarification. Would you like ${choices.join(" or ")}?`;
-                      break;
-                    }
-                    skillCatalog = skillCatalog.filter(({ id }) =>
-                      choices.includes(id),
-                    );
-                    toolCatalog = toolCatalog.filter(({ id }) =>
-                      choices.includes(id),
-                    );
-                    if (routingAttempt === 0) continue;
-                    break;
-                  }
-                  if (decision.kind === "refuse")
-                    answer = "I can’t help with that request.";
-                  if (decision.kind === "unavailable")
-                    answer =
-                      "I can’t perform that action because no authorized capability is available, and web search cannot perform it.";
-                  // Direct classifications and invalid selections use the
-                  // mandatory search fallback below.
-                  break;
                 }
-              } else {
-                resolution = skills?.resolve(routedText, input.userId);
-              }
-              if (resolution?.kind === "selected")
-                executionMode = "selected_skill";
-              else if (
-                (!this.router || this.routing.mode === "shadow") &&
-                routedCapabilities.length
-              )
-                executionMode = "selected_tools";
-              if (this.routing.mode === "shadow" && shadowRouteKind) {
-                const existingRoute =
-                  resolution?.kind === "selected"
-                    ? "skill"
-                    : resolution?.kind === "ambiguous"
-                      ? "ambiguous"
-                      : routedCapabilities.length
-                        ? "tool"
-                        : "direct";
-                for (const run of routerRuns)
-                  run.disagreement = shadowRouteKind !== existingRoute;
-              }
-              if (!resolution || resolution.kind === "none") {
-                // Search is the mandatory answer fallback in every router mode.
-                // A classifier cannot turn a missing skill into an unsearched answer.
-                executionMode = "forced_web_search";
-                routedCapabilities = [];
-                fallbackReason =
-                  command?.kind === "fallback"
-                    ? command.reason
-                    : "no_skill_match";
-              }
-              if (answer) {
-                // The router produced a deterministic clarification or refusal.
-              } else if (resolution?.kind === "ambiguous") {
-                answer = `I found multiple relevant skills (${resolution.skillIds.join(", ")}). Please choose one with /skill <id>.`;
-              } else if (
-                resolution?.kind === "selected" &&
-                resolution.skill.prohibitedActions.some((restriction) =>
-                  input.text.toLowerCase().includes(restriction.toLowerCase()),
-                )
-              ) {
-                answer =
-                  "I can't perform that action because the selected skill prohibits it.";
-              } else {
-                const started = Date.now();
-                const context =
-                  preparedContext ??
-                  (await this.conversations.context(
+                if (command?.kind === "fallback") {
+                  resolution = { kind: "none" as const };
+                } else if (command?.kind === "invoke") {
+                  resolution = skills?.resolve(
+                    routedText,
+                    input.userId,
+                    command.invocation.skill.id ??
+                      command.invocation.skill.name,
+                  );
+                } else if (this.router && this.routing.mode === "enforced") {
+                  preparedContext = await this.conversations.context(
                     scopeKey,
                     this.composed(routedText),
-                  ));
-                generated = await retryTransient(
-                  async () =>
-                    this.model.generate({
-                      ...context,
-                      executionMode,
-                      generalCapabilities: routedCapabilities,
-                      ...(!group && this.authorizedSkillCatalog
-                        ? {
-                            authorizedSkillCatalog: this.authorizedSkillCatalog,
-                          }
-                        : {}),
-                      signal: turnController.signal,
-                      ...(resolution?.kind === "selected"
-                        ? { skill: resolution.skill }
-                        : {}),
-                    }),
+                  );
+                  const messages = preparedContext.messages.filter(
+                    (
+                      message,
+                    ): message is typeof message & {
+                      role: "user" | "assistant";
+                    } => message.role !== "system",
+                  );
+                  let skillCatalog = skills?.routingCatalog(input.userId) ?? [];
+                  let toolCatalog = this.capabilityRegistry
+                    ? this.capabilityRegistry.generalRequests()
+                    : [...this.generalCapabilities];
+                  resolution = { kind: "none" as const };
+                  routedCapabilities = [];
+                  // One initial classification and at most one bounded recovery
+                  // classification. Invalid IDs are removed before recovery.
+                  for (
+                    let routingAttempt = 0;
+                    routingAttempt < 2;
+                    routingAttempt++
+                  ) {
+                    let decision: RoutingDecision;
+                    try {
+                      const routingRequest = {
+                        request: routedText,
+                        conversationContext: messages.slice(0, -1).slice(-20),
+                        authorizedSkills: skillCatalog,
+                        availableTools: toolCatalog,
+                        signal: turnController.signal,
+                      };
+                      if (this.router.routeWithMetadata) {
+                        const routed = await retryTransient(
+                          () => this.router!.routeWithMetadata!(routingRequest),
+                          isTransient,
+                        );
+                        decision = routed.decision;
+                        const lowConfidence =
+                          this.routing.minimumConfidence !== undefined &&
+                          decision.confidence < this.routing.minimumConfidence;
+                        routerRuns.push({
+                          ...routed.run,
+                          routingMode: "enforced",
+                          rerouteCount: routingAttempt,
+                          ...(lowConfidence
+                            ? { fallbackReason: "low_confidence" as const }
+                            : {}),
+                        });
+                        if (lowConfidence) {
+                          decision = {
+                            kind: "direct",
+                            confidence: decision.confidence,
+                            rationale: "Below configured confidence threshold",
+                          };
+                        }
+                      } else {
+                        decision = await retryTransient(
+                          () => this.router!.route(routingRequest),
+                          isTransient,
+                        );
+                      }
+                    } catch (error) {
+                      const failedRun = (error as { run?: RouterRunMetadata })
+                        ?.run;
+                      if (failedRun)
+                        routerRuns.push({
+                          ...failedRun,
+                          routingMode: "enforced",
+                          rerouteCount: routingAttempt,
+                        });
+                      if (
+                        routingAttempt === 0 &&
+                        (error as Error)?.message === "ROUTER_OUTPUT_INVALID"
+                      )
+                        continue;
+                      // Provider failures and timeouts fall back to native
+                      // web search; the sanitized failed run is still recorded.
+                      break;
+                    }
+
+                    if (decision.kind === "skill") {
+                      const current = skills?.resolveRouted(
+                        decision.selectedSkillId,
+                        input.userId,
+                      );
+                      if (current?.kind === "selected") {
+                        resolution = current;
+                        executionMode = "selected_skill";
+                        break;
+                      }
+                      skillCatalog = skillCatalog.filter(
+                        ({ id }) => id !== decision.selectedSkillId,
+                      );
+                      if (routingAttempt === 0) continue;
+                      break;
+                    }
+                    if (
+                      decision.kind === "tool" ||
+                      decision.kind === "web_search_fallback"
+                    ) {
+                      if (decision.kind === "web_search_fallback") {
+                        // Provider-native search stays in this answer request;
+                        // it is not routed through the function registry.
+                        routedCapabilities = [];
+                        executionMode = "forced_web_search";
+                        break;
+                      }
+                      const selectedId = decision.selectedToolId;
+                      // Fetch a fresh general catalog at execution time to close
+                      // the catalog/authorization race.
+                      const currentGeneral = this.capabilityRegistry
+                        ? this.capabilityRegistry.generalRequests()
+                        : [...this.generalCapabilities];
+                      const selected = currentGeneral.filter(
+                        ({ id }) => id === selectedId,
+                      );
+                      if (selected.length === 1) {
+                        routedCapabilities = this.capabilityRegistry
+                          ? this.capabilityRegistry.requests([selectedId])
+                          : selected;
+                        executionMode = "selected_tools";
+                        break;
+                      }
+                      toolCatalog = toolCatalog.filter(
+                        ({ id }) => id !== selectedId,
+                      );
+                      if (routingAttempt === 0) continue;
+                      break;
+                    }
+                    if (decision.kind === "ambiguous") {
+                      const authorizedIds = new Set([
+                        ...skillCatalog.map(({ id }) => id),
+                        ...toolCatalog.map(({ id }) => id),
+                      ]);
+                      const choices = decision.candidateIds.filter((id) =>
+                        authorizedIds.has(id),
+                      );
+                      if (choices.length >= 2) {
+                        answer = `I need clarification. Would you like ${choices.join(" or ")}?`;
+                        break;
+                      }
+                      skillCatalog = skillCatalog.filter(({ id }) =>
+                        choices.includes(id),
+                      );
+                      toolCatalog = toolCatalog.filter(({ id }) =>
+                        choices.includes(id),
+                      );
+                      if (routingAttempt === 0) continue;
+                      break;
+                    }
+                    if (decision.kind === "refuse")
+                      answer = "I can’t help with that request.";
+                    if (decision.kind === "unavailable")
+                      answer =
+                        "I can’t perform that action because no authorized capability is available, and web search cannot perform it.";
+                    // Direct classifications and invalid selections use the
+                    // mandatory search fallback below.
+                    break;
+                  }
+                } else {
+                  resolution = skills?.resolve(routedText, input.userId);
+                }
+                if (resolution?.kind === "selected")
+                  executionMode = "selected_skill";
+                else if (
+                  (!this.router || this.routing.mode === "shadow") &&
+                  routedCapabilities.length
+                )
+                  executionMode = "selected_tools";
+                if (this.routing.mode === "shadow" && shadowRouteKind) {
+                  const existingRoute =
+                    resolution?.kind === "selected"
+                      ? "skill"
+                      : resolution?.kind === "ambiguous"
+                        ? "ambiguous"
+                        : routedCapabilities.length
+                          ? "tool"
+                          : "direct";
+                  for (const run of routerRuns)
+                    run.disagreement = shadowRouteKind !== existingRoute;
+                }
+                if (!resolution || resolution.kind === "none") {
+                  // Search is the mandatory answer fallback in every router mode.
+                  // A classifier cannot turn a missing skill into an unsearched answer.
+                  executionMode = "forced_web_search";
+                  routedCapabilities = [];
+                  fallbackReason =
+                    command?.kind === "fallback"
+                      ? command.reason
+                      : "no_skill_match";
+                }
+                if (answer) {
+                  // The router produced a deterministic clarification or refusal.
+                } else if (resolution?.kind === "ambiguous") {
+                  answer = `I found multiple relevant skills (${resolution.skillIds.join(", ")}). Please choose one with /skill <id>.`;
+                } else if (
+                  resolution?.kind === "selected" &&
+                  resolution.skill.prohibitedActions.some((restriction) =>
+                    input.text
+                      .toLowerCase()
+                      .includes(restriction.toLowerCase()),
+                  )
+                ) {
+                  answer =
+                    "I can't perform that action because the selected skill prohibits it.";
+                } else {
+                  const started = Date.now();
+                  const context =
+                    preparedContext ??
+                    (await this.conversations.context(
+                      scopeKey,
+                      this.composed(routedText),
+                    ));
+                  generated = await this.model.generate({
+                    ...context,
+                    executionMode,
+                    generalCapabilities: routedCapabilities,
+                    ...(!group && this.authorizedSkillCatalog
+                      ? {
+                          authorizedSkillCatalog: this.authorizedSkillCatalog,
+                        }
+                      : {}),
+                    signal: turnController.signal,
+                    ...(resolution?.kind === "selected"
+                      ? { skill: resolution.skill }
+                      : {}),
+                  });
+                  latencyMs = Date.now() - started;
+                  if (generated.outputRecovery?.triggered)
+                    fallbackReason = "model_output_recovery";
+                  answer =
+                    command?.kind === "fallback"
+                      ? `${command.note}\n\n${generated.content}`
+                      : generated.content;
+                }
+              }
+              break;
+            } catch (error) {
+              await this.observability?.recordFailure({
+                stage: "model",
+                error,
+                updateId: input.updateId,
+                userId: scopeKey,
+              });
+              if (requestAttempt === requestAttempts - 1) {
+                await retryTransient(
+                  () => deliver(GENERIC_FAILURE),
                   isTransient,
                 );
-                latencyMs = Date.now() - started;
-                if (generated.outputRecovery?.triggered)
-                  fallbackReason = "model_output_recovery";
-                answer =
-                  command?.kind === "fallback"
-                    ? `${command.note}\n\n${generated.content}`
-                    : generated.content;
+                await this.checkpoint(scopeKey, {
+                  updateId: input.updateId,
+                  telegramUserId: input.userId,
+                  stage: "failed",
+                  updatedAt: new Date().toISOString(),
+                });
+                return;
               }
             }
-          } catch (error) {
-            await this.observability?.recordFailure({
-              stage: "model",
-              error,
-              updateId: input.updateId,
-              userId: scopeKey,
-            });
-            await retryTransient(() => deliver(GENERIC_FAILURE), isTransient);
-            await this.checkpoint(scopeKey, {
-              updateId: input.updateId,
-              telegramUserId: input.userId,
-              stage: "failed",
-              updatedAt: new Date().toISOString(),
-            });
-            return;
           }
           const validation = await this.validateFinalAnswer(
             answer,
