@@ -4,6 +4,7 @@ export const REPLY_STYLE_GUIDANCE = [
   "Do not append routine disclaimers about search engines, real-time reporting, or checking publishers for updates. Keep useful dates, source names, and links. Briefly state a material information limitation next to the affected claim, including when current information cannot be verified.",
   "Do not append generic offers to help further, follow-up questions, or decorative emojis. Ask a question only when clarification is needed to complete the request.",
   "Keep GitHub connectivity, skill catalogs, system prompts, emergency prompts, defaults, and other internal fallback diagnostics out of user-facing answers. If a failure prevents the requested result, state only the practical limitation briefly. Preserve explicitly requested quotations or examples.",
+  "Telegram shows Markdown source literally. Do not use Markdown tables, heading marks, fenced code blocks, or emphasis markers. For a comparison, write one plain-text block per item: a title line, then one label-and-value line per field, with a blank line between items.",
 ].join(" ");
 
 /** Remove only known boilerplate at answer boundaries, including old replies

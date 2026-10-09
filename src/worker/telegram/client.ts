@@ -13,14 +13,105 @@ export function chunkTelegramText(text: string, limit = 4096): string[] {
   return chunks;
 }
 
+function isMarkdownTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.includes("|")) return false;
+  const pipes = trimmed.split("|").length - 1;
+  return trimmed.startsWith("|") || pipes >= 2;
+}
+
+function splitTableCells(line: string): string[] {
+  let trimmed = line.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  const cells: string[] = [];
+  let current = "";
+  for (let index = 0; index < trimmed.length; index++) {
+    const char = trimmed[index];
+    if (char === "\\" && trimmed[index + 1] === "|") {
+      current += "|";
+      index++;
+    } else if (char === "|") {
+      cells.push(current.trim());
+      current = "";
+    } else current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function isTableSeparator(cells: readonly string[]): boolean {
+  return (
+    cells.length >= 2 && cells.every((cell) => /^:?-+:?$/.test(cell.trim()))
+  );
+}
+
+function labelValue(label: string, value: string): string {
+  const colon = /[\u3400-\u9fff]/.test(label) ? "：" : ": ";
+  return `${label}${colon}${value}`;
+}
+
+/** Telegram plain text shows pipe tables literally. Rewrite a GFM table as one block per row. */
+function renderMarkdownTable(block: readonly string[]): string | null {
+  const parsed = block.map(splitTableCells);
+  const separatorAt = parsed.findIndex(isTableSeparator);
+  if (separatorAt < 0) return null;
+  const header = separatorAt > 0 ? parsed[separatorAt - 1]! : [];
+  const data = parsed.filter(
+    (_, index) =>
+      index !== separatorAt && !(separatorAt > 0 && index === separatorAt - 1),
+  );
+  if (data.length === 0) {
+    const labels = header.filter(Boolean);
+    return labels.length > 0 ? labels.join(" · ") : null;
+  }
+  const sections = data
+    .map((row) => {
+      const title = (row[0] ?? "").replace(/<br\s*\/?>/gi, " ").trim();
+      const fields: string[] = [];
+      const width = Math.max(header.length, row.length);
+      for (let column = 1; column < width; column++) {
+        const value = (row[column] ?? "").replace(/<br\s*\/?>/gi, " ").trim();
+        if (!value) continue;
+        const label = (header[column] ?? "").trim();
+        fields.push(label ? labelValue(label, value) : value);
+      }
+      if (!title && fields.length === 0) return "";
+      if (fields.length === 0) return title;
+      if (!title) return fields.join("\n");
+      return [title, ...fields].join("\n");
+    })
+    .filter(Boolean);
+  return sections.length > 0 ? sections.join("\n\n") : null;
+}
+
+function convertMarkdownTables(text: string): string {
+  const lines = text.split("\n");
+  const output: string[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    if (!isMarkdownTableRow(lines[index]!)) {
+      output.push(lines[index]!);
+      index++;
+      continue;
+    }
+    const block: string[] = [];
+    while (index < lines.length && isMarkdownTableRow(lines[index]!)) {
+      block.push(lines[index]!);
+      index++;
+    }
+    output.push(renderMarkdownTable(block) ?? block.join("\n"));
+  }
+  return output.join("\n");
+}
+
 /**
  * Turn the small Markdown subset commonly returned by the model into readable
  * Telegram plain text. Sending plain text avoids leaking Markdown punctuation
  * when the model produces syntax that Telegram's parser does not accept.
  */
 export function formatTelegramText(text: string): string {
-  return text
-    .replace(/\r\n?/g, "\n")
+  return convertMarkdownTables(text.replace(/\r\n?/g, "\n"))
     .replace(/^\s*```[^\n]*\n?/gm, "")
     .replace(/^\s*#{1,6}\s+/gm, "")
     .replace(/^\s*>\s?/gm, "│ ")

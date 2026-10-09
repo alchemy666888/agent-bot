@@ -116,6 +116,43 @@ describe("Telegram contract", () => {
     expect(chunks.join("")).toBe(text);
     expect(chunks.every((x) => x.length <= 4096)).toBe(true);
   });
+  it("rewrites Markdown tables into labeled plain-text blocks", () => {
+    expect(
+      formatTelegramText(
+        [
+          "| 資產 | 已 price in 的部分 | 尚未 price in 的風險 |",
+          "|---|---|---|",
+          "| 加密 | 鷹派 FOMC、ETF 流出、高利率環境、一波去槓桿 | 中東再升級、油價再衝高、US10Y 再破新高、連環清算的尾部風險 |",
+          "| 股票 | 估值倍數的初步壓縮、利率高企 | 美債收益率「壞的上升」是否繼續、盈利下修、流動性收縮 |",
+          "| 黃金 | 地緣避險 + 央行買盤支撐，已漲到高位 | 實質利率（名目利率－通脹）若續升，金價可能反遭壓制 |",
+          "| 原油 | 中東風險溢價已部分反映 | 供給中斷的實際兌現、或局勢突然降溫的雙向意外 |",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "加密",
+        "已 price in 的部分：鷹派 FOMC、ETF 流出、高利率環境、一波去槓桿",
+        "尚未 price in 的風險：中東再升級、油價再衝高、US10Y 再破新高、連環清算的尾部風險",
+        "",
+        "股票",
+        "已 price in 的部分：估值倍數的初步壓縮、利率高企",
+        "尚未 price in 的風險：美債收益率「壞的上升」是否繼續、盈利下修、流動性收縮",
+        "",
+        "黃金",
+        "已 price in 的部分：地緣避險 + 央行買盤支撐，已漲到高位",
+        "尚未 price in 的風險：實質利率（名目利率－通脹）若續升，金價可能反遭壓制",
+        "",
+        "原油",
+        "已 price in 的部分：中東風險溢價已部分反映",
+        "尚未 price in 的風險：供給中斷的實際兌現、或局勢突然降溫的雙向意外",
+      ].join("\n"),
+    );
+  });
+  it("keeps prose that merely contains pipes", () => {
+    expect(formatTelegramText("選擇 A | 選擇 B 都可以")).toBe(
+      "選擇 A | 選擇 B 都可以",
+    );
+  });
   it("removes Markdown punctuation while retaining readable structure", () => {
     expect(
       formatTelegramText(
