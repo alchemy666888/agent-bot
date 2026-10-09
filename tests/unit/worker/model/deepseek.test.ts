@@ -233,6 +233,82 @@ describe("model adapter", () => {
     expect(result.outputRecovery).toMatchObject({ triggered: true });
   });
 
+  it("searches the current year again when a calendar repeats a prior year", async () => {
+    const request = "下個星期有什麼會議或者事件需要交易者注意的嗎？";
+    const stale =
+      "週一（10/13）\n美聯儲主席鮑威爾在 NABE 年會發表演說，談經濟展望與貨幣政策，是利率預期的關鍵";
+    const current = "週二（10/13）\n這週沒有確認到鮑威爾的 NABE 演說。";
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        instructions: string;
+        tool_choice: unknown;
+        input: { content: string }[];
+      };
+      if (fetcher.mock.calls.length === 1) {
+        expect(body.instructions).toContain("current_year: 2026");
+        expect(body.tool_choice).toBe("auto");
+        return Response.json({ output_text: stale });
+      }
+      expect(body.tool_choice).toEqual({ type: "web_search" });
+      expect(body.input.at(-1)?.content).toContain("2026");
+      return Response.json({ output_text: current });
+    });
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "fixture",
+        baseUrl: "https://example.test",
+        thinking: false,
+        now: () => new Date("2026-10-09T06:41:00.000Z"),
+        timeZone: "Asia/Hong_Kong",
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "direct",
+      messages: [{ role: "user", content: request }],
+    });
+    expect(result.content).toBe(current);
+    expect(result.content).not.toContain("週一（10/13）");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("withholds a calendar that is still from the prior year after a retry", async () => {
+    const stale =
+      "週一（10/13）\n美聯儲主席鮑威爾在 NABE 年會發表演說，談經濟展望與貨幣政策，是利率預期的關鍵";
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ output_text: stale }))
+      .mockResolvedValueOnce(Response.json({ output_text: stale }))
+      .mockResolvedValueOnce(
+        Response.json({
+          output_text: "I couldn't verify the current week's events.",
+        }),
+      );
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "fixture",
+        baseUrl: "https://example.test",
+        thinking: false,
+        now: () => new Date("2026-10-09T06:41:00.000Z"),
+        timeZone: "Asia/Hong_Kong",
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "direct",
+      messages: [
+        {
+          role: "user",
+          content: "下個星期有什麼會議或者事件需要交易者注意的嗎？",
+        },
+      ],
+    });
+    expect(result.content).toBe("I couldn't verify the current week's events.");
+    expect(result.content).not.toContain("鮑威爾");
+    expect(result.outputRecovery).toMatchObject({
+      triggered: true,
+      succeeded: true,
+    });
+  });
+
   it("uses DeepSeek web_search instead of a client function with the same name", async () => {
     const fetcher = vi.fn(
       async () =>

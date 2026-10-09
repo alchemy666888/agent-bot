@@ -126,6 +126,29 @@ describe("Telegram dispatch skill catalog", () => {
     });
   });
 
+  it("pins news and event answers to the current calendar year", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-09T06:41:00.000Z"));
+    try {
+      await dispatchTelegramInput(input);
+      const request = vi.mocked(invokeWorker).mock.calls[0]![2] as {
+        promptBundle: {
+          trustedRuntimeContext: Array<{ key: string; value: string }>;
+        };
+      };
+      expect(request.promptBundle.trustedRuntimeContext).toEqual(
+        expect.arrayContaining([
+          { key: "current_date", value: "2026-10-09" },
+          { key: "current_year", value: "2026" },
+          { key: "weekday", value: "Friday" },
+          { key: "timezone", value: "Asia/Hong_Kong" },
+        ]),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("continues to the worker when PostgreSQL is unavailable", async () => {
     skillQuery.mockRejectedValue(new Error("database unavailable"));
     await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
