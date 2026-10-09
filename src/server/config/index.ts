@@ -374,6 +374,8 @@ export function readPromptConfig(
   return promptConfigSchema.parse(env);
 }
 
+export { readNewsMcpConfig } from "../news-mcp/datetime";
+
 /**
  * Reads the single repository identity used to materialize a Telegram turn.
  * Prompt and skill prefixes may differ, but their connector and mutable ref

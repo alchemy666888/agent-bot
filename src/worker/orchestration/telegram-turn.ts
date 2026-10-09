@@ -35,6 +35,13 @@ import type { PromptBundle } from "../../shared/contracts/prompt";
 import { composePromptTurn } from "../prompts/composer";
 import type { DegradationNotice } from "../../shared/contracts/worker";
 import { cleanReplyBoilerplate } from "../model/reply-style";
+import {
+  assistantTimeZone,
+  calendarClock,
+  calendarYearRule,
+  clockFromInstructions,
+  unavailableClockRule,
+} from "../../shared/calendar-clock";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -108,6 +115,21 @@ export class TelegramTurn {
     return typeof this.promptBundle === "string"
       ? this.promptBundle
       : composePromptTurn(this.promptBundle, rawText);
+  }
+  /** Clock text for classifier requests. The answering model receives the same rule. */
+  private trustedClock(requestText: string): string {
+    const fallback = calendarClock(new Date(), assistantTimeZone());
+    if (typeof this.promptBundle === "string")
+      return calendarYearRule(fallback, requestText).slice(0, 2_000);
+    const lines = this.promptBundle.trustedRuntimeContext
+      .map(({ key, value }) => `${key}: ${value}`)
+      .join("\n");
+    if (/(?:^|\n)clock_source:\s*unavailable\b/.test(lines))
+      return unavailableClockRule(requestText).slice(0, 2_000);
+    return calendarYearRule(
+      clockFromInstructions(lines, fallback),
+      requestText,
+    ).slice(0, 2_000);
   }
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
@@ -359,6 +381,7 @@ export class TelegramTurn {
                           availableTools: this.capabilityRegistry
                             ? this.capabilityRegistry.generalRequests()
                             : [...this.generalCapabilities],
+                          trustedClock: this.trustedClock(routedText),
                           signal: turnController.signal,
                         })
                       : {
@@ -370,6 +393,7 @@ export class TelegramTurn {
                             availableTools: this.capabilityRegistry
                               ? this.capabilityRegistry.generalRequests()
                               : [...this.generalCapabilities],
+                            trustedClock: this.trustedClock(routedText),
                             signal: turnController.signal,
                           }),
                           run: { latencyMs: 0 },
@@ -432,6 +456,7 @@ export class TelegramTurn {
                         conversationContext: messages.slice(0, -1).slice(-20),
                         authorizedSkills: skillCatalog,
                         availableTools: toolCatalog,
+                        trustedClock: this.trustedClock(routedText),
                         signal: turnController.signal,
                       };
                       if (this.router.routeWithMetadata) {
