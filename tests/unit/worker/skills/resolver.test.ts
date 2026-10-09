@@ -18,7 +18,7 @@ const registry = () =>
 const skills = [
   {
     id: "weather",
-    commitSha: "a".repeat(40),
+    versionId: "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d1",
     name: "Weather",
     instructions: "weather",
     triggers: { keywords: ["weather", "forecast"], minimumConfidence: 0.5 },
@@ -31,7 +31,7 @@ const skills = [
   },
   {
     id: "travel",
-    commitSha: "a".repeat(40),
+    versionId: "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d1",
     name: "Travel",
     instructions: "travel",
     triggers: { keywords: ["travel", "forecast"], minimumConfidence: 0.5 },
@@ -136,7 +136,7 @@ describe("skill resolver", () => {
       },
     ]);
     expect(JSON.stringify(catalog)).not.toMatch(
-      /SECRET|internal policy|ownerTelegram|commitSha/,
+      /SECRET|internal policy|ownerTelegram|versionId/,
     );
   });
 });

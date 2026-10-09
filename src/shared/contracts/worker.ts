@@ -57,22 +57,13 @@ export const workerRequestV2Schema = z
         path: ["rawTelegramInput"],
         message: "Telegram turns require separate raw input",
       });
-    const catalogCommit = (
-      request.payload.skillCatalog as { commitSha?: unknown } | undefined
-    )?.commitSha;
     if (
-      request.promptBundle.repositoryCommitSha !==
-        request.repositoryCommitSha ||
-      (request.repositoryCommitSha !== null &&
-        catalogCommit !== request.repositoryCommitSha) ||
-      (request.repositoryCommitSha === null &&
-        typeof catalogCommit === "string" &&
-        catalogCommit !== "0".repeat(40))
+      request.promptBundle.repositoryCommitSha !== request.repositoryCommitSha
     )
       ctx.addIssue({
         code: "custom",
         path: ["repositoryCommitSha"],
-        message: "Repository-backed turn data must share one commit",
+        message: "Prompt turn data must share one repository commit",
       });
   });
 export const workerRequestSchema = z.union([

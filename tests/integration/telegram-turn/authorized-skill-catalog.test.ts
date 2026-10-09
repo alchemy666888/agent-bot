@@ -10,20 +10,22 @@ import { TelegramTurn } from "../../../src/worker/orchestration/telegram-turn";
 import { initializeLayout } from "../../../src/worker/persistence/layout";
 import { SkillResolver } from "../../../src/worker/skills/resolver";
 import { UpdateRepository } from "../../../src/worker/updates/repository";
-import type { ExecutableSkill } from "../../../src/worker/skills/schemas";
+import {
+  skillCatalogToken,
+  type ExecutableSkill,
+} from "../../../src/worker/skills/schemas";
 
 let root = "";
 afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-const commitSha = "a".repeat(40);
-function skill(id: string, name: string): ExecutableSkill {
+function skill(id: string, name: string, versionId: string): ExecutableSkill {
   return {
     id,
     name,
     description: `${name} description`,
-    commitSha,
+    versionId,
     manifestRevision: 1,
     instructions: `${name} instructions`,
     visibility: "private",
@@ -40,9 +42,22 @@ function skill(id: string, name: string): ExecutableSkill {
   };
 }
 
-const reports = skill("11111111-1111-4111-8111-111111111111", "Reports");
-const calendar = skill("22222222-2222-4222-8222-222222222222", "Calendar");
-const unauthorized = skill("33333333-3333-4333-8333-333333333333", "Secret");
+const reports = skill(
+  "11111111-1111-4111-8111-111111111111",
+  "Reports",
+  "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d1",
+);
+const calendar = skill(
+  "22222222-2222-4222-8222-222222222222",
+  "Calendar",
+  "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d2",
+);
+const unauthorized = skill(
+  "33333333-3333-4333-8333-333333333333",
+  "Secret",
+  "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d3",
+);
+const catalogToken = skillCatalogToken([reports.versionId, calendar.versionId]);
 
 async function run(text: string) {
   root = await mkdtemp(join(tmpdir(), "authorized-catalog-"));
@@ -54,7 +69,10 @@ async function run(text: string) {
     calendar,
     unauthorized,
   ]);
-  const catalog = Object.freeze({ commitSha, skills: [reports, calendar] });
+  const catalog = Object.freeze({
+    catalogToken,
+    skills: [reports, calendar],
+  });
   const turn = new TelegramTurn(
     locks,
     new UpdateRepository(root),
@@ -89,10 +107,10 @@ async function run(text: string) {
 }
 
 describe("trusted authorized skill catalog", () => {
-  it("includes the complete filtered, commit-pinned catalog on search fallback requests", async () => {
+  it("includes the complete filtered, version-pinned catalog on search fallback requests", async () => {
     const [request] = await run("hello there");
     expect(request.executionMode).toBe("forced_web_search");
-    expect(request.authorizedSkillCatalog?.commitSha).toBe(commitSha);
+    expect(request.authorizedSkillCatalog?.catalogToken).toBe(catalogToken);
     expect(request.authorizedSkillCatalog?.skills.map(({ id }) => id)).toEqual([
       reports.id,
       calendar.id,
@@ -107,7 +125,7 @@ describe("trusted authorized skill catalog", () => {
     expect(request.executionMode).toBe("selected_skill");
     expect(request.skill?.id).toBe(reports.id);
     expect(request.authorizedSkillCatalog).toEqual({
-      commitSha,
+      catalogToken,
       skills: [reports, calendar],
     });
   });

@@ -5,7 +5,7 @@ import { SkillResolver } from "../../../src/worker/skills/resolver";
 
 const skill = (overrides: Record<string, unknown>) => ({
   id: "public-skill",
-  commitSha: "a".repeat(40),
+  versionId: "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d1",
   name: "Public skill",
   description: "Safe routing description",
   instructions: "PRIVATE REPOSITORY INSTRUCTIONS",

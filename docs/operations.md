@@ -53,12 +53,10 @@ instances so their in-memory caches are empty, then verify the resolved commit
 and catalog refresh event. Never mutate a cached object, delete repository files
 to force refresh, or serve a snapshot validated for another ref.
 
-For a GitHub outage, disable new skill execution when the bounded stale window
-cannot cover the incident, leave Telegram general conversation available if it
-is healthy, and fail all skill mutations closed. Do not restore PostgreSQL
-definition rows or copy GitHub data into application tables. Resume only after
-authentication, branch resolution, schema validation, rate-limit headroom, and
-a canary invocation pass.
+For a GitHub outage, prompt reads fall back to the compiled prompt. Skill
+definitions stay available from PostgreSQL. Leave Telegram general conversation
+available if it is healthy, and fail skill mutations closed when the database
+is unavailable.
 
 Rotate a connector by creating a new least-privilege GitHub connection, attaching
 it only to Preview, deploying and completing read plus authoring smoke tests,
@@ -67,57 +65,32 @@ events before detaching and revoking the old connector. Record connector IDs,
 environment scopes, deployment IDs, and UTC times—but never tokens—in
 `docs/acceptance-evidence.md`.
 
-## Skill authoring pull requests
+## Skill authoring in PostgreSQL
 
-`/skill_approve <revision>` approves the exact commit and digest recorded for that
-revision. Before creating a pull request, the worker re-reads the branch ref,
-compares it with the draft base, restricts the diff to `manifest.json` and
-`SKILL.md` under that skill's directory, validates both documents and their byte
-limits, and checks the Telegram author and requested capability IDs against
-operator-controlled sets. The validated manifest's `authoring` object is the
-authorization record (skill ID, draft ID, revision, digest, owner, and requested
-capabilities); a pull request title or body must never be parsed for authorization.
+`/skill_approve <revision>` marks that exact stored revision and digest `pending`.
+The version is not executable. An operator in the approver allowlist publishes it
+with `/skill_publish <skill-id> <revision>`, which sets `skills.current_version_id`.
+A newer stored revision makes the approval stale and requires another revision;
+the stored row is not overwritten.
 
-Pull requests target `GITHUB_SKILLS_BRANCH`. Finding a pull request with the same
-base, branch, and exact head SHA is an idempotent success, including when it has
-already merged. A moved/diverged branch or GitHub conflict requires a new
-revision; the worker never force-pushes or overwrites it. Successful PR creation
-is reported as installed-but-awaiting-operator-merge, while an already merged PR
-is reported as installed-on-base.
-
-The bot deliberately does not merge pull requests. An operator must merge after
-required branch-protection reviews and checks pass. The current authoring flow
-needs GitHub repository **Contents: write** and **Pull requests: write**. If
-automated merge is added, it must query and require those protection/check
-results and the GitHub App will additionally need **Checks: read** and
-**Administration: read**; do not grant those extra permissions to the current
-create-only workflow.
+The validated manifest's `authoring` object is the authorization record (skill ID,
+draft ID, revision, digest, owner, and requested capabilities). Prompt files stay
+on GitHub. Skill runtime does not open pull requests.
 
 ### Repository authorization and failure modes
 
-Every catalog list/read, draft branch, revision write, approval observation,
-retirement, and invocation must enter through the skill repository/service with
-an authenticated Telegram user. Missing and unauthorized targets both return
-`SKILL_NOT_FOUND`; user-facing errors must not include a skill name, branch,
-pull request, repository path, or document excerpt. Author, approver, retire,
-and capability grants are deployed operator policy. Repository manifests may
-request capabilities, but cannot grant them.
+Every catalog list/read, draft save, approval, publish, retirement, and
+invocation must enter through the skill repository with an authenticated
+Telegram user. Missing and unauthorized targets both return `SKILL_NOT_FOUND`;
+user-facing errors must not include a skill name or document excerpt. Author,
+approver, retire, and capability grants are deployed operator policy. Stored
+manifests may request capabilities, but cannot grant them.
 
-Writes are serialized in-process by skill ID and use both the previously
-observed branch commit SHA and file blob SHA. `SKILL_REVISION_CONFLICT` is a
+Writes use the previously observed revision. `SKILL_REVISION_CONFLICT` is a
 safe, retry-by-revision result: do not retry the write or disclose the winning
-branch/content. Writes, approvals, unknown write outcomes, and unknown merge
-commits always fail closed.
-
-For reads only, a transient GitHub or rate-limit failure may use the last fully
-schema-validated snapshot for the same symbolic ref until its bounded stale
-deadline (currently two minutes after the normal cache lifetime). Never use
-stale data for an explicit unknown commit, after expiry, after validation or
-authentication failures, or for a mutation. Events for GitHub reads, branch and
-commit writes, pull requests, observed merges, refreshes, denials, conflicts,
-rate limits, and invocations contain only actor/skill/draft/PR identifiers,
-commit SHAs, durations, and safe codes. Connector tokens, headers, response
-bodies, branch names, repository paths, and skill content are prohibited.
+content. A database read failure returns no skills for that turn. Audit events
+contain actor, skill id, version id, duration, and a safe code. They do not
+contain skill instructions.
 
 For a stuck run, inspect its execution, idempotency key, last committed step, descriptor retry class, provider idempotency/reference, and audit trail. Reclaim an expired lease only through the reconciliation command. Retry a call only when it is declared retry-safe or the provider can return the original result for the same key. Mark an ambiguous non-retry-safe call `unknown_outcome`, investigate externally, and tell the user; never replay it automatically.
 
@@ -125,14 +98,14 @@ Database/Sandbox failures use sanitized stages (`bootstrap`, `persistence-sync`,
 
 ## Backup and restoration
 
-Schedule encrypted provider snapshots plus logical backups at an operator-defined recovery interval. Backups must consistently include schema migrations, users/conversations/messages/updates/logs, operational skill references, registry/grants, selections, executions/tool calls, idempotency, and audit events. Skill definitions and their version history are recovered from the separately verified GitHub mirror/bundle, not from PostgreSQL. Store backup ID, database/schema version, checksum, UTC time, and retention. Never include application/provider credentials.
+Schedule encrypted provider snapshots plus logical backups at an operator-defined recovery interval. Backups must consistently include schema migrations, users/conversations/messages/updates/logs, skill definitions and versions, registry/grants, selections, executions/tool calls, idempotency, and audit events. Prompt documents are recovered from GitHub. Store backup ID, database/schema version, checksum, UTC time, and retention. Never include application/provider credentials.
 
 At least once per release and on the regular disaster-recovery cadence:
 
 1. Restore the chosen backup to a new isolated database with no Telegram webhook and stubbed external adapters.
 2. Run `DATABASE_URL=<isolated-url> pnpm restore:verify`.
 3. Verify migration checksums, FK/integrity checks, row counts for remaining application tables, exact grants, operational references, selections, audit continuity, and absence of secrets.
-4. Reconcile every restored skill reference to a reachable GitHub commit, then list/discover as two test owners, prove cross-owner denial, and dry-run a restored selected skill pinned to its commit.
+4. List published skills as two test owners, prove cross-owner denial, and dry-run a restored skill pinned to its version id.
 5. Record duration, recovery point, output, and operator approval in `docs/acceptance-evidence.md`; destroy the isolated restore according to policy.
 
 An export is useful for inspection but is not a database backup unless restoration from it has passed the same checks.

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LockCoordinator } from "../../../../src/worker/locks/coordinator";
 import { initializeLayout } from "../../../../src/worker/persistence/layout";
+import { MemorySkillDefinitionStore } from "../../../../src/worker/skills/definition-store";
 import { DurableSkillDraftRepository } from "../../../../src/worker/skills/repository";
 import { isSkillCancellationRequest } from "../../../../src/worker/skills/cancellation";
 import {
@@ -20,44 +21,8 @@ async function fixture() {
   root = await mkdtemp(join(tmpdir(), "skill-authoring-"));
   await initializeLayout(root);
   const locks = new LockCoordinator(root);
-  const files = new Map<string, { content: string; sha: string }>();
-  let sequence = 1;
-  let head = "0".repeat(40);
-  const sha = () => (sequence++).toString(16).padStart(40, "0");
-  const git = {
-    controlledPrefix: "skills",
-    defaultBranch: "main",
-    getBranchHead: vi.fn(async () => head),
-    createBranch: vi.fn(async (_branch: string, base: string) => base),
-    readFile: vi.fn(async (path: string) => files.get(path)!),
-    compareCommits: vi.fn(async () => ({
-      status: "ahead",
-      files: [...files.keys()].map((path) => ({ path, status: "added" })),
-    })),
-    putFile: vi.fn(
-      async ({
-        path,
-        content,
-        expectedSha,
-      }: {
-        path: string;
-        content: string;
-        expectedSha: string | null;
-      }) => {
-        expect(files.get(path)?.sha ?? null).toBe(expectedSha);
-        const fileSha = sha();
-        head = sha();
-        files.set(path, { content, sha: fileSha });
-        return { sha: fileSha, commitSha: head };
-      },
-    ),
-    openPullRequest: vi.fn(async () => ({
-      number: 17,
-      html_url: "https://example.test/pull/17",
-    })),
-    listPullRequests: vi.fn(async () => []),
-  };
-  const repository = new DurableSkillDraftRepository(root, locks, git, {
+  const definitions = new MemorySkillDefinitionStore();
+  const repository = new DurableSkillDraftRepository(root, locks, definitions, {
     authorTelegramUserIds: new Set(["42", "7"]),
     capabilityIds: new Set(["shell"]),
   });
@@ -72,7 +37,7 @@ async function fixture() {
     repository,
     generator,
     service: new SkillAuthoringService(root, repository, generator),
-    git,
+    definitions,
   };
 }
 
@@ -167,7 +132,7 @@ describe("skill authoring domain", () => {
     const installed = await locks.withUser("42", () =>
       service.handle("42", command, "4"),
     );
-    expect(installed).toContain("pull request");
+    expect(installed).toContain("pending publish");
     expect(await repository.activeForOwner("42")).toBeUndefined();
     // A fresh worker replaying the same update returns the durable response
     // instead of creating a second installation.
@@ -264,8 +229,8 @@ Follow the constraints.
     expect(generator.generateSkillDraft).toHaveBeenCalledOnce();
   });
 
-  it("treats a pull request for the exact approved commit as idempotent", async () => {
-    const { locks, repository, service, git } = await fixture();
+  it("treats approval of an already pending version as idempotent", async () => {
+    const { locks, repository, service } = await fixture();
     await locks.withUser("42", () =>
       service.handle(
         "42",
@@ -274,23 +239,16 @@ Follow the constraints.
       ),
     );
     const draft = await repository.activeForOwner("42");
-    git.listPullRequests.mockResolvedValueOnce([
-      {
-        number: 99,
-        html_url: "https://example.test/pull/99",
-        head: { sha: draft!.latestCommitSha },
-        merged: true,
-      },
-    ]);
+    await repository.publish(draft!);
     const response = await locks.withUser("42", () =>
       service.handle("42", `/skill_approve ${draft!.revisionNumber}`, "31"),
     );
-    expect(response).toContain("is merged into the configured base branch");
-    expect(git.openPullRequest).not.toHaveBeenCalled();
+    expect(response).toContain("pending publish");
+    expect(response).toContain(`/skill_publish ${draft!.stableId}`);
   });
 
-  it("requires a new revision when the approved branch moves", async () => {
-    const { locks, repository, service, git } = await fixture();
+  it("requires a new revision when a newer draft version exists", async () => {
+    const { locks, repository, service, definitions } = await fixture();
     await locks.withUser("42", () =>
       service.handle(
         "42",
@@ -299,12 +257,25 @@ Follow the constraints.
       ),
     );
     const draft = await repository.activeForOwner("42");
-    git.getBranchHead.mockResolvedValueOnce("f".repeat(40));
+    const current = await definitions.getVersion(
+      draft!.stableId,
+      draft!.versionId!,
+    );
+    await definitions.insertDraftVersion({
+      skillId: draft!.stableId,
+      name: "reports",
+      ownerTelegramUserId: "42",
+      visibility: "private",
+      expectedRevision: draft!.revisionNumber,
+      contentDigest: current!.contentDigest,
+      manifest: current!.manifest,
+      instructions: current!.instructions,
+      createdBy: "42",
+    });
     const response = await locks.withUser("42", () =>
       service.handle("42", `/skill_approve ${draft!.revisionNumber}`, "41"),
     );
     expect(response).toContain("Revision required");
-    expect(git.openPullRequest).not.toHaveBeenCalled();
     expect(await repository.activeForOwner("42")).toMatchObject({
       status: "revision_requested",
     });

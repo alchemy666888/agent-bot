@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { skillCatalogToken } from "../../worker/skills/schemas";
 
 export const modelMessageSchema = z
   .object({
@@ -127,16 +128,15 @@ export const skillContextSchema = z
 
 export const MAX_AUTHORIZED_SKILL_COUNT = 200;
 export const MAX_AUTHORIZED_SKILL_CATALOG_BYTES = 2 * 1024 * 1024;
-const gitCommitShaSchema = z.string().regex(/^[a-f0-9]{40}$/i);
 
 /**
- * A repository-filtered, commit-pinned skill snapshot supplied by trusted
+ * A repository-filtered, version-pinned skill snapshot supplied by trusted
  * orchestration. It informs the model about the user's complete authorized
  * catalog, but does not itself authorize any capability.
  */
 export const authorizedSkillCatalogSchema = z
   .object({
-    commitSha: gitCommitShaSchema,
+    catalogToken: z.string().regex(/^[a-f0-9]{64}$/),
     skills: z
       .array(
         z
@@ -144,7 +144,7 @@ export const authorizedSkillCatalogSchema = z
             id: z.string().min(1).max(200),
             name: z.string().trim().min(1).max(120),
             description: z.string().trim().max(2_000).optional(),
-            commitSha: gitCommitShaSchema,
+            versionId: z.uuid(),
             manifestRevision: z.number().int().positive().optional(),
             instructions: z.string().min(1).max(1_000_000),
             visibility: z.enum(["private", "shared", "public"]),
@@ -167,10 +167,13 @@ export const authorizedSkillCatalogSchema = z
   })
   .strict()
   .superRefine((catalog, context) => {
-    if (catalog.skills.some((skill) => skill.commitSha !== catalog.commitSha))
+    if (
+      catalog.catalogToken !==
+      skillCatalogToken(catalog.skills.map((skill) => skill.versionId))
+    )
       context.addIssue({
         code: "custom",
-        message: "Skill catalog must be commit-pinned",
+        message: "Skill catalog must be version-pinned",
       });
     if (
       new TextEncoder().encode(JSON.stringify(catalog)).byteLength >

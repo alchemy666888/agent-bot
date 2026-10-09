@@ -31,14 +31,9 @@ export interface SkillDraft {
   lastProcessedUpdateId: string | null;
   lastResponse: string | null;
   stableId: string;
-  branch: string;
-  /** Immutable base used to validate the complete draft diff before publishing. */
-  baseCommitSha: string;
-  latestCommitSha: string;
-  skillBlobSha: string | null;
-  manifestBlobSha: string | null;
+  /** PostgreSQL skill_versions id for the revision under review. */
+  versionId: string | null;
   contentDigest: string | null;
-  pullRequestNumber: number | null;
 }
 
 export interface SkillDraftGenerator {

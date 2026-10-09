@@ -10,7 +10,10 @@ import { CapabilityRegistry } from "../../../src/worker/capabilities/registry";
 import { DeepSeekProvider } from "../../../src/worker/model/deepseek";
 import { TelegramTurn } from "../../../src/worker/orchestration/telegram-turn";
 import { SkillResolver } from "../../../src/worker/skills/resolver";
-import { skillCatalogSnapshotSchema } from "../../../src/worker/skills/schemas";
+import {
+  skillCatalogSnapshotSchema,
+  skillCatalogToken,
+} from "../../../src/worker/skills/schemas";
 import type {
   ModelRequest,
   RoutingDecision,
@@ -70,13 +73,13 @@ describe("skill routing acceptance", () => {
 
   it("loads a catalog, invokes its capability, and sends only final text", async () => {
     root = await mkdtemp(join(tmpdir(), "routing-"));
-    const commitSha = "a".repeat(40);
+    const versionId = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d9";
     const catalog = skillCatalogSnapshotSchema.parse({
-      commitSha,
+      catalogToken: skillCatalogToken([versionId]),
       skills: [
         {
           id: "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d0",
-          commitSha,
+          versionId,
           name: "Weather",
           description: "Answer current weather questions",
           instructions: "Use the lookup result to answer.",
@@ -548,12 +551,13 @@ function input(updateId: string) {
 }
 
 function skillFixture(id: string, visibility: "public" | "private") {
+  const versionId = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d8";
   return skillCatalogSnapshotSchema.parse({
-    commitSha: "b".repeat(40),
+    catalogToken: skillCatalogToken([versionId]),
     skills: [
       {
         id,
-        commitSha: "b".repeat(40),
+        versionId,
         name: "Weather",
         description: "Forecasts",
         instructions: "Answer safely.",

@@ -13,10 +13,13 @@ vi.mock("../../../../src/server/sandbox/transport", () => ({
     data: { handled: "telegramTurn" },
   })),
 }));
+const { skillQuery } = vi.hoisted(() => ({
+  skillQuery: vi.fn(async () => ({ rows: [] as Record<string, unknown>[] })),
+}));
 vi.mock("pg", () => ({
   Pool: class {
-    query() {
-      return Promise.resolve({ rows: [] });
+    query(...args: unknown[]) {
+      return skillQuery(...args);
     }
   },
 }));
@@ -26,12 +29,12 @@ import {
   readModelConfig,
 } from "../../../../src/server/config";
 import { readDatabaseConfig } from "../../../../src/shared/postgres/config";
-import { getToken } from "@vercel/connect";
 import { invokeWorker } from "../../../../src/server/sandbox/transport";
 import { workerRequestSchema } from "../../../../src/shared/contracts/worker";
 import { compiledEmergencyBundle } from "../../../../src/worker/prompts/bundle";
 import type { GitHubPromptStore } from "../../../../src/server/prompts/github-store";
 import { SkillAuthoringService } from "../../../../src/server/skills/service";
+import { EMPTY_SKILL_CATALOG_TOKEN } from "../../../../src/worker/skills/schemas";
 import {
   dispatchTelegramInput,
   installDispatchPromptServices,
@@ -58,6 +61,8 @@ describe("Telegram dispatch skill catalog", () => {
     }))
       vi.stubEnv(key, value);
     vi.spyOn(console, "info").mockImplementation(() => undefined);
+    skillQuery.mockReset();
+    skillQuery.mockResolvedValue({ rows: [] });
   });
 
   const input = {
@@ -69,186 +74,117 @@ describe("Telegram dispatch skill catalog", () => {
     text: "今天香港天氣怎樣？",
   };
 
-  it("loads remote main even with prompts disabled and never consults active drafts", async () => {
+  it("loads published skills from PostgreSQL and does not read GitHub", async () => {
     const shouldHandle = vi
       .spyOn(SkillAuthoringService.prototype, "shouldHandle")
       .mockResolvedValue(true);
-    const commit = "a".repeat(40);
-    const fetcher = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        Response.json({ object: { type: "commit", sha: commit } }),
-      )
-      .mockResolvedValueOnce(fileResponse({ schemaVersion: 1, skills: [] }));
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    const id = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d0";
+    const versionId = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d9";
+    skillQuery.mockResolvedValue({
+      rows: [
+        {
+          skill_name: "weather",
+          owner_telegram_user_id: "4",
+          visibility: "public",
+          skill_status: "active",
+          current_version_id: versionId,
+          id: versionId,
+          skill_id: id,
+          revision: 1,
+          content_digest: `sha256:${"a".repeat(64)}`,
+          manifest: {
+            schemaVersion: 1,
+            id,
+            name: "weather",
+            description: "Current weather",
+            revision: 1,
+            visibility: "public",
+            ownerTelegramUserIds: ["4"],
+            allowedTelegramUserIds: [],
+            triggers: { phrases: ["天氣"], keywords: [], minimumConfidence: 1 },
+            tools: ["web_search"],
+            prohibitedActions: [],
+            status: "active",
+          },
+          instructions: "Search current weather.",
+          state: "published",
+          created_by: "4",
+        },
+      ],
+    });
     await dispatchTelegramInput(input);
     expect(shouldHandle).not.toHaveBeenCalled();
-    expect(String(fetcher.mock.calls[0]![0])).toMatch(
-      /\/git\/ref\/heads\/main$/,
-    );
-    expect(String(fetcher.mock.calls[1]![0])).toContain(`?ref=${commit}`);
-    expect(JSON.stringify(fetcher.mock.calls)).not.toContain("obsolete-draft");
+    expect(fetcher).not.toHaveBeenCalled();
     const request = vi.mocked(invokeWorker).mock.calls[0]![2];
     expect(workerRequestSchema.safeParse(request).success).toBe(true);
     expect(request).toMatchObject({
-      repositoryCommitSha: commit,
-      payload: { skillCatalog: { commitSha: commit } },
+      repositoryCommitSha: null,
+      payload: { skillCatalog: { skills: [{ id, versionId }] } },
     });
   });
 
-  it.each([404, 403, 500])(
-    "continues to the worker when GitHub returns %s",
-    async (status) => {
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(
-        new Response("", { status }),
-      );
-      await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
-        ok: true,
-      });
-      const request = vi.mocked(invokeWorker).mock.calls[0]![2];
-      expect(workerRequestSchema.safeParse(request).success).toBe(true);
-      expect(request).toMatchObject({
-        repositoryCommitSha: null,
-        degradationNotices: expect.arrayContaining(["repository_unavailable"]),
-      });
-    },
-  );
-
-  it("continues when connector access fails before a head is resolved", async () => {
-    vi.mocked(getToken).mockRejectedValueOnce(
-      new Error("connector unavailable"),
-    );
+  it("continues to the worker when PostgreSQL is unavailable", async () => {
+    skillQuery.mockRejectedValue(new Error("database unavailable"));
     await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
       ok: true,
     });
-    expect(vi.mocked(invokeWorker).mock.calls[0]![2]).toMatchObject({
-      repositoryCommitSha: null,
-    });
-  });
-
-  it.each(["missing", "invalid"])(
-    "preserves main's pin when the catalog is %s",
-    async (kind) => {
-      const commit = "b".repeat(40);
-      vi.spyOn(globalThis, "fetch")
-        .mockResolvedValueOnce(
-          Response.json({ object: { type: "commit", sha: commit } }),
-        )
-        .mockResolvedValueOnce(
-          kind === "missing"
-            ? new Response("", { status: 404 })
-            : fileResponse({ bogus: true }),
-        );
-      await dispatchTelegramInput(input);
-      const request = vi.mocked(invokeWorker).mock.calls[0]![2];
-      expect(workerRequestSchema.safeParse(request).success).toBe(true);
-      expect(request).toMatchObject({
-        repositoryCommitSha: commit,
-        payload: { skillCatalog: { commitSha: commit, skills: [] } },
-      });
-    },
-  );
-
-  it("falls back without a pin when GitHub returns an invalid head", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-      Response.json({ object: { type: "commit", sha: "invalid" } }),
-    );
-    await dispatchTelegramInput(input);
     const request = vi.mocked(invokeWorker).mock.calls[0]![2];
     expect(workerRequestSchema.safeParse(request).success).toBe(true);
     expect(request).toMatchObject({
       repositoryCommitSha: null,
-      payload: { skillCatalog: { skills: [] } },
+      payload: {
+        skillCatalog: { catalogToken: EMPTY_SKILL_CATALOG_TOKEN, skills: [] },
+      },
+      degradationNotices: expect.arrayContaining(["repository_unavailable"]),
     });
-  });
-
-  it("retrieves a usable skill from main and observes a new main head next turn", async () => {
-    const id = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d0";
-    const manifest = {
-      schemaVersion: 1,
-      id,
-      name: "weather",
-      description: "Current weather",
-      visibility: "public",
-      ownerTelegramUserIds: ["4"],
-      triggers: { phrases: ["天氣"], minimumConfidence: 1 },
-      tools: ["web_search"],
-    };
-    const commits = ["a".repeat(40), "b".repeat(40)];
-    const fetcher = vi.spyOn(globalThis, "fetch");
-    for (const commit of commits) {
-      fetcher
-        .mockResolvedValueOnce(
-          Response.json({ object: { type: "commit", sha: commit } }),
-        )
-        .mockResolvedValueOnce(
-          fileResponse({
-            schemaVersion: 1,
-            skills: [{ id, directory: "weather" }],
-          }),
-        )
-        .mockResolvedValueOnce(fileResponse(manifest))
-        .mockResolvedValueOnce(
-          fileResponse(
-            "---\nname: weather\ndescription: Current weather\n---\nSearch current weather.",
-          ),
-        );
-    }
-    await dispatchTelegramInput(input);
-    await dispatchTelegramInput({ ...input, updateId: "2" });
-    for (const [index, commit] of commits.entries()) {
-      const request = vi.mocked(invokeWorker).mock.calls[index]![2];
-      expect(workerRequestSchema.safeParse(request).success).toBe(true);
-      expect(request).toMatchObject({
-        repositoryCommitSha: commit,
-        payload: { skillCatalog: { skills: [{ id, commitSha: commit }] } },
-      });
-      expect(String(fetcher.mock.calls[index * 4]![0])).toMatch(
-        /\/git\/ref\/heads\/main$/,
-      );
-      for (const call of fetcher.mock.calls.slice(index * 4 + 1, index * 4 + 4))
-        expect(String(call[0])).toContain(`?ref=${commit}`);
-    }
   });
 
   it("drops skills requiring unavailable capabilities so the worker can fall back", async () => {
-    const commit = "e".repeat(40);
     const id = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d0";
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        Response.json({ object: { type: "commit", sha: commit } }),
-      )
-      .mockResolvedValueOnce(
-        fileResponse({
-          schemaVersion: 1,
-          skills: [{ id, directory: "weather" }],
-        }),
-      )
-      .mockResolvedValueOnce(
-        fileResponse({
-          schemaVersion: 1,
-          id,
-          name: "weather",
+    const versionId = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d9";
+    skillQuery.mockResolvedValue({
+      rows: [
+        {
+          skill_name: "weather",
+          owner_telegram_user_id: "4",
           visibility: "public",
-          ownerTelegramUserIds: ["4"],
-          triggers: { phrases: ["天氣"], minimumConfidence: 1 },
-          tools: ["unknown_tool"],
-        }),
-      )
-      .mockResolvedValueOnce(
-        fileResponse(
-          "---\nname: weather\ndescription: Weather\n---\nUse unknown_tool.",
-        ),
-      );
+          skill_status: "active",
+          current_version_id: versionId,
+          id: versionId,
+          skill_id: id,
+          revision: 1,
+          content_digest: `sha256:${"b".repeat(64)}`,
+          manifest: {
+            schemaVersion: 1,
+            id,
+            name: "weather",
+            visibility: "public",
+            ownerTelegramUserIds: ["4"],
+            allowedTelegramUserIds: [],
+            triggers: { phrases: ["天氣"], keywords: [], minimumConfidence: 1 },
+            tools: ["unknown_tool"],
+            prohibitedActions: [],
+            status: "active",
+          },
+          instructions: "Use unknown_tool.",
+          state: "published",
+          created_by: "4",
+        },
+      ],
+    });
     await dispatchTelegramInput(input);
     const request = vi.mocked(invokeWorker).mock.calls[0]![2];
     expect(workerRequestSchema.safeParse(request).success).toBe(true);
     expect(request).toMatchObject({
-      repositoryCommitSha: commit,
-      payload: { skillCatalog: { skills: [] } },
+      repositoryCommitSha: null,
+      payload: {
+        skillCatalog: { catalogToken: EMPTY_SKILL_CATALOG_TOKEN, skills: [] },
+      },
     });
   });
 
-  it("keeps the main pin and continues when enabled repository prompts cannot load", async () => {
+  it("continues when enabled repository prompts cannot load", async () => {
     for (const [key, value] of Object.entries({
       PROMPT_READS_ENABLED: "true",
       GITHUB_PROMPTS_OWNER: "alchemy666888",
@@ -274,18 +210,12 @@ describe("Telegram dispatch skill catalog", () => {
         store: { load } as unknown as GitHubPromptStore,
       },
     });
-    const commit = "d".repeat(40);
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        Response.json({ object: { type: "commit", sha: commit } }),
-      )
-      .mockResolvedValueOnce(new Response("", { status: 404 }));
     await dispatchTelegramInput(input);
-    expect(load).toHaveBeenCalledWith(commit);
+    expect(load).toHaveBeenCalledWith();
     const request = vi.mocked(invokeWorker).mock.calls[0]![2];
     expect(workerRequestSchema.safeParse(request).success).toBe(true);
     expect(request).toMatchObject({
-      repositoryCommitSha: commit,
+      repositoryCommitSha: null,
       promptBundle: { degradedModeSource: "compiled_emergency" },
     });
   });
@@ -346,15 +276,15 @@ describe("Telegram dispatch skill catalog", () => {
     expect(readDatabaseConfig(env).AIVEN_PG_CA).toBe(certificate);
   });
 
-  it("uses the validated catalog when GitHub is available", async () => {
-    const catalog = { commitSha: "a".repeat(40), skills: [] };
+  it("uses the validated catalog when PostgreSQL is available", async () => {
+    const catalog = { catalogToken: EMPTY_SKILL_CATALOG_TOKEN, skills: [] };
 
     await expect(
       loadSkillCatalog(async () => catalog, "correlation-id"),
     ).resolves.toEqual({ catalog, degradationReason: "catalog_missing" });
   });
 
-  it("continues without skills when GitHub Connect is unavailable", async () => {
+  it("continues without skills when PostgreSQL is unavailable", async () => {
     const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     await expect(
@@ -362,7 +292,7 @@ describe("Telegram dispatch skill catalog", () => {
         throw new Error("connector response containing private detail");
       }, "correlation-id"),
     ).resolves.toEqual({
-      catalog: { commitSha: "0".repeat(40), skills: [] },
+      catalog: { catalogToken: EMPTY_SKILL_CATALOG_TOKEN, skills: [] },
       degradationReason: "repository_unavailable",
     });
 
@@ -372,41 +302,8 @@ describe("Telegram dispatch skill catalog", () => {
       correlationId: "correlation-id",
       operation: "skill.catalog_load",
       result: "degraded",
-      code: "GITHUB_CATALOG_UNAVAILABLE",
+      code: "SKILL_CATALOG_UNAVAILABLE",
     });
     expect(log.mock.calls[0]![0]).not.toContain("private detail");
   });
-
-  it("preserves a resolved commit when a pinned catalog read fails", async () => {
-    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const commit = "a".repeat(40);
-
-    await expect(
-      loadSkillCatalog(
-        async () => {
-          throw new Error("GitHub returned 404");
-        },
-        "correlation-id",
-        commit,
-      ),
-    ).resolves.toEqual({
-      catalog: { commitSha: commit, skills: [] },
-      degradationReason: "repository_unavailable",
-    });
-
-    expect(log).toHaveBeenCalledOnce();
-  });
 });
-
-function fileResponse(value: unknown) {
-  const content = typeof value === "string" ? value : JSON.stringify(value);
-  return Response.json({
-    type: "file",
-    encoding: "base64",
-    content: Buffer.from(content).toString("base64"),
-    size: Buffer.byteLength(content),
-    sha: "c".repeat(40),
-    path: "skills/index.json",
-    name: "index.json",
-  });
-}

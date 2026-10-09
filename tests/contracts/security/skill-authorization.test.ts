@@ -74,7 +74,7 @@ async function draft(
 describe("skill authorization security contract", () => {
   it("gives routing all and only the current user's authorized skills and denies a selected private skill", () => {
     const base = {
-      commitSha: "a".repeat(40),
+      versionId: "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d1",
       name: "Skill",
       description: "Safe description",
       instructions: "private instructions",

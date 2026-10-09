@@ -7,21 +7,15 @@ export interface SkillActor {
 
 export interface SaveDraftRevisionInput {
   actor: SkillActor;
-  branch: string;
-  directory: string;
   manifest: SkillManifest;
   instructions: string;
-  /** Head observed before editing. Required in addition to per-file blob SHAs. */
-  expectedBranchSha: string;
-  expectedManifestSha?: string | null;
-  expectedSkillSha?: string | null;
-  expectedIndexSha?: string | null;
-  message: string;
+  /** Revision observed before this write. Zero creates the first revision. */
+  expectedRevision: number;
 }
 
 export interface PublishedSkillRevision {
   skill: ExecutableSkill;
-  pullRequestNumber: number;
+  versionId: string;
 }
 
 /**
@@ -33,37 +27,32 @@ export interface SkillRepository {
   getById(
     actor: SkillActor,
     skillId: string,
-    ref?: string,
+    versionId?: string,
   ): Promise<ExecutableSkill | null>;
-  listAvailableToTelegramUser(
-    actor: SkillActor,
-    ref?: string,
-  ): Promise<ExecutableSkill[]>;
-  createDraftBranch(input: {
+  listAvailableToTelegramUser(actor: SkillActor): Promise<ExecutableSkill[]>;
+  saveDraftRevision(input: SaveDraftRevisionInput): Promise<{
+    versionId: string;
+    revision: number;
+  }>;
+  submitForPublish(input: {
     actor: SkillActor;
     skillId: string;
-    fromRef?: string;
-    branch?: string;
-  }): Promise<{ branch: string; baseCommitSha: string }>;
-  saveDraftRevision(input: SaveDraftRevisionInput): Promise<{
-    commitSha: string;
-  }>;
+    versionId: string;
+    expectedRevision: number;
+  }): Promise<{ versionId: string; revision: number }>;
   publishApprovedRevision(input: {
     actor: SkillActor;
-    pullRequestNumber: number;
     skillId: string;
-    expectedMergeCommitSha: string;
+    expectedRevision: number;
   }): Promise<PublishedSkillRevision>;
   retire(input: {
     actor: SkillActor;
     skillId: string;
-    branch: string;
-    expectedBranchSha: string;
-    expectedManifestSha: string;
-  }): Promise<{ commitSha: string }>;
+    expectedRevision: number;
+  }): Promise<{ versionId: string; revision: number }>;
   authorizeInvocation(input: {
     actor: SkillActor;
     skillId: string;
-    ref?: string;
+    versionId?: string;
   }): Promise<ExecutableSkill>;
 }

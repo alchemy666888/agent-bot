@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const migratedStatusSchema = z.enum(["active", "retired", "superseded"]);
@@ -17,8 +18,6 @@ const migratedApprovalSchema = z
 
 const safeIdentifier = z.string().trim().min(1).max(200);
 const telegramUserIdSchema = z.string().regex(/^\d+$/);
-const gitCommitShaSchema = z.string().regex(/^[a-f0-9]{40}$/i);
-
 /** Repository manifest for an executable skill. `id` is immutable; `name` is not identity. */
 export const skillManifestSchema = z
   .object({
@@ -125,7 +124,7 @@ export const executableSkillSchema = z
     id: z.uuid(),
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().max(2_000).optional(),
-    commitSha: gitCommitShaSchema,
+    versionId: z.uuid(),
     manifestRevision: z.number().int().positive().optional(),
     instructions: skillMarkdownSchema,
     visibility: z.enum(["private", "shared", "public"]),
@@ -170,21 +169,26 @@ export const executableSkillSchema = z
       });
   });
 
+/** Digest of the version ids in one authorized catalog snapshot. */
+export function skillCatalogToken(versionIds: readonly string[]): string {
+  return createHash("sha256")
+    .update([...versionIds].sort().join("\n"), "utf8")
+    .digest("hex");
+}
+
+export const EMPTY_SKILL_CATALOG_TOKEN = skillCatalogToken([]);
+
+const catalogTokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
+
 export const skillCatalogSnapshotSchema = z
   .object({
-    commitSha: gitCommitShaSchema,
+    catalogToken: catalogTokenSchema,
     skills: z.array(executableSkillSchema).max(10_000),
   })
   .strict()
   .superRefine((snapshot, ctx) => {
     const ids = new Set<string>();
     snapshot.skills.forEach((skill, index) => {
-      if (skill.commitSha !== snapshot.commitSha)
-        ctx.addIssue({
-          code: "custom",
-          path: ["skills", index, "commitSha"],
-          message: "Skill version does not match catalog snapshot",
-        });
       if (ids.has(skill.id))
         ctx.addIssue({
           code: "custom",
@@ -193,6 +197,15 @@ export const skillCatalogSnapshotSchema = z
         });
       ids.add(skill.id);
     });
+    if (
+      snapshot.catalogToken !==
+      skillCatalogToken(snapshot.skills.map((skill) => skill.versionId))
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["catalogToken"],
+        message: "Catalog token does not match the pinned skill versions",
+      });
   });
 
 export type SkillManifest = z.infer<typeof skillManifestSchema>;

@@ -14,7 +14,7 @@ export type TurnRepositoryIdentity = {
   branch: string;
 };
 
-/** Resolves one mutable head, then uses only that immutable ref for the turn. */
+/** Resolves one prompt head, then loads the PostgreSQL skill catalog separately. */
 export async function resolveRepositoryTurnContext(input: {
   telegramUserId: string;
   promptUserKeySecret: string;
@@ -23,7 +23,6 @@ export async function resolveRepositoryTurnContext(input: {
   correlationId?: string;
   identity: TurnRepositoryIdentity;
   promptIdentity: TurnRepositoryIdentity;
-  skillIdentity: TurnRepositoryIdentity;
   resolveHead(): Promise<string>;
   loadPromptSnapshot(commitSha: string): Promise<VerifiedPromptSnapshot>;
   resolvePrompt(input: {
@@ -33,16 +32,9 @@ export async function resolveRepositoryTurnContext(input: {
     correlationId?: string;
     pinnedSnapshot: VerifiedPromptSnapshot;
   }): Promise<Readonly<PromptBundle>>;
-  loadSkillCatalog(
-    telegramUserId: string,
-    commitSha: string,
-  ): Promise<SkillCatalogSnapshot>;
+  loadSkillCatalog(telegramUserId: string): Promise<SkillCatalogSnapshot>;
 }) {
-  const expected = JSON.stringify(input.identity);
-  if (
-    JSON.stringify(input.promptIdentity) !== expected ||
-    JSON.stringify(input.skillIdentity) !== expected
-  )
+  if (JSON.stringify(input.promptIdentity) !== JSON.stringify(input.identity))
     throw new Error("REPOSITORY_IDENTITY_MISMATCH");
   const commitSha = await input.resolveHead();
   if (!SHA.test(commitSha)) throw new Error("INVALID_REPOSITORY_COMMIT");
@@ -59,12 +51,11 @@ export async function resolveRepositoryTurnContext(input: {
       ...(input.language ? { language: input.language } : {}),
       ...(input.correlationId ? { correlationId: input.correlationId } : {}),
     }),
-    input.loadSkillCatalog(input.telegramUserId, commitSha),
+    input.loadSkillCatalog(input.telegramUserId),
   ]);
   if (
     snapshot.commitSha !== commitSha ||
-    promptBundle.repositoryCommitSha !== commitSha ||
-    skillCatalog.commitSha !== commitSha
+    promptBundle.repositoryCommitSha !== commitSha
   )
     throw new Error("REPOSITORY_COMMIT_MISMATCH");
   return {

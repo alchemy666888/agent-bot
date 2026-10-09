@@ -1,14 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Pool } from "pg";
 import { PostgresSkillAuthoringRepository } from "../../../../src/server/skills/repository";
-import type { SkillDraftGitClient } from "../../../../src/server/skills/repository";
+import { MemorySkillDefinitionStore } from "../../../../src/worker/skills/definition-store";
 import type { SkillDraft } from "../../../../src/worker/skills/types";
 import {
   isTelegramActorAllowed,
   parseTelegramAllowlist,
 } from "../../../../src/shared/telegram-allowlist";
-
-const BASE = "a".repeat(40);
 
 function draft(ownerTelegramUserId: string): SkillDraft {
   const now = "2026-10-02T00:00:00.000Z";
@@ -31,40 +29,22 @@ function draft(ownerTelegramUserId: string): SkillDraft {
     installedAt: null,
     lastProcessedUpdateId: null,
     lastResponse: null,
-    branch: "",
-    baseCommitSha: "",
-    latestCommitSha: "",
-    skillBlobSha: null,
-    manifestBlobSha: null,
+    versionId: null,
     contentDigest: null,
-    pullRequestNumber: null,
   };
 }
 
 function repository(value: string) {
   const authors = parseTelegramAllowlist(value);
-  const git: SkillDraftGitClient = {
-    controlledPrefix: "skills",
-    defaultBranch: "main",
-    getBranchHead: async () => BASE,
-    createBranch: async (_branch, base) => base,
-    readFile: async () => {
-      throw new Error("unused");
+  return new PostgresSkillAuthoringRepository(
+    {} as Pool,
+    new MemorySkillDefinitionStore(),
+    {
+      authorTelegramUserIds: authors.ids,
+      authorTelegramUsernames: authors.usernames,
+      capabilityIds: new Set(),
     },
-    compareCommits: async () => ({ status: "identical", files: [] }),
-    putFile: async () => {
-      throw new Error("unused");
-    },
-    openPullRequest: async () => {
-      throw new Error("unused");
-    },
-    listPullRequests: async () => [],
-  };
-  return new PostgresSkillAuthoringRepository({} as Pool, git, {
-    authorTelegramUserIds: authors.ids,
-    authorTelegramUsernames: authors.usernames,
-    capabilityIds: new Set(),
-  });
+  );
 }
 
 describe("Telegram author allowlist", () => {
@@ -88,7 +68,7 @@ describe("Telegram author allowlist", () => {
       allowed.begin(draft("42"), "luckyvickyforever"),
     ).resolves.toMatchObject({
       ownerTelegramUserId: "42",
-      baseCommitSha: BASE,
+      versionId: null,
     });
     await expect(allowed.begin(draft("42"))).rejects.toThrow(
       "SKILL_AUTHOR_NOT_AUTHORIZED",

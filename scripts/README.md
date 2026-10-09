@@ -24,3 +24,14 @@ Do **not** run the destructive database cleanup/contract migration until all of
 these gates are recorded by an operator: the PR is merged, production has read
 the catalog successfully from the merged GitHub SHA, and the report has no
 unresolved differences. This script intentionally contains no cleanup command.
+
+## GitHub to PostgreSQL import
+
+`import-skills-from-github.mjs` copies active skills from the GitHub default
+branch into `skills` and `skill_versions` after `20261009_skill_definitions.sql`
+has been applied. A version that already has the same content digest is skipped.
+The script does not delete GitHub files.
+
+```sh
+DATABASE_URL='…' GITHUB_TOKEN='…' pnpm skills:import-from-github
+```
