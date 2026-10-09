@@ -46,6 +46,12 @@ import {
   MAX_AUTHORIZED_SKILL_COUNT,
 } from "../../shared/contracts";
 import type { DegradationNotice } from "../../shared/contracts/worker";
+import {
+  assistantTimeZone,
+  calendarClock,
+  trustedCalendarContext,
+} from "../../shared/calendar-clock";
+import type { PromptBundle } from "../../shared/contracts/prompt";
 
 const MAX_SKILL_CATALOG_BYTES = MAX_AUTHORIZED_SKILL_CATALOG_BYTES;
 // The catalog crosses the worker boundary and is then serialized once more as
@@ -486,11 +492,11 @@ export async function dispatchTelegramInput(
     ).resolve(promptInput);
     repositoryCommitSha = promptBundle.repositoryCommitSha;
   }
-  promptBundle = {
+  promptBundle = withTrustedCalendar({
     ...promptBundle,
     repositoryCommitSha,
     turnPin: { ...promptBundle.turnPin, commitSha: repositoryCommitSha },
-  };
+  });
   let skillCatalog: SkillCatalog = catalogResult.catalog;
   const degradationNotices = promptDegradationNotices(promptBundle, input.text);
   if (skillCatalogDegradation) degradationNotices.push(skillCatalogDegradation);
@@ -532,6 +538,19 @@ export async function dispatchTelegramInput(
     },
     workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
   );
+}
+
+function withTrustedCalendar(bundle: PromptBundle): PromptBundle {
+  const clock = calendarClock(new Date(), assistantTimeZone());
+  const injected = trustedCalendarContext(clock);
+  const keys = new Set(injected.map((item) => item.key));
+  return {
+    ...bundle,
+    trustedRuntimeContext: [
+      ...injected,
+      ...bundle.trustedRuntimeContext.filter((item) => !keys.has(item.key)),
+    ].slice(0, 16),
+  };
 }
 
 function optionalWorkerInteger(name: string): string | undefined {
@@ -581,6 +600,7 @@ export function workerEnvironment(
       /\s+/g,
       " ",
     ).trim(),
+    ASSISTANT_TIMEZONE: assistantTimeZone(),
     ...(skillsEnabled === "true" || skillsEnabled === "false"
       ? { SKILLS_ENABLED: skillsEnabled }
       : {}),

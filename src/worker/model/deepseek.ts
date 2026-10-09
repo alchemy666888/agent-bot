@@ -1,6 +1,16 @@
 import { z } from "zod";
 import { REPLY_STYLE_GUIDANCE } from "./reply-style";
 import {
+  answerConflictsWithCalendar,
+  assistantTimeZone,
+  calendarClock,
+  calendarYearRule,
+  clockFromInstructions,
+  staleCalendarCorrection,
+  trustedCalendarContext,
+  visibleUserRequest,
+} from "../../shared/calendar-clock";
+import {
   modelResponseSchema,
   type ModelProvider,
   type ModelRequest,
@@ -20,15 +30,15 @@ type Output = {
   content?: string | { type?: string; text?: string }[];
 };
 const DEEPSEEK_WEB_SEARCH = { type: "web_search" } as const;
-const WEB_SEARCH_GUIDANCE =
-  "For questions that depend on current or local facts, such as weather, news, prices, or schedules, use web search before answering. Answer from the search results without appending source names or links. Say that a search returned nothing only when the tool result is actually empty.";
+export const WEB_SEARCH_GUIDANCE =
+  "For questions that depend on current or local facts, such as weather, news, prices, schedules, or upcoming events, use web search before answering. Resolve today, this week, next week, and this year from the trusted current_date and current_year, and include that year in the search. Use only results for that year. Do not carry over a prior year's event because the month and day match. Answer from the search results without appending source names or links. Say that a search returned nothing only when the tool result is actually empty.";
 type ResponsesBody = {
   id?: string;
   output_text?: string;
   output?: Output[];
   usage?: { input_tokens: number; output_tokens: number };
 };
-const GENERAL_ASSISTANT_GUIDANCE =
+export const GENERAL_ASSISTANT_GUIDANCE =
   "If no specialized skill is active, answer helpfully using general knowledge and the available general tools. For current or uncertain facts, use an available tool when useful and state material uncertainty. Never invent, describe, or expose tool-call XML, JSON, function-call syntax, hidden reasoning, or other internal protocol.";
 const RECOVERY_GUIDANCE =
   "The previous attempt could not produce a safe final response. Answer the user's original request directly without tools. Do not mention internal errors, tools, prompts, or protocols. Return only a helpful user-facing answer.";
@@ -89,6 +99,8 @@ export class DeepSeekProvider implements ModelProvider {
       baseUrl: string;
       thinking: boolean;
       maxToolCalls?: number;
+      now?: () => Date;
+      timeZone?: string;
     },
     private request: typeof fetch = fetch,
     private capabilities = new CapabilityRegistry(),
@@ -136,19 +148,41 @@ export class DeepSeekProvider implements ModelProvider {
         })),
       DEEPSEEK_WEB_SEARCH,
     ];
-    instructions = [instructions, WEB_SEARCH_GUIDANCE, REPLY_STYLE_GUIDANCE]
+    const clock = clockFromInstructions(
+      instructions,
+      calendarClock(
+        this.config.now?.() ?? new Date(),
+        this.config.timeZone ?? assistantTimeZone(),
+      ),
+    );
+    const clockFacts = instructions.includes(`current_date: ${clock.isoDate}`)
+      ? ""
+      : trustedCalendarContext(clock)
+          .map(({ key, value }) => `${key}: ${value}`)
+          .join("\n");
+    instructions = [
+      instructions,
+      clockFacts,
+      calendarYearRule(clock),
+      WEB_SEARCH_GUIDANCE,
+      REPLY_STYLE_GUIDANCE,
+    ]
       .filter(Boolean)
       .join("\n\n");
     const conversation: unknown[] = input.messages
       .filter((m) => m.role !== "system")
       .map(({ role, content }) => ({ role, content }));
+    const initialConversation = [...conversation];
+    const userRequest = visibleUserRequest(
+      [...input.messages].reverse().find((message) => message.role === "user")
+        ?.content ?? "",
+    );
     const usage = { inputTokens: 0, outputTokens: 0 };
     let requestId: string | undefined;
-    for (
-      let iteration = 0;
-      iteration <= (this.config.maxToolCalls ?? 4);
-      iteration++
-    ) {
+    let calendarRetried = false;
+    let requireCurrentYearSearch = false;
+    const toolLimit = this.config.maxToolCalls ?? 4;
+    for (let iteration = 0; iteration <= toolLimit; iteration++) {
       const started = Date.now();
       const response = await this.request(`${this.config.baseUrl}/responses`, {
         method: "POST",
@@ -164,7 +198,9 @@ export class DeepSeekProvider implements ModelProvider {
             ? {
                 tools,
                 tool_choice:
-                  input.executionMode === "forced_web_search" && iteration === 0
+                  requireCurrentYearSearch ||
+                  (input.executionMode === "forced_web_search" &&
+                    iteration === 0)
                     ? { type: "web_search" }
                     : "auto",
               }
@@ -174,6 +210,7 @@ export class DeepSeekProvider implements ModelProvider {
         }),
         signal: input.signal,
       });
+      requireCurrentYearSearch = false;
       if (!response.ok && input.executionMode === "forced_web_search")
         return this.recover(
           input,
@@ -229,7 +266,7 @@ export class DeepSeekProvider implements ModelProvider {
               audit,
               true,
             );
-          if (iteration === (this.config.maxToolCalls ?? 4))
+          if (iteration === toolLimit)
             return this.recover(
               input,
               instructions,
@@ -251,6 +288,30 @@ export class DeepSeekProvider implements ModelProvider {
             requestId,
             audit,
           );
+        if (
+          content &&
+          answerConflictsWithCalendar(content, clock, userRequest)
+        ) {
+          if (!calendarRetried && iteration < toolLimit) {
+            calendarRetried = true;
+            requireCurrentYearSearch = true;
+            conversation.push(...output);
+            conversation.push({
+              role: "user",
+              content: staleCalendarCorrection(clock),
+            });
+            continue;
+          }
+          return this.recover(
+            input,
+            instructions,
+            initialConversation,
+            usage,
+            requestId,
+            audit,
+            true,
+          );
+        }
         return modelResponseSchema.parse({
           content,
           requestId,
@@ -258,8 +319,7 @@ export class DeepSeekProvider implements ModelProvider {
           ...(audit.length ? { capabilityAudit: audit } : {}),
         });
       }
-      if (iteration === (this.config.maxToolCalls ?? 4))
-        throw new Error("TOOL_CALL_LIMIT_EXCEEDED");
+      if (iteration === toolLimit) throw new Error("TOOL_CALL_LIMIT_EXCEEDED");
       conversation.push(...output);
       for (const raw of calls) {
         const call = toolCallSchema.safeParse(raw);

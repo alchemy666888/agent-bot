@@ -7,6 +7,7 @@ import { telegramInputSchema } from "../server/telegram/input";
 import { LockCoordinator } from "./locks/coordinator";
 import { UpdateRepository } from "./updates/repository";
 import { DurableConversationService } from "./conversations/durable-service";
+import { assistantTimeZone } from "../shared/calendar-clock";
 import { DeepSeekProvider } from "./model/deepseek";
 import { DeepSeekRouter } from "./model/deepseek-router";
 import { TelegramClient } from "./telegram/client";
@@ -105,6 +106,7 @@ async function telegramTurn(
         baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
         thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
         maxToolCalls: optionalPositiveInteger("SKILL_MAX_TOOL_STEPS"),
+        timeZone: assistantTimeZone(envValue("ASSISTANT_TIMEZONE")),
       },
       fetch,
       capabilities,
