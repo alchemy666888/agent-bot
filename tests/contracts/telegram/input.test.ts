@@ -71,7 +71,7 @@ describe("Telegram contract", () => {
       ),
     ).not.toContain("private");
   });
-  it("ignores edited messages and non-group chats", () => {
+  it("ignores edited messages, channels, and group chats", () => {
     expect(
       extractTelegramInput({ update_id: 1, edited_message: {} }).kind,
     ).toBe("ignored");
@@ -86,31 +86,41 @@ describe("Telegram contract", () => {
         },
       }).kind,
     ).toBe("ignored");
-  });
-  it("accepts group text that does not mention the bot", () => {
-    const value = extractTelegramInput({
-      update_id: 8,
-      message: {
-        message_id: 9,
-        chat: { id: -100123, type: "supergroup", title: "交易討論" },
-        from: { id: 4, first_name: "Ada", username: "u" },
-        text: "大家好",
-      },
-    });
-    expect(value).toEqual({
-      kind: "text",
-      updateId: "8",
-      messageId: "9",
-      chatId: "-100123",
-      userId: "4",
-      username: "u",
-      languageCode: undefined,
-      text: "大家好",
-      chatScope: "group",
-      replyToMessageId: "9",
-    });
-    expect(JSON.stringify(value)).not.toContain("交易討論");
-    expect(JSON.stringify(value)).not.toContain("Ada");
+    for (const type of ["group", "supergroup"] as const) {
+      expect(
+        extractTelegramInput({
+          update_id: 8,
+          message: {
+            message_id: 9,
+            chat: { id: -100123, type, title: "交易討論" },
+            from: { id: 4, first_name: "Ada", username: "u" },
+            text: "大家好",
+          },
+        }),
+      ).toEqual({ kind: "ignored", updateId: "8" });
+      expect(
+        extractTelegramInput({
+          update_id: 11,
+          message: {
+            message_id: 12,
+            chat: { id: -42, type },
+            from: { id: 4, username: "u" },
+            text: "/skills",
+          },
+        }).kind,
+      ).toBe("ignored");
+      expect(
+        extractTelegramInput({
+          update_id: 13,
+          message: {
+            message_id: 14,
+            chat: { id: -42, type },
+            from: { id: 4 },
+            photo: [],
+          },
+        }).kind,
+      ).toBe("ignored");
+    }
   });
   it("extracts only bounded opaque callbacks from private chats", () => {
     expect(

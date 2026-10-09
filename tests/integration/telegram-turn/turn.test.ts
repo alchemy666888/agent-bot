@@ -757,7 +757,7 @@ describe("Telegram turn", () => {
     expect(telegram.send).toHaveBeenCalledWith("3", "retried answer");
   });
 
-  it("answers an unmentioned group message without private history", async () => {
+  it("never replies to a group message", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const conversations = new ConversationService();
     conversations.add("4", "user", "private secret");
@@ -767,14 +767,15 @@ describe("Telegram turn", () => {
       typing: vi.fn(async () => {}),
       send: vi.fn(async () => {}),
     };
-    await new TelegramTurn(
+    const turn = new TelegramTurn(
       new LockCoordinator(root),
       new UpdateRepository(root),
       conversations,
       { generate },
       telegram,
       "system",
-    ).handle({
+    );
+    await turn.handle({
       kind: "text",
       updateId: "8",
       messageId: "9",
@@ -784,34 +785,7 @@ describe("Telegram turn", () => {
       chatScope: "group",
       replyToMessageId: "9",
     });
-    expect(JSON.stringify(generate.mock.calls)).not.toContain("private secret");
-    expect(JSON.stringify(generate.mock.calls)).toContain("大家好");
-    expect(telegram.send).toHaveBeenCalledWith(
-      "-100123",
-      "群組回覆",
-      undefined,
-      "9",
-    );
-    expect(
-      conversations.context("4", "system").messages.map((m) => m.content),
-    ).toEqual(["system", "private secret", "private reply"]);
-  });
-
-  it("does not run skill commands from a group", async () => {
-    root = await mkdtemp(join(tmpdir(), "turn-"));
-    const generate = vi.fn(async () => ({ content: "should not run" }));
-    const telegram = {
-      typing: vi.fn(async () => {}),
-      send: vi.fn(async () => {}),
-    };
-    await new TelegramTurn(
-      new LockCoordinator(root),
-      new UpdateRepository(root),
-      new ConversationService(),
-      { generate },
-      telegram,
-      "system",
-    ).handle({
+    await turn.handle({
       kind: "text",
       updateId: "10",
       messageId: "11",
@@ -821,12 +795,18 @@ describe("Telegram turn", () => {
       chatScope: "group",
       replyToMessageId: "11",
     });
+    await turn.handle({
+      kind: "unsupported",
+      updateId: "12",
+      chatId: "-42",
+      replyToMessageId: "13",
+      userId: "4",
+    });
     expect(generate).not.toHaveBeenCalled();
-    expect(telegram.send).toHaveBeenCalledWith(
-      "-42",
-      "請在私聊使用這個指令。",
-      undefined,
-      "11",
-    );
+    expect(telegram.typing).not.toHaveBeenCalled();
+    expect(telegram.send).not.toHaveBeenCalled();
+    expect(
+      conversations.context("4", "system").messages.map((m) => m.content),
+    ).toEqual(["system", "private secret", "private reply"]);
   });
 });

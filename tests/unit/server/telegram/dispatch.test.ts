@@ -310,6 +310,25 @@ describe("Telegram dispatch skill catalog", () => {
     expect(log.mock.calls[0]![0]).not.toContain("private detail");
   });
 
+  it("does not answer a group chat", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      dispatchTelegramInput({
+        ...input,
+        chatId: "-100123",
+        text: "大家好",
+        chatScope: "group",
+        replyToMessageId: "9",
+      }),
+    ).resolves.toMatchObject({ ok: true, data: { acknowledged: true } });
+
+    expect(invokeWorker).not.toHaveBeenCalled();
+    expect(skillQuery).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("refuses a Telegram account that is not on ALLOW_USERS", async () => {
     vi.stubEnv("ALLOW_USERS", "luckyvickyforever,another_user");
     const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));

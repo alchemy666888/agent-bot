@@ -286,6 +286,26 @@ export async function dispatchTelegramInput(
     GITHUB_PROMPTS_BRANCH: "main",
   });
   const client = new TelegramClient(telegram.TELEGRAM_BOT_TOKEN);
+  if (input.kind === "ignored") {
+    return {
+      contractVersion: 1 as const,
+      correlationId,
+      ok: true as const,
+      data: { acknowledged: true },
+    };
+  }
+  // Group chats must not receive allowlist denials, commands, or model replies.
+  if (
+    (input.kind === "text" && input.chatScope === "group") ||
+    ("chatId" in input && input.chatId.startsWith("-"))
+  ) {
+    return {
+      contractVersion: 1 as const,
+      correlationId,
+      ok: true as const,
+      data: { acknowledged: true },
+    };
+  }
   if (!telegramUpdateAllowed(telegram.ALLOW_USERS, input)) {
     if ("chatId" in input)
       await client.send(

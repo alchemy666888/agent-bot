@@ -2,7 +2,6 @@ import { z } from "zod";
 import { telegramChatId, telegramId } from "../../shared/ids";
 
 const chatIdPattern = /^-?[1-9]\d*$/;
-const GROUP_CHAT = new Set(["group", "supergroup"]);
 
 const updateSchema = z
   .object({
@@ -165,8 +164,8 @@ export function extractTelegramInput(raw: unknown): TelegramInput {
   }
   if (update.edited_message || !update.message)
     return { kind: "ignored", updateId };
-  const chatType = update.message.chat.type;
-  if (chatType !== "private" && !GROUP_CHAT.has(chatType))
+  // Groups, supergroups, and channels are acknowledged and never answered.
+  if (update.message.chat.type !== "private")
     return { kind: "ignored", updateId };
   const chatId = telegramChatId(update.message.chat.id);
   const replyToMessageId = String(update.message.message_id);
@@ -176,7 +175,6 @@ export function extractTelegramInput(raw: unknown): TelegramInput {
       kind: "unsupported",
       updateId,
       chatId,
-      ...(chatType === "private" ? {} : { replyToMessageId }),
       ...(from
         ? {
             userId: telegramId(from.id),
@@ -194,9 +192,6 @@ export function extractTelegramInput(raw: unknown): TelegramInput {
     username: update.message.from.username,
     languageCode: update.message.from.language_code,
     text: update.message.text,
-    ...(chatType === "private"
-      ? {}
-      : { chatScope: "group" as const, replyToMessageId }),
   };
 }
 
