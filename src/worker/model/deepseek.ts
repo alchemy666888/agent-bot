@@ -6,6 +6,7 @@ import {
   calendarClock,
   calendarYearRule,
   clockFromInstructions,
+  isCurrentTimeRequest,
   staleCalendarCorrection,
   trustedCalendarContext,
   unavailableClockRule,
@@ -43,6 +44,8 @@ export const GENERAL_ASSISTANT_GUIDANCE =
   "If no specialized skill is active, answer helpfully using general knowledge and the available general tools. For current or uncertain facts, use an available tool when useful and state material uncertainty. Never invent, describe, or expose tool-call XML, JSON, function-call syntax, hidden reasoning, or other internal protocol.";
 const RECOVERY_GUIDANCE =
   "The previous attempt could not produce a safe final response. Answer the user's original request directly without tools. Do not mention internal errors, tools, prompts, or protocols. Return only a helpful user-facing answer.";
+export const CLOCK_ONLY_GUIDANCE =
+  "The user asked only for the current time. Answer from the trusted clock hour, minute, and timezone only. Do not use web search. Do not name a city. A city or IP location in search results is not something the user said.";
 const SEARCH_LIMITATION_GUIDANCE =
   "The required web search failed or produced no useful results. Give a safe final response that clearly and briefly says the current information could not be verified. Do not guess, expose raw search output, mention internal errors or protocols, or claim the requested action was completed.";
 const AUTHORIZED_SKILLS_GUIDANCE =
@@ -131,6 +134,11 @@ export class DeepSeekProvider implements ModelProvider {
         .replaceAll("&", "\\u0026");
       instructions = `${instructions}\n\n${AUTHORIZED_SKILLS_GUIDANCE}${serializedCatalog}\n</authorized_skill_catalog>`;
     }
+    const userRequest = visibleUserRequest(
+      [...input.messages].reverse().find((message) => message.role === "user")
+        ?.content ?? "",
+    );
+    const clockOnly = isCurrentTimeRequest(userRequest);
     const activeCapabilities =
       input.executionMode === "selected_skill"
         ? (input.skill?.capabilities ?? [])
@@ -138,21 +146,19 @@ export class DeepSeekProvider implements ModelProvider {
           ? (input.generalCapabilities ?? [])
           : [];
     const permitted = activeCapabilities.map((item) => item.id);
-    const tools = [
-      ...activeCapabilities
-        .filter((item) => item.id !== "web_search")
-        .map((item) => ({
-          type: "function",
-          name: item.id,
-          description: item.description,
-          parameters: item.inputSchema,
-        })),
-      DEEPSEEK_WEB_SEARCH,
-    ];
-    const userRequest = visibleUserRequest(
-      [...input.messages].reverse().find((message) => message.role === "user")
-        ?.content ?? "",
-    );
+    const tools = clockOnly
+      ? []
+      : [
+          ...activeCapabilities
+            .filter((item) => item.id !== "web_search")
+            .map((item) => ({
+              type: "function",
+              name: item.id,
+              description: item.description,
+              parameters: item.inputSchema,
+            })),
+          DEEPSEEK_WEB_SEARCH,
+        ];
     const clockUnavailable = /(?:^|\n)clock_source:\s*unavailable\b/.test(
       instructions,
     );
@@ -177,7 +183,7 @@ export class DeepSeekProvider implements ModelProvider {
       clock
         ? calendarYearRule(clock, userRequest)
         : unavailableClockRule(userRequest),
-      WEB_SEARCH_GUIDANCE,
+      clockOnly ? CLOCK_ONLY_GUIDANCE : WEB_SEARCH_GUIDANCE,
       REPLY_STYLE_GUIDANCE,
     ]
       .filter(Boolean)

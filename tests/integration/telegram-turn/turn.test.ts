@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import type { PromptBundle } from "../../../src/shared/contracts/prompt";
 import { TelegramTurn } from "../../../src/worker/orchestration/telegram-turn";
 import { LockCoordinator } from "../../../src/worker/locks/coordinator";
 import { UpdateRepository } from "../../../src/worker/updates/repository";
@@ -808,5 +809,74 @@ describe("Telegram turn", () => {
     expect(
       conversations.context("4", "system").messages.map((m) => m.content),
     ).toEqual(["system", "private secret", "private reply"]);
+  });
+
+  it("answers the current time from the trusted clock without the model", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-clock-"));
+    const generate = vi.fn();
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    const bundle: PromptBundle = {
+      schemaVersion: 1,
+      runtimePolicy: { version: "1", mode: "normal" },
+      commonSystemPrompt: {
+        id: "base",
+        content: "base",
+        source: "compiled_emergency",
+      },
+      requestTemplate: {
+        id: "default",
+        content: "request",
+        source: "compiled_emergency",
+      },
+      trustedRuntimeContext: [
+        { key: "current_date", value: "2026-10-09" },
+        { key: "current_year", value: "2026" },
+        { key: "current_month", value: "10" },
+        { key: "current_day", value: "9" },
+        { key: "current_hour", value: "18" },
+        { key: "current_minute", value: "48" },
+        { key: "weekday", value: "Friday" },
+        { key: "timezone", value: "Asia/Hong_Kong" },
+        { key: "clock_source", value: "news_mcp" },
+      ],
+      repositoryCommitSha: null,
+      selectedBlobShas: [],
+      resolutionSource: "emergency",
+      degradedModeSource: "compiled_emergency",
+      turnPin: { commitSha: null, pinnedAt: "2026-10-09T10:48:00.000Z" },
+      telemetry: { resolution: "fallback", degraded: true },
+    };
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      new UpdateRepository(root),
+      new ConversationService(),
+      { generate },
+      telegram,
+      bundle,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      {
+        route: async () => {
+          throw new Error("router should not run");
+        },
+      },
+    ).handle({
+      kind: "text",
+      updateId: "1848",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "現在幾點",
+    });
+    expect(generate).not.toHaveBeenCalled();
+    expect(telegram.send).toHaveBeenCalledWith(
+      "3",
+      "現在是 18:48（Asia/Hong_Kong）。",
+    );
   });
 });

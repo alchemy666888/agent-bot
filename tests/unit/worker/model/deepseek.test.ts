@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
+  CLOCK_ONLY_GUIDANCE,
   containsInternalProtocol,
   DeepSeekProvider,
 } from "../../../../src/worker/model/deepseek";
@@ -753,5 +754,34 @@ describe("model adapter", () => {
       ],
       messages: [{ role: "user", content: "今天的新聞" }],
     });
+  });
+
+  it("does not force web search for a pure time question", async () => {
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        instructions: string;
+        tools?: unknown;
+        tool_choice?: unknown;
+      };
+      expect(body.tool_choice).not.toEqual({ type: "web_search" });
+      expect(body.tools).toBeUndefined();
+      expect(body.instructions).toContain(CLOCK_ONLY_GUIDANCE);
+      expect(body.instructions).not.toContain("Answer from the search results");
+      return Response.json({ output_text: "現在是 18:48（Asia/Hong_Kong）。" });
+    });
+    await new DeepSeekProvider(
+      {
+        apiKey: "fixture",
+        baseUrl: "https://example.test",
+        thinking: false,
+        now: () => new Date("2026-10-09T10:48:00.000Z"),
+        timeZone: "Asia/Hong_Kong",
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "現在幾點" }],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
