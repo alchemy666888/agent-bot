@@ -65,10 +65,7 @@ describe("skill routing acceptance", () => {
       tool_choice: { type: "web_search" },
     });
     expect(body.input.at(-1).content).toBe("今天香港天氣怎樣？");
-    expect(telegram.send).toHaveBeenCalledWith(
-      "3",
-      "香港目前晴朗。來源：https://weather.example/hong-kong",
-    );
+    expect(telegram.send).toHaveBeenCalledWith("3", "香港目前晴朗。");
   });
 
   it("loads a catalog, invokes its capability, and sends only final text", async () => {
