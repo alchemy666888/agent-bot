@@ -382,6 +382,55 @@ export function visibleUserRequest(content: string): string {
   }
 }
 
+const POLITE_PREFIX =
+  /^(?:(?:hi|hey|hello|please|can you|could you|would you|tell me|let me know)(?:[,，!\s]+|$)|(?:請問|请问|問下|问下|唔該|唔该|你好|麻煩你?|麻烦你?|你可唔可以|可不可以|可以唔可以|能不能|告訴我|告诉我|話我知|话我知|講下|讲下)[，,\s]*)/iu;
+
+const TIME_CORE =
+  /^(?:what(?:'s| is) the (?:current )?time(?: now)?|what time is it(?: now)?|what is the time(?: now)?|current time|(?:the )?time now|(?:而家|現在|现在|現時|现时|當前|当前)(?:係|系|是)?(?:幾[點点](?:鐘|钟)?|几[點点](?:鐘|钟)?|幾多[點点]|几多[點点]|什麼時間|什么时间|什麼時候|什么时候|時間|时间)|幾[點点](?:鐘|钟)?了|几[點点](?:鐘|钟)?了)$/iu;
+
+/** A request that asks only for the current time, with no other topic. */
+export function isCurrentTimeRequest(request: string): boolean {
+  let text = visibleUserRequest(request)
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[?？。!！.～~]+$/u, "")
+    .replace(/(?:呢|嗎|吗|啊|呀|啦|了|吧)+$/u, "")
+    .trim();
+  if (!text || text.length > 80) return false;
+  for (let i = 0; i < 4; i++) {
+    const next = text.replace(POLITE_PREFIX, "").trim();
+    if (next === text) break;
+    text = next;
+  }
+  return TIME_CORE.test(text);
+}
+
+function timeReplyLanguage(request: string): "yue" | "zh" | "en" {
+  const text = visibleUserRequest(request);
+  if (/而家|喺|咩/.test(text)) return "yue";
+  if (/[A-Za-z]/.test(text) && !/\p{Script=Han}/u.test(text)) return "en";
+  return "zh";
+}
+
+/** User-facing clock answer. Undefined when the request is not time-only. */
+export function currentTimeReply(
+  request: string,
+  clock: CalendarClock | undefined,
+): string | undefined {
+  if (!isCurrentTimeRequest(request)) return undefined;
+  const language = timeReplyLanguage(request);
+  if (!clock) {
+    if (language === "en")
+      return "The current date and time could not be read.";
+    if (language === "yue") return "而家嘅日期同時間讀取唔到。";
+    return "現在的日期和時間讀取不到。";
+  }
+  const time = `${pad(clock.hour)}:${pad(clock.minute)}`;
+  if (language === "en") return `It is ${time} (${clock.timeZone}).`;
+  if (language === "yue") return `而家係 ${time}（${clock.timeZone}）。`;
+  return `現在是 ${time}（${clock.timeZone}）。`;
+}
+
 export function requestNeedsCurrentCalendar(
   request: string,
   year: number,

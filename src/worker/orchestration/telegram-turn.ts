@@ -40,7 +40,9 @@ import {
   calendarClock,
   calendarYearRule,
   clockFromInstructions,
+  currentTimeReply,
   unavailableClockRule,
+  type CalendarClock,
 } from "../../shared/calendar-clock";
 
 const GENERIC_FAILURE =
@@ -116,14 +118,26 @@ export class TelegramTurn {
       ? this.promptBundle
       : composePromptTurn(this.promptBundle, rawText);
   }
+  private runtimeClockLines(): string | undefined {
+    if (typeof this.promptBundle === "string") return undefined;
+    return this.promptBundle.trustedRuntimeContext
+      .map(({ key, value }) => `${key}: ${value}`)
+      .join("\n");
+  }
+  /** Trusted clock for a direct time answer. Undefined when the clock was not read. */
+  private answerClock(): CalendarClock | undefined {
+    const fallback = calendarClock(new Date(), assistantTimeZone());
+    const lines = this.runtimeClockLines();
+    if (lines === undefined) return fallback;
+    if (/(?:^|\n)clock_source:\s*unavailable\b/.test(lines)) return undefined;
+    return clockFromInstructions(lines, fallback);
+  }
   /** Clock text for classifier requests. The answering model receives the same rule. */
   private trustedClock(requestText: string): string {
     const fallback = calendarClock(new Date(), assistantTimeZone());
-    if (typeof this.promptBundle === "string")
+    const lines = this.runtimeClockLines();
+    if (lines === undefined)
       return calendarYearRule(fallback, requestText).slice(0, 2_000);
-    const lines = this.promptBundle.trustedRuntimeContext
-      .map(({ key, value }) => `${key}: ${value}`)
-      .join("\n");
     if (/(?:^|\n)clock_source:\s*unavailable\b/.test(lines))
       return unavailableClockRule(requestText).slice(0, 2_000);
     return calendarYearRule(
@@ -263,18 +277,24 @@ export class TelegramTurn {
       const unknownCommand = /^\s*\/[A-Za-z0-9_]+(?:@\S+)?(?:\s|$)/.test(
         input.text,
       );
-      const deterministic =
-        command?.kind === "reply"
-          ? command.text
-          : !command && unknownCommand
-            ? "Unknown command. Use /help to see available commands."
-            : undefined;
       const routedText =
         command?.kind === "invoke"
           ? command.invocation.request
           : command?.kind === "fallback"
             ? command.request
             : input.text;
+      const timeReply =
+        !command && !unknownCommand
+          ? currentTimeReply(routedText, this.answerClock())
+          : undefined;
+      const deterministic =
+        command?.kind === "reply"
+          ? command.text
+          : timeReply
+            ? timeReply
+            : !command && unknownCommand
+              ? "Unknown command. Use /help to see available commands."
+              : undefined;
       if (input.text === "/new")
         await this.conversations.newConversation(scopeKey);
       let requestMessageId: string | null = null;

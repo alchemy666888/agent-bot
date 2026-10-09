@@ -4,6 +4,8 @@ import {
   calendarClock,
   calendarYearRule,
   civilWeekday,
+  currentTimeReply,
+  isCurrentTimeRequest,
   userSpecifiedDateTimes,
   visibleUserRequest,
 } from "../../../src/shared/calendar-clock";
@@ -91,5 +93,29 @@ describe("calendar clock", () => {
       "user specified",
     );
     expect(calendarYearRule(clock, "2019 年發生了什麼？")).toContain("2019");
+  });
+
+  it("answers a pure time question from the clock and not a city", () => {
+    const evening = { ...clock, hour: 18, minute: 48 };
+    expect(isCurrentTimeRequest("現在幾點")).toBe(true);
+    expect(isCurrentTimeRequest("而家幾點")).toBe(true);
+    expect(isCurrentTimeRequest("what time is it")).toBe(true);
+    expect(isCurrentTimeRequest("請問現在幾點？")).toBe(true);
+    expect(isCurrentTimeRequest("現在幾點的天氣")).toBe(false);
+    expect(isCurrentTimeRequest("現在幾點有什麼新聞")).toBe(false);
+    expect(currentTimeReply("現在幾點", evening)).toBe(
+      "現在是 18:48（Asia/Hong_Kong）。",
+    );
+    expect(currentTimeReply("而家幾點", evening)).toBe(
+      "而家係 18:48（Asia/Hong_Kong）。",
+    );
+    expect(currentTimeReply("what time is it", evening)).toBe(
+      "It is 18:48 (Asia/Hong_Kong).",
+    );
+    expect(currentTimeReply("現在幾點", evening)).not.toMatch(/廣州|广州/);
+    expect(currentTimeReply("現在幾點", undefined)).toBe(
+      "現在的日期和時間讀取不到。",
+    );
+    expect(currentTimeReply("今天香港天氣", evening)).toBeUndefined();
   });
 });
