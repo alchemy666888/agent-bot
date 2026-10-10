@@ -104,10 +104,10 @@ describe("calendar clock", () => {
     expect(isCurrentTimeRequest("現在幾點的天氣")).toBe(false);
     expect(isCurrentTimeRequest("現在幾點有什麼新聞")).toBe(false);
     expect(currentTimeReply("現在幾點", evening)).toBe(
-      "現在是 香港時間18:48。",
+      "現在是香港時間18:48。",
     );
     expect(currentTimeReply("而家幾點", evening)).toBe(
-      "而家係 香港時間18:48。",
+      "而家係香港時間18:48。",
     );
     expect(currentTimeReply("what time is it", evening)).toBe(
       "It is 18:48 Hong Kong time.",

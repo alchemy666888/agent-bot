@@ -430,8 +430,8 @@ export function currentTimeReply(
   if (language === "en")
     return place ? `It is ${time} ${place}.` : `It is ${time}.`;
   if (language === "yue")
-    return place ? `而家係 ${place}${time}。` : `而家係 ${time}。`;
-  return place ? `現在是 ${place}${time}。` : `現在是 ${time}。`;
+    return place ? `而家係${place}${time}。` : `而家係 ${time}。`;
+  return place ? `現在是${place}${time}。` : `現在是 ${time}。`;
 }
 
 /** Spoken zone for a clock answer. Hong Kong is named; other zones stay unnamed. */

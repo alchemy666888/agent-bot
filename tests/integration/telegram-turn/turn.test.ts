@@ -874,6 +874,6 @@ describe("Telegram turn", () => {
       text: "現在幾點",
     });
     expect(generate).not.toHaveBeenCalled();
-    expect(telegram.send).toHaveBeenCalledWith("3", "現在是 香港時間18:48。");
+    expect(telegram.send).toHaveBeenCalledWith("3", "現在是香港時間18:48。");
   });
 });

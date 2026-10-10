@@ -45,7 +45,7 @@ export const GENERAL_ASSISTANT_GUIDANCE =
 const RECOVERY_GUIDANCE =
   "The previous attempt could not produce a safe final response. Answer the user's original request directly without tools. Do not mention internal errors, tools, prompts, or protocols. Return only a helpful user-facing answer.";
 export const CLOCK_ONLY_GUIDANCE =
-  "The user asked only for the current time. Answer from the trusted clock hour and minute only. When the timezone is Asia/Hong_Kong, say 香港時間 with the time, for example 現在是 香港時間07:49. Do not print an IANA timezone identifier. Do not use web search. Do not name a city from search results. A city or IP location in search results is not something the user said.";
+  "The user asked only for the current time. Answer from the trusted clock hour and minute only. When the timezone is Asia/Hong_Kong, say 香港時間 with the time, for example 現在是香港時間07:49. Do not print an IANA timezone identifier. Do not use web search. Do not name a city from search results. A city or IP location in search results is not something the user said.";
 const SEARCH_LIMITATION_GUIDANCE =
   "The required web search failed or produced no useful results. Give a safe final response that clearly and briefly says the current information could not be verified. Do not guess, expose raw search output, mention internal errors or protocols, or claim the requested action was completed.";
 const AUTHORIZED_SKILLS_GUIDANCE =

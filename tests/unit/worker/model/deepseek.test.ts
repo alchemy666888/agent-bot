@@ -767,7 +767,7 @@ describe("model adapter", () => {
       expect(body.tools).toBeUndefined();
       expect(body.instructions).toContain(CLOCK_ONLY_GUIDANCE);
       expect(body.instructions).not.toContain("Answer from the search results");
-      return Response.json({ output_text: "現在是 香港時間18:48。" });
+      return Response.json({ output_text: "現在是香港時間18:48。" });
     });
     await new DeepSeekProvider(
       {
