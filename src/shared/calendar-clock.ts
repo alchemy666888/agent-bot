@@ -426,9 +426,21 @@ export function currentTimeReply(
     return "現在的日期和時間讀取不到。";
   }
   const time = `${pad(clock.hour)}:${pad(clock.minute)}`;
-  if (language === "en") return `It is ${time} (${clock.timeZone}).`;
-  if (language === "yue") return `而家係 ${time}（${clock.timeZone}）。`;
-  return `現在是 ${time}（${clock.timeZone}）。`;
+  const place = spokenTimeZone(clock.timeZone, language);
+  if (language === "en")
+    return place ? `It is ${time} ${place}.` : `It is ${time}.`;
+  if (language === "yue")
+    return place ? `而家係${place}${time}。` : `而家係 ${time}。`;
+  return place ? `現在是${place}${time}。` : `現在是 ${time}。`;
+}
+
+/** Spoken zone for a clock answer. Hong Kong is named; other zones stay unnamed. */
+function spokenTimeZone(
+  timeZone: string,
+  language: "yue" | "zh" | "en",
+): string | undefined {
+  if (timeZone !== "Asia/Hong_Kong") return undefined;
+  return language === "en" ? "Hong Kong time" : "香港時間";
 }
 
 export function requestNeedsCurrentCalendar(
