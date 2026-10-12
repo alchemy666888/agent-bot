@@ -13,6 +13,11 @@ import {
   visibleUserRequest,
 } from "../../shared/calendar-clock";
 import {
+  answerConflictsWithPlace,
+  placeSearchRule,
+  stalePlaceCorrection,
+} from "../../shared/news-place";
+import {
   modelResponseSchema,
   type ModelProvider,
   type ModelRequest,
@@ -33,7 +38,7 @@ type Output = {
 };
 const DEEPSEEK_WEB_SEARCH = { type: "web_search" } as const;
 export const WEB_SEARCH_GUIDANCE =
-  "For questions that depend on current or local facts, such as weather, news, prices, schedules, or upcoming events, use web search before answering. By default, resolve today, this week, next week, and this year from the trusted news-mcp clock and include that year, month, day, hour, and minute in the search. If the user specifies a historical or future date or time, search that specified value instead of the current clock. Use only results for the chosen date. Do not carry over a prior year's event because the month and day match. Answer from the search results without appending source names or links. Say that a search returned nothing only when the tool result is actually empty.";
+  "For questions that depend on current or local facts, such as weather, news, prices, schedules, or upcoming events, use web search before answering. By default, resolve today, this week, next week, and this year from the trusted news-mcp clock and include that year, month, day, hour, and minute in the search. If the user specifies a historical or future date or time, search that specified value instead of the current clock. Use only results for the chosen date. Do not carry over a prior year's event because the month and day match. Answer from the search results without appending source names or links. Say that a search returned nothing only when the tool result is actually empty. A non-empty result about a different place from the one the user named is not an answer. Do not summarize that other place. Do not tell the user the news is 已確認 or confirmed.";
 type ResponsesBody = {
   id?: string;
   output_text?: string;
@@ -183,6 +188,7 @@ export class DeepSeekProvider implements ModelProvider {
       clock
         ? calendarYearRule(clock, userRequest)
         : unavailableClockRule(userRequest),
+      placeSearchRule(userRequest),
       clockOnly ? CLOCK_ONLY_GUIDANCE : WEB_SEARCH_GUIDANCE,
       REPLY_STYLE_GUIDANCE,
     ]
@@ -195,7 +201,8 @@ export class DeepSeekProvider implements ModelProvider {
     const usage = { inputTokens: 0, outputTokens: 0 };
     let requestId: string | undefined;
     let calendarRetried = false;
-    let requireCurrentYearSearch = false;
+    let placeRetried = false;
+    let requireFreshSearch = false;
     const toolLimit = this.config.maxToolCalls ?? 4;
     for (let iteration = 0; iteration <= toolLimit; iteration++) {
       const started = Date.now();
@@ -213,7 +220,7 @@ export class DeepSeekProvider implements ModelProvider {
             ? {
                 tools,
                 tool_choice:
-                  requireCurrentYearSearch ||
+                  requireFreshSearch ||
                   (input.executionMode === "forced_web_search" &&
                     iteration === 0)
                     ? { type: "web_search" }
@@ -225,7 +232,7 @@ export class DeepSeekProvider implements ModelProvider {
         }),
         signal: input.signal,
       });
-      requireCurrentYearSearch = false;
+      requireFreshSearch = false;
       if (!response.ok && input.executionMode === "forced_web_search")
         return this.recover(
           input,
@@ -303,18 +310,30 @@ export class DeepSeekProvider implements ModelProvider {
             requestId,
             audit,
           );
-        if (
+        const calendarConflict = Boolean(
           clock &&
           content &&
-          answerConflictsWithCalendar(content, clock, userRequest)
-        ) {
-          if (!calendarRetried && iteration < toolLimit) {
-            calendarRetried = true;
-            requireCurrentYearSearch = true;
+          answerConflictsWithCalendar(content, clock, userRequest),
+        );
+        const placeConflict = Boolean(
+          content && answerConflictsWithPlace(content, userRequest),
+        );
+        if (calendarConflict || placeConflict) {
+          const retryCalendar = calendarConflict && !calendarRetried;
+          const retryPlace = placeConflict && !placeRetried;
+          if ((retryCalendar || retryPlace) && iteration < toolLimit) {
+            if (retryCalendar) calendarRetried = true;
+            if (retryPlace) placeRetried = true;
+            requireFreshSearch = true;
             conversation.push(...output);
             conversation.push({
               role: "user",
-              content: staleCalendarCorrection(clock),
+              content: [
+                retryCalendar && clock ? staleCalendarCorrection(clock) : "",
+                retryPlace ? stalePlaceCorrection(userRequest) : "",
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
             });
             continue;
           }

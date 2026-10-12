@@ -234,6 +234,75 @@ describe("model adapter", () => {
     expect(result.outputRecovery).toMatchObject({ triggered: true });
   });
 
+  it("searches the named place again when the draft answers another place", async () => {
+    const request = "今天香港有什麼新聞";
+    const malaysia =
+      "今日（10月12日）馬來西亞主要新聞如下：吉隆坡綜合指數上升。";
+    const hongKong = "今日香港主要新聞：立法會復會。";
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        instructions: string;
+        tool_choice: unknown;
+        input: { content?: string }[];
+      };
+      if (fetcher.mock.calls.length === 1) {
+        expect(body.instructions).toContain("Hong Kong");
+        expect(body.tool_choice).toBe("auto");
+        return Response.json({ output_text: malaysia });
+      }
+      expect(body.tool_choice).toEqual({ type: "web_search" });
+      expect(body.input.at(-1)?.content).toContain("Hong Kong");
+      return Response.json({ output_text: hongKong });
+    });
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "fixture",
+        baseUrl: "https://example.test",
+        thinking: false,
+        now: () => new Date("2026-10-12T06:55:00.000Z"),
+        timeZone: "Asia/Hong_Kong",
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "direct",
+      messages: [{ role: "user", content: request }],
+    });
+    expect(result.content).toBe(hongKong);
+    expect(result.content).not.toContain("吉隆坡");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("withholds another place's news when the retry is still wrong", async () => {
+    const malaysia =
+      "今日（10月12日）馬來西亞主要新聞如下：吉隆坡綜合指數上升。";
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ output_text: malaysia }))
+      .mockResolvedValueOnce(Response.json({ output_text: malaysia }))
+      .mockResolvedValueOnce(
+        Response.json({ output_text: "香港今日的新聞核實不到。" }),
+      );
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "fixture",
+        baseUrl: "https://example.test",
+        thinking: false,
+        now: () => new Date("2026-10-12T06:55:00.000Z"),
+        timeZone: "Asia/Hong_Kong",
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "direct",
+      messages: [{ role: "user", content: "今天香港有什麼新聞" }],
+    });
+    expect(result.content).toBe("香港今日的新聞核實不到。");
+    expect(result.content).not.toContain("吉隆坡");
+    expect(result.outputRecovery).toMatchObject({
+      triggered: true,
+      succeeded: true,
+    });
+  });
+
   it("searches the current year again when a calendar repeats a prior year", async () => {
     const request = "下個星期有什麼會議或者事件需要交易者注意的嗎？";
     const stale =

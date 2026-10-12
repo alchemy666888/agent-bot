@@ -43,6 +43,10 @@ export function cleanReplyBoilerplate(answer: string): string {
       .replace(
         /(?:^|\n)[ \t]*⚠️?\s*提醒[：:]\s*以上為搜尋引擎抓取的即時報導[，,]\s*具體時間與發展以各新聞機構最新更新為準[。.]\s*$/u,
         "",
+      )
+      .replace(
+        /(?:^|\n)[ \t]*以上(?:係|系|是|為|为)[^\n]{0,40}已確認[^\n]{0,40}\s*$/u,
+        "",
       ),
   );
   return cleaned === answer ? answer : cleaned.trimEnd();

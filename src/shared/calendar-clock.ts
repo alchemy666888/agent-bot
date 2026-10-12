@@ -358,7 +358,7 @@ export function datetimeOperatingRule(
   if (specified.length) {
     return `${clockLabel(clock)} The user specified this historical or future date and time: ${specified.map(formatSpecified).join(", ")}. For web search and the answer, use the user-specified date and time instead of the current clock.`;
   }
-  return `${clockLabel(clock)} For news, calendars, and upcoming events, search with year ${clock.year}, month ${clock.month}, day ${clock.day}, hour ${clock.hour}, and minute ${clock.minute}. Mention only events confirmed for the requested dates in ${clock.year}. A prior-year item that shares the month and day is a different event. Do not list a central-bank speech, data release, holiday, or earnings date from another year unless a ${clock.year} source schedules it again. Compute every weekday from ${clock.year}.`;
+  return `${clockLabel(clock)} For news, calendars, and upcoming events, search with year ${clock.year}, month ${clock.month}, day ${clock.day}, hour ${clock.hour}, and minute ${clock.minute}. Mention only events that occur on the requested dates in ${clock.year}. A prior-year item that shares the month and day is a different event. Do not list a central-bank speech, data release, holiday, or earnings date from another year unless a ${clock.year} source schedules it again. Compute every weekday from ${clock.year}.`;
 }
 
 export function calendarYearRule(clock: CalendarClock, request = ""): string {
@@ -366,7 +366,7 @@ export function calendarYearRule(clock: CalendarClock, request = ""): string {
 }
 
 export function staleCalendarCorrection(clock: CalendarClock): string {
-  return `The previous draft lists news or events that do not belong to ${clock.year}. The trusted clock is ${clock.weekday}, ${clock.isoDate} ${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")} (${clock.timeZone}). Search again for the user's requested period in ${clock.year} only. Drop every event supported only by an earlier year, including a central-bank speech, data release, holiday, or earnings date that merely shares the month and day. Recompute each weekday for ${clock.year}. If an event cannot be confirmed for ${clock.year}, omit it.`;
+  return `The previous draft lists news or events that do not belong to ${clock.year}. The trusted clock is ${clock.weekday}, ${clock.isoDate} ${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")} (${clock.timeZone}). Search again for the user's requested period in ${clock.year} only. Drop every event supported only by an earlier year, including a central-bank speech, data release, holiday, or earnings date that merely shares the month and day. Recompute each weekday for ${clock.year}. If an event is not dated in ${clock.year}, omit it.`;
 }
 
 /** Decode a Telegram input envelope so relative dates are visible to checks. */
