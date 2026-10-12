@@ -18,6 +18,13 @@ describe("reply boilerplate", () => {
     expect(cleanReplyBoilerplate(`${prefix}${news}`)).toBe(news);
   });
 
+  it("drops a trailing confirmation claim and keeps the news", () => {
+    const claim = "以上係今日已確認嘅主要新聞。";
+    expect(cleanReplyBoilerplate(`${news}\n\n${claim}`)).toBe(news);
+    expect(cleanReplyBoilerplate(`${news}\n${claim}`)).toBe(news);
+    expect(cleanReplyBoilerplate(claim).trim()).toBe("");
+  });
+
   it("drops a trailing source footer without removing an in-answer source section", () => {
     const body = `${news}\n\n數據來源（可直接查）\nSoSoValue：sosovalue.com`;
     expect(cleanReplyBoilerplate(`${body}\n\n${sourceFooter}`)).toBe(body);
