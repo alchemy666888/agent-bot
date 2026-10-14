@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 import {
   assistantTimeZone,
+  weekdayName,
   type CalendarClock,
 } from "../../shared/calendar-clock";
 
@@ -173,7 +174,7 @@ export async function fetchNewsMcpClock(options?: {
         day: zone.day,
         hour: zone.hour,
         minute: zone.minute,
-        weekday: zone.weekday,
+        weekday: weekdayName(zone.year, zone.month, zone.day),
         timeZone: zone.timezone,
         source: "news_mcp",
       },

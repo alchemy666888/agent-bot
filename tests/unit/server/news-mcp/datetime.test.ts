@@ -90,6 +90,30 @@ describe("news-mcp clock", () => {
     expect(JSON.stringify(result)).not.toContain(apiKey);
   });
 
+  it("replaces a weekday label that disagrees with the civil date", async () => {
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string };
+      if (body.method === "initialize")
+        return sse({ protocolVersion: "2025-11-25" });
+      if (body.method === "notifications/initialized")
+        return new Response(null, { status: 202 });
+      return sse({
+        structuredContent: {
+          zones: [{ ...zone, day: 14, date: "2026-10-14", weekday: "Tuesday" }],
+        },
+      });
+    });
+    const result = await fetchNewsMcpClock({
+      env: { NEWS_MCP_API_KEY: apiKey },
+      fetch: fetcher as typeof fetch,
+      timeZone: "Asia/Hong_Kong",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      clock: { isoDate: "2026-10-14", day: 14, weekday: "Wednesday" },
+    });
+  });
+
   it("reports an unavailable clock without throwing", async () => {
     await expect(
       fetchNewsMcpClock({ env: {}, fetch: vi.fn() as typeof fetch }),
