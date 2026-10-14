@@ -130,6 +130,9 @@ export function handleCommand(
       kind: "reply",
       text: [
         "Send text to chat. Commands: /start, /help, /new.",
+        "/schedule daily 09:00 <prompt> runs that prompt on a schedule and replies here. Also hourly and every 15m.",
+        "/schedules lists your schedules. /schedule_stop <id> and /schedule_start <id> pause and restart one.",
+        "中文：設定排程 每天 09:00 <提示>、排程列表、停止排程 <id>、啟動排程 <id>。",
         "/skills [page] lists installed, approved skills and availability.",
         "/skill <skill-name> shows supported tasks and operating constraints.",
         "/use <skill-name> <request> explicitly invokes a skill.",

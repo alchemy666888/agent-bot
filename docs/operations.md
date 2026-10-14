@@ -1,5 +1,11 @@
 # Operations
 
+## Schedules
+
+Apply `migrations/20261014_scheduled_tasks.sql` before enabling the external crontab. Call `POST /api/schedules/run` once a minute with `Authorization: Bearer $SCHEDULE_API_SECRET`. A `204` means no task was due and DeepSeek was not called. A `200` body `{ "ok": true, "ran": N, "failed": M }` means stored prompts were run as Telegram turns for their owners. Three failed runs pause that task and the bot tells the owner. At most three due tasks run per call; the next minute continues the rest.
+
+Users manage only their own rows: `/schedule`, `/schedules`, `/schedule_stop`, and `/schedule_start` (or the Chinese phrases in the README). Those messages are answered on the server and do not call DeepSeek. Each row keeps the source message, the user prompt, and schedule metadata. The run clock is News MCP `get_current_datetime` in `Asia/Hong_Kong`, with the server clock in that zone only when News MCP cannot be read.
+
 ## Routine checks
 
 `GET /api/health` must safely report configuration and schema compatibility without returning credentials. Monitor PostgreSQL availability/locks/storage, lifecycle transition errors, authorization denials, tool latency/outcomes, expired execution leases, unknown outcomes, Telegram delivery, and append-only audit ingestion. Correlate a run by `correlation_id`; logs contain reason codes and hashes, not raw secrets or unsanitized tool payloads.
