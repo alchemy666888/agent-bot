@@ -52,6 +52,7 @@ import {
   trustedCalendarContext,
 } from "../../shared/calendar-clock";
 import { fetchNewsMcpClock } from "../news-mcp/datetime";
+import { replyToScheduleMessage } from "../schedules/commands";
 import type { PromptBundle } from "../../shared/contracts/prompt";
 
 const MAX_SKILL_CATALOG_BYTES = MAX_AUTHORIZED_SKILL_CATALOG_BYTES;
@@ -337,6 +338,31 @@ export async function dispatchTelegramInput(
       ok: true as const,
       data: { acknowledged: true },
     };
+  }
+  if (input.kind === "text" && input.chatScope !== "group") {
+    const scheduleReply = await replyToScheduleMessage({
+      text: input.text,
+      userId: input.userId,
+      chatId: input.chatId,
+      username: input.username,
+      languageCode: input.languageCode,
+      updateId: input.updateId,
+      messageId: input.messageId,
+    });
+    if (scheduleReply !== undefined) {
+      await client.send(
+        input.chatId,
+        scheduleReply,
+        undefined,
+        input.replyToMessageId,
+      );
+      return {
+        contractVersion: 1 as const,
+        correlationId,
+        ok: true as const,
+        data: { acknowledged: true },
+      };
+    }
   }
   if (input.kind === "callback") {
     // Capabilities are consumed only by the trusted confirmation coordinator.

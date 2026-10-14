@@ -10,6 +10,10 @@ startup must not execute DDL.
 roles need DML only. Rollback is by disabling skill reads, not by dropping the
 tables. Published version content cannot be updated; retirement adds a new row.
 
+## Scheduled tasks
+
+`20261014_scheduled_tasks.sql` stores Telegram schedule requests. Apply it before pointing an external crontab at `POST /api/schedules/run`. Application roles need DML only. Rollback is by unsetting `SCHEDULE_API_SECRET` and pausing rows, not by dropping the table. Rows hold the source message, the user prompt, and schedule metadata for the user who created them.
+
 ## Prompt persistence (PH-003)
 
 `20261002_prompt_persistence.sql` is an expand-only migration and is safe to
