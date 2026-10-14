@@ -6,6 +6,7 @@ import {
   civilWeekday,
   currentTimeReply,
   isCurrentTimeRequest,
+  staleCalendarCorrection,
   userSpecifiedDateTimes,
   visibleUserRequest,
 } from "../../../src/shared/calendar-clock";
@@ -33,6 +34,52 @@ describe("calendar clock", () => {
     });
     expect(civilWeekday(2026, 10, 13)).toBe(2);
     expect(civilWeekday(2025, 10, 13)).toBe(1);
+  });
+
+  it("anchors 今日 and 聽日 to the trusted civil date", () => {
+    const wednesday = calendarClock(
+      new Date("2026-10-14T00:40:00.000Z"),
+      "Asia/Hong_Kong",
+    );
+    expect(wednesday).toMatchObject({
+      isoDate: "2026-10-14",
+      hour: 8,
+      minute: 40,
+      weekday: "Wednesday",
+    });
+    const cantonese = "比特幣點睇";
+    expect(
+      answerConflictsWithCalendar(
+        "聽日周三晚 8 點 30 分 CPI",
+        wednesday,
+        cantonese,
+      ),
+    ).toBe(true);
+    expect(
+      answerConflictsWithCalendar(
+        "今日係星期二（10月13日）",
+        wednesday,
+        "今天是星期三，你為什麼說「聽日周三」？",
+      ),
+    ).toBe(true);
+    expect(
+      answerConflictsWithCalendar("聽日周四先至係 CPI", wednesday, cantonese),
+    ).toBe(false);
+    expect(
+      answerConflictsWithCalendar("今晚 8 點半就係 CPI", wednesday, cantonese),
+    ).toBe(false);
+    const rule = calendarYearRule(wednesday, cantonese);
+    expect(rule).toContain("Wednesday 2026-10-14");
+    expect(rule).toContain("Thursday 2026-10-15");
+    expect(rule).toContain("Tuesday 2026-10-13");
+    expect(rule).not.toContain("Compute every weekday");
+    expect(staleCalendarCorrection(wednesday)).toContain(
+      "Wednesday 2026-10-14",
+    );
+    expect(staleCalendarCorrection(wednesday)).toContain("Thursday 2026-10-15");
+    expect(staleCalendarCorrection(wednesday)).not.toContain(
+      "Recompute each weekday",
+    );
   });
 
   it("rejects a prior-year weekday and a prior-year dated speech", () => {
@@ -103,12 +150,8 @@ describe("calendar clock", () => {
     expect(isCurrentTimeRequest("請問現在幾點？")).toBe(true);
     expect(isCurrentTimeRequest("現在幾點的天氣")).toBe(false);
     expect(isCurrentTimeRequest("現在幾點有什麼新聞")).toBe(false);
-    expect(currentTimeReply("現在幾點", evening)).toBe(
-      "現在是香港時間18:48。",
-    );
-    expect(currentTimeReply("而家幾點", evening)).toBe(
-      "而家係香港時間18:48。",
-    );
+    expect(currentTimeReply("現在幾點", evening)).toBe("現在是香港時間18:48。");
+    expect(currentTimeReply("而家幾點", evening)).toBe("而家係香港時間18:48。");
     expect(currentTimeReply("what time is it", evening)).toBe(
       "It is 18:48 Hong Kong time.",
     );

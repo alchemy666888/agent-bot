@@ -127,6 +127,35 @@ export function weekdayName(year: number, month: number, day: number): string {
   return WEEKDAYS[civilWeekday(year, month, day)] ?? "Sunday";
 }
 
+function shiftCivilDate(
+  year: number,
+  month: number,
+  day: number,
+  deltaDays: number,
+): { year: number; month: number; day: number; weekday: string } {
+  const shifted = new Date(Date.UTC(year, month - 1, day + deltaDays));
+  const nextYear = shifted.getUTCFullYear();
+  const nextMonth = shifted.getUTCMonth() + 1;
+  const nextDay = shifted.getUTCDate();
+  return {
+    year: nextYear,
+    month: nextMonth,
+    day: nextDay,
+    weekday: weekdayName(nextYear, nextMonth, nextDay),
+  };
+}
+
+function civilStamp(year: number, month: number, day: number): string {
+  return `${weekdayName(year, month, day)} ${year}-${pad(month)}-${pad(day)}`;
+}
+
+/** Today, tomorrow, and yesterday taken from the trusted civil date. */
+function relativeDayAnchor(clock: CalendarClock): string {
+  const tomorrow = shiftCivilDate(clock.year, clock.month, clock.day, 1);
+  const yesterday = shiftCivilDate(clock.year, clock.month, clock.day, -1);
+  return `Today is ${civilStamp(clock.year, clock.month, clock.day)}. Tomorrow is ${civilStamp(tomorrow.year, tomorrow.month, tomorrow.day)}. Yesterday is ${civilStamp(yesterday.year, yesterday.month, yesterday.day)}. 今晚 and 今朝 stay on today's civil date. Resolve 今日, 今天, 聽日, 明天, 翌日, 尋日, 昨晚, and 今晚 from this table only. When a search result says tomorrow, 聽日, or 明日, rewrite that relative day onto this table unless the article is dated today. Do not copy a previous day's "tomorrow".`;
+}
+
 export function calendarClock(
   now = new Date(),
   timeZone = assistantTimeZone(),
@@ -355,10 +384,11 @@ export function datetimeOperatingRule(
   request = "",
 ): string {
   const specified = applicableSpecifications(clock, request).slice(0, 5);
+  const anchor = relativeDayAnchor(clock);
   if (specified.length) {
-    return `${clockLabel(clock)} The user specified this historical or future date and time: ${specified.map(formatSpecified).join(", ")}. For web search and the answer, use the user-specified date and time instead of the current clock.`;
+    return `${clockLabel(clock)} ${anchor} The user specified this historical or future date and time: ${specified.map(formatSpecified).join(", ")}. For web search and the answer, use the user-specified date and time instead of the current clock.`;
   }
-  return `${clockLabel(clock)} For news, calendars, and upcoming events, search with year ${clock.year}, month ${clock.month}, day ${clock.day}, hour ${clock.hour}, and minute ${clock.minute}. Mention only events that occur on the requested dates in ${clock.year}. A prior-year item that shares the month and day is a different event. Do not list a central-bank speech, data release, holiday, or earnings date from another year unless a ${clock.year} source schedules it again. Compute every weekday from ${clock.year}.`;
+  return `${clockLabel(clock)} ${anchor} For news, calendars, and upcoming events, search with year ${clock.year}, month ${clock.month}, day ${clock.day}, hour ${clock.hour}, and minute ${clock.minute}. Mention only events that occur on the requested dates in ${clock.year}. A prior-year item that shares the month and day is a different event. Do not list a central-bank speech, data release, holiday, or earnings date from another year unless a ${clock.year} source schedules it again.`;
 }
 
 export function calendarYearRule(clock: CalendarClock, request = ""): string {
@@ -366,7 +396,7 @@ export function calendarYearRule(clock: CalendarClock, request = ""): string {
 }
 
 export function staleCalendarCorrection(clock: CalendarClock): string {
-  return `The previous draft lists news or events that do not belong to ${clock.year}. The trusted clock is ${clock.weekday}, ${clock.isoDate} ${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")} (${clock.timeZone}). Search again for the user's requested period in ${clock.year} only. Drop every event supported only by an earlier year, including a central-bank speech, data release, holiday, or earnings date that merely shares the month and day. Recompute each weekday for ${clock.year}. If an event is not dated in ${clock.year}, omit it.`;
+  return `The previous draft lists news or events that do not belong to ${clock.year}, or it places 今日, 今天, 聽日, 明天, or 今晚 on the wrong civil day. ${relativeDayAnchor(clock)} The trusted clock is ${clock.weekday}, ${clock.isoDate} ${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")} (${clock.timeZone}). Search again for the user's requested period in ${clock.year} only. Drop every event supported only by an earlier year, including a central-bank speech, data release, holiday, or earnings date that merely shares the month and day. Use the today and tomorrow dates above; do not recompute weekdays. If an event is not dated in ${clock.year}, omit it.`;
 }
 
 /** Decode a Telegram input envelope so relative dates are visible to checks. */
@@ -459,9 +489,70 @@ export function answerConflictsWithCalendar(
   clock: CalendarClock,
   request: string,
 ): boolean {
+  if (hasRelativeDayConflict(answer, clock)) return true;
   if (!requestNeedsCurrentCalendar(request, clock.year)) return false;
   if (hasForeignFullDate(answer, clock.year)) return true;
   return hasWeekdayMismatch(answer, clock.year);
+}
+
+const RELATIVE_MARKER =
+  /聽日|明天|翌日|明日|尋日|琴日|昨天|昨日|昨晚|今晚|今朝|今日|今天|tomorrow|tonight|yesterday|today/giu;
+const CJK_WEEKDAY_HEAD =
+  /^(?:[係系是為为就會会的之晚朝早\s]){0,8}(?:週|周|星期|禮拜|礼拜)([一二三四五六日天])/u;
+const EN_WEEKDAY_HEAD =
+  /^(?:(?:is|on)\s+){0,2}(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)\b/iu;
+const CJK_MONTH_DAY = /(\d{1,2})\s*月\s*(\d{1,2})\s*日?/u;
+const SLASH_MONTH_DAY = /(\d{1,2})\s*[/／]\s*(\d{1,2})\b/u;
+
+function relativeOffset(marker: string): -1 | 0 | 1 {
+  if (/^(?:聽日|明天|翌日|明日|tomorrow)$/iu.test(marker)) return 1;
+  if (/^(?:尋日|琴日|昨天|昨日|昨晚|yesterday)$/iu.test(marker)) return -1;
+  return 0;
+}
+
+function relativeClause(text: string, start: number): string {
+  const slice = text.slice(start, start + 36).replace(/^[，,\s]+/u, "");
+  const stop = slice.search(/[，,。！？!?\n]/u);
+  return stop === -1 ? slice : slice.slice(0, stop);
+}
+
+/** 今日 / 聽日 / 今晚 claims that name a different civil day than the clock. */
+function hasRelativeDayConflict(answer: string, clock: CalendarClock): boolean {
+  const marker = new RegExp(RELATIVE_MARKER.source, RELATIVE_MARKER.flags);
+  for (const match of answer.matchAll(marker)) {
+    const clause = relativeClause(answer, (match.index ?? 0) + match[0].length);
+    const cjkWeekday = clause.match(CJK_WEEKDAY_HEAD);
+    const englishWeekday = clause.match(EN_WEEKDAY_HEAD);
+    const weekday = cjkWeekday
+      ? CJK_WEEKDAY[cjkWeekday[1]!]
+      : englishWeekday
+        ? ENGLISH_WEEKDAY[englishWeekday[1]!.toLowerCase()]
+        : undefined;
+    const dated = clause.match(CJK_MONTH_DAY) ?? clause.match(SLASH_MONTH_DAY);
+    const month = dated ? Number(dated[1]) : undefined;
+    const day = dated ? Number(dated[2]) : undefined;
+    if (weekday === undefined && (month === undefined || day === undefined))
+      continue;
+    const expected = shiftCivilDate(
+      clock.year,
+      clock.month,
+      clock.day,
+      relativeOffset(match[0]),
+    );
+    if (
+      weekday !== undefined &&
+      weekday !== civilWeekday(expected.year, expected.month, expected.day)
+    )
+      return true;
+    if (
+      month !== undefined &&
+      day !== undefined &&
+      validDate(expected.year, month, day) &&
+      (month !== expected.month || day !== expected.day)
+    )
+      return true;
+  }
+  return false;
 }
 
 function boundedField(

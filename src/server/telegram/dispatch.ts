@@ -48,6 +48,7 @@ import {
 import type { DegradationNotice } from "../../shared/contracts/worker";
 import {
   assistantTimeZone,
+  calendarClock,
   trustedCalendarContext,
 } from "../../shared/calendar-clock";
 import { fetchNewsMcpClock } from "../news-mcp/datetime";
@@ -547,7 +548,8 @@ async function withTrustedCalendar(
   bundle: PromptBundle,
   correlationId: string,
 ): Promise<PromptBundle> {
-  const sampled = await fetchNewsMcpClock({ timeZone: assistantTimeZone() });
+  const timeZone = assistantTimeZone();
+  const sampled = await fetchNewsMcpClock({ timeZone });
   if (!sampled.ok)
     logStructured({
       correlationId,
@@ -557,9 +559,9 @@ async function withTrustedCalendar(
       result: "degraded",
       code: sampled.code,
     });
-  const injected = sampled.ok
-    ? trustedCalendarContext(sampled.clock)
-    : [{ key: "clock_source", value: "unavailable" }];
+  const injected = trustedCalendarContext(
+    sampled.ok ? sampled.clock : calendarClock(new Date(), timeZone),
+  );
   const keys = new Set(injected.map((item) => item.key));
   return {
     ...bundle,

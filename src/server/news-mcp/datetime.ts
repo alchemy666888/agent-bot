@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 import {
   assistantTimeZone,
+  weekdayName,
   type CalendarClock,
 } from "../../shared/calendar-clock";
 
@@ -158,11 +159,9 @@ export async function fetchNewsMcpClock(options?: {
     const parsed = toolResultSchema.safeParse(payload);
     if (!parsed.success || parsed.data.isError)
       return { ok: false, code: "NEWS_MCP_UNAVAILABLE" };
-    const zone =
-      parsed.data.structuredContent.zones.find(
-        (item) =>
-          item.timezone === timeZone || item.requested_timezone === timeZone,
-      ) ?? parsed.data.structuredContent.zones[0];
+    const zone = parsed.data.structuredContent.zones.find(
+      (item) => item.timezone === timeZone,
+    );
     if (!zone) return { ok: false, code: "NEWS_MCP_UNAVAILABLE" };
     return {
       ok: true,
@@ -173,8 +172,8 @@ export async function fetchNewsMcpClock(options?: {
         day: zone.day,
         hour: zone.hour,
         minute: zone.minute,
-        weekday: zone.weekday,
-        timeZone: zone.timezone,
+        weekday: weekdayName(zone.year, zone.month, zone.day),
+        timeZone,
         source: "news_mcp",
       },
     };
