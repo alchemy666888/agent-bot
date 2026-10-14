@@ -184,26 +184,33 @@ describe("Telegram dispatch skill catalog", () => {
     }
   });
 
-  it("does not invent the current clock when news-mcp is unavailable", async () => {
+  it("uses the Hong Kong clock when news-mcp is unavailable", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-13T20:37:00.000Z"));
     fetchNewsMcpClock.mockResolvedValue({
       ok: false,
       code: "NEWS_MCP_UNAVAILABLE",
     });
-    await dispatchTelegramInput(input);
-    const request = vi.mocked(invokeWorker).mock.calls[0]![2] as {
-      promptBundle: {
-        trustedRuntimeContext: Array<{ key: string; value: string }>;
+    try {
+      await dispatchTelegramInput(input);
+      const request = vi.mocked(invokeWorker).mock.calls[0]![2] as {
+        promptBundle: {
+          trustedRuntimeContext: Array<{ key: string; value: string }>;
+        };
       };
-    };
-    expect(request.promptBundle.trustedRuntimeContext).toContainEqual({
-      key: "clock_source",
-      value: "unavailable",
-    });
-    expect(
-      request.promptBundle.trustedRuntimeContext.some(
-        (item) => item.key === "current_date",
-      ),
-    ).toBe(false);
+      expect(request.promptBundle.trustedRuntimeContext).toEqual(
+        expect.arrayContaining([
+          { key: "current_date", value: "2026-10-14" },
+          { key: "current_hour", value: "4" },
+          { key: "current_minute", value: "37" },
+          { key: "weekday", value: "Wednesday" },
+          { key: "timezone", value: "Asia/Hong_Kong" },
+          { key: "clock_source", value: "local_fallback" },
+        ]),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("continues to the worker when PostgreSQL is unavailable", async () => {
@@ -312,6 +319,7 @@ describe("Telegram dispatch skill catalog", () => {
     const certificate =
       "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----";
     const prior = { ...process.env };
+    delete process.env.ASSISTANT_TIMEZONE;
     Object.assign(process.env, {
       DATABASE_URL: "postgres://user:pass@db.test/app?sslmode=require",
       AIVEN_PG_CA: certificate,
@@ -347,6 +355,7 @@ describe("Telegram dispatch skill catalog", () => {
       DEEPSEEK_ROUTING_MODE: "shadow",
       DEEPSEEK_ROUTER_TIMEOUT_MS: "3000",
       ASSISTANT_SYSTEM_PROMPT: "line one line two",
+      ASSISTANT_TIMEZONE: "Asia/Hong_Kong",
       SKILLS_ENABLED: "false",
       SKILL_MAX_TOOL_STEPS: "5",
     });

@@ -114,6 +114,37 @@ describe("news-mcp clock", () => {
     });
   });
 
+  it("does not adopt a zone other than the requested Hong Kong clock", async () => {
+    const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string };
+      if (body.method === "initialize")
+        return sse({ protocolVersion: "2025-11-25" });
+      if (body.method === "notifications/initialized")
+        return new Response(null, { status: 202 });
+      return sse({
+        structuredContent: {
+          zones: [
+            {
+              ...zone,
+              timezone: "UTC",
+              requested_timezone: "Asia/Hong_Kong",
+              date: "2026-10-13",
+              day: 13,
+              weekday: "Tuesday",
+            },
+          ],
+        },
+      });
+    });
+    await expect(
+      fetchNewsMcpClock({
+        env: { NEWS_MCP_API_KEY: apiKey },
+        fetch: fetcher as typeof fetch,
+        timeZone: "Asia/Hong_Kong",
+      }),
+    ).resolves.toEqual({ ok: false, code: "NEWS_MCP_UNAVAILABLE" });
+  });
+
   it("reports an unavailable clock without throwing", async () => {
     await expect(
       fetchNewsMcpClock({ env: {}, fetch: vi.fn() as typeof fetch }),
