@@ -10,7 +10,7 @@ import {
   readPromptConfig,
 } from "../config";
 import { ensureSandbox } from "../sandbox/controller";
-import { installWorker, invokeWorker } from "../sandbox/transport";
+import { executeWorker } from "../sandbox/execute";
 import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
 import { TELEGRAM_ACCESS_DENIED_TEXT, telegramUpdateAllowed } from "./access";
@@ -419,26 +419,19 @@ export async function dispatchTelegramInput(
   if (input.kind !== "text") {
     // Preserve the legacy worker behavior for non-model updates while keeping
     // prompt resolution and identity material out of that path.
-    const sandbox = await ensureSandbox(
-      readSandboxConfig(),
-      undefined,
+    return executeWorker({
       correlationId,
-    );
-    const workerPath = await installWorker(
-      sandbox,
-      await readFile(workerSourcePath),
-    );
-    return invokeWorker(
-      sandbox,
-      workerPath,
-      {
+      source: await readFile(workerSourcePath),
+      request: {
         contractVersion: 1,
         correlationId,
         operation: "telegramTurn",
         payload: { input, skillCatalog: EMPTY_SKILL_CATALOG },
       },
-      workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
-    );
+      env: workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
+      openSandbox: () =>
+        ensureSandbox(readSandboxConfig(), undefined, correlationId),
+    });
   }
 
   // Telegram conversations only consume published PostgreSQL skills.
@@ -552,19 +545,10 @@ export async function dispatchTelegramInput(
   }
   if (promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES)
     throw new Error("WORKER_CONTEXT_TOO_LARGE");
-  const sandbox = await ensureSandbox(
-    readSandboxConfig(),
-    undefined,
+  return executeWorker({
     correlationId,
-  );
-  const workerPath = await installWorker(
-    sandbox,
-    await readFile(workerSourcePath),
-  );
-  return invokeWorker(
-    sandbox,
-    workerPath,
-    {
+    source: await readFile(workerSourcePath),
+    request: {
       contractVersion: 2,
       correlationId,
       operation: "telegramTurn",
@@ -574,8 +558,10 @@ export async function dispatchTelegramInput(
       degradationNotices: [...new Set(degradationNotices)],
       rawTelegramInput: input.text,
     },
-    workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
-  );
+    env: workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
+    openSandbox: () =>
+      ensureSandbox(readSandboxConfig(), undefined, correlationId),
+  });
 }
 
 async function withTrustedCalendar(
