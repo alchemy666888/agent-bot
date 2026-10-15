@@ -419,7 +419,11 @@ export async function dispatchTelegramInput(
   if (input.kind !== "text") {
     // Preserve the legacy worker behavior for non-model updates while keeping
     // prompt resolution and identity material out of that path.
-    const sandbox = await ensureSandbox(readSandboxConfig());
+    const sandbox = await ensureSandbox(
+      readSandboxConfig(),
+      undefined,
+      correlationId,
+    );
     const workerPath = await installWorker(
       sandbox,
       await readFile(workerSourcePath),
@@ -548,7 +552,11 @@ export async function dispatchTelegramInput(
   }
   if (promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES)
     throw new Error("WORKER_CONTEXT_TOO_LARGE");
-  const sandbox = await ensureSandbox(readSandboxConfig());
+  const sandbox = await ensureSandbox(
+    readSandboxConfig(),
+    undefined,
+    correlationId,
+  );
   const workerPath = await installWorker(
     sandbox,
     await readFile(workerSourcePath),

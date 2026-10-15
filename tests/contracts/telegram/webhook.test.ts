@@ -87,6 +87,102 @@ describe("Telegram webhook", () => {
     expect(await response.json()).toEqual({ ok: false });
   });
 
+  it("tells a private chat when dispatch throws and does not ask Telegram to retry", async () => {
+    dispatchTelegramInput.mockRejectedValueOnce(
+      new Error("SANDBOX_UNAVAILABLE"),
+    );
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const response = await POST(
+        request({
+          update_id: 2,
+          message: {
+            message_id: 3,
+            chat: { id: 4, type: "private" },
+            from: { id: 5, username: "duck" },
+            text: "hello",
+          },
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body).toMatchObject({
+        chat_id: "4",
+        text: "這次回覆沒有完成，請再傳一次。",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a transient worker failure retryable without a notice", async () => {
+    dispatchTelegramInput.mockResolvedValueOnce({
+      contractVersion: 1,
+      correlationId: "0199-ignored-in-mock",
+      ok: false,
+      error: {
+        code: "DEEPSEEK_REQUEST_FAILED",
+        classification: "transient",
+        message: "Temporary operation failure",
+      },
+    });
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const response = await POST(
+        request({
+          update_id: 2,
+          message: {
+            message_id: 3,
+            chat: { id: 4, type: "private" },
+            from: { id: 5 },
+            text: "hello",
+          },
+        }),
+      );
+      expect(response.status).toBe(503);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("tells a private chat when the worker reports a permanent failure", async () => {
+    dispatchTelegramInput.mockResolvedValueOnce({
+      contractVersion: 1,
+      correlationId: "0199-ignored-in-mock",
+      ok: false,
+      error: {
+        code: "WORKER_CONFIGURATION_INVALID",
+        classification: "permanent",
+        message: "Operation failed",
+      },
+    });
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const response = await POST(
+        request({
+          update_id: 2,
+          message: {
+            message_id: 3,
+            chat: { id: 4, type: "private" },
+            from: { id: 5 },
+            text: "hello",
+          },
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("logs configuration field names when dispatch fails before any request", async () => {
     let failure: unknown;
     try {

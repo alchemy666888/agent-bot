@@ -139,6 +139,40 @@ describe("sandbox lifecycle", () => {
     expect(idle.stop).not.toHaveBeenCalled();
   });
 
+  it("keeps the sandbox when region reconciliation is rejected", async () => {
+    const stale = {
+      ...handle(),
+      region: "iad1",
+      update: vi.fn(async () => {
+        throw Object.assign(new Error("Status code 400 is not ok"), {
+          response: { status: 400 },
+          json: { error: { code: "invalid_region" } },
+        });
+      }),
+    };
+    const sdk: SandboxSdk = {
+      getOrCreateSandbox: vi.fn(async () => stale),
+    };
+    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    try {
+      await expect(ensureSandbox(config, sdk, "correlation-id")).resolves.toBe(
+        stale,
+      );
+      expect(stale.stop).not.toHaveBeenCalled();
+      const event = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+      expect(event).toMatchObject({
+        correlationId: "correlation-id",
+        operation: "sandbox.reconcile",
+        result: "degraded",
+        code: "SANDBOX_UNAVAILABLE",
+        metadata: { status: 400, causeCode: "invalid_region" },
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("records the sandbox API status and provider code", async () => {
     const sdk: SandboxSdk = {
       getOrCreateSandbox: vi.fn(async () => {
