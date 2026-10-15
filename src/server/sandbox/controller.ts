@@ -1,5 +1,7 @@
 import "server-only";
 
+import { uuidV7 } from "../../shared/ids";
+import { logStructured, safeError } from "../../shared/logger";
 import type { SandboxConfig } from "../config";
 import { createLocalSandboxSdk } from "./local-adapter";
 import {
@@ -68,6 +70,20 @@ async function sandboxCall<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
+function degradeReconcile(error: unknown, correlationId?: string) {
+  const failure = translateSandboxError(error);
+  const recorded = safeError(failure, "SANDBOX_UNAVAILABLE", "sandbox");
+  logStructured({
+    correlationId: correlationId ?? uuidV7(),
+    component: "controller",
+    operation: "sandbox.reconcile",
+    stage: "sandbox",
+    result: "degraded",
+    code: "SANDBOX_UNAVAILABLE",
+    ...(recorded.diagnostic ? { metadata: recorded.diagnostic } : {}),
+  });
+}
+
 function readRoutes(sandbox: SandboxHandle): unknown {
   try {
     return (sandbox as { routes?: unknown }).routes;
@@ -88,10 +104,12 @@ function readStatus(sandbox: SandboxHandle): string | undefined {
 
 export async function ensureSandbox(
   config: SandboxConfig,
-  sdk: SandboxSdk = selectSandboxSdk(),
+  sdk?: SandboxSdk,
+  correlationId?: string,
 ): Promise<SandboxHandle> {
+  const resolved = sdk ?? selectSandboxSdk();
   const sandbox = await sandboxCall(() =>
-    sdk.getOrCreateSandbox({
+    resolved.getOrCreateSandbox({
       name: config.SANDBOX_NAME,
       region: "sin1",
       persistent: true,
@@ -110,16 +128,21 @@ export async function ensureSandbox(
   const regionMismatch = sandbox.region !== config.region;
   const hasPublicRoutes = Array.isArray(routes) && routes.length > 0;
   if (regionMismatch || hasPublicRoutes) {
-    await sandboxCall(() =>
-      sandbox.update({
+    try {
+      await sandbox.update({
         persistent: true,
         region: config.region,
         failoverRegions: [],
         ports: [],
         timeout: HOBBY_SANDBOX_TIMEOUT_MS,
         keepLastSnapshots: { count: 1 },
-      }),
-    );
+      });
+    } catch (error) {
+      // A rejected region or port change must not discard a sandbox the next
+      // command can still resume.
+      degradeReconcile(error, correlationId);
+      return sandbox;
+    }
     // Region changes apply to the next session. Stop the old session so the
     // first worker command resumes it in sin1 rather than continuing in iad1.
     // A missing session is already stopped; the next command resumes it.
@@ -128,7 +151,7 @@ export async function ensureSandbox(
       try {
         await sandbox.stop();
       } catch (error) {
-        if (!missingSession(error)) throw translateSandboxError(error);
+        if (!missingSession(error)) degradeReconcile(error, correlationId);
       }
     }
   }
