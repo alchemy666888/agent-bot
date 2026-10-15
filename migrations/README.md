@@ -10,6 +10,15 @@ startup must not execute DDL.
 roles need DML only. Rollback is by disabling skill reads, not by dropping the
 tables. Published version content cannot be updated; retirement adds a new row.
 
+`20261015_restore_skill_definitions.sql` recreates those three objects only when
+they are missing. Apply this file on a database whose `skills` relation is gone
+(`42P01` from the catalog query). Do not run
+`20261001_drop_legacy_skill_definition_tables.sql` again: it drops the live
+table names after the attestation row exists, and a later ledger will not
+reapply `20261009`. This restore does not delete rows. If the restored tables
+are empty, load definitions with `pnpm skills:import-from-github`. Application
+startup still must not execute DDL.
+
 ## Scheduled tasks
 
 `20261014_scheduled_tasks.sql` stores Telegram schedule requests. Apply it before pointing an external crontab at `POST /api/schedules/run`. Application roles need DML only. Rollback is by unsetting `SCHEDULE_API_SECRET` and pausing rows, not by dropping the table. Rows hold the source message, the user prompt, and schedule metadata for the user who created them.

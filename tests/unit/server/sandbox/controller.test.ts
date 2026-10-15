@@ -86,4 +86,73 @@ describe("sandbox lifecycle", () => {
     );
     expect(exposed.stop).not.toHaveBeenCalled();
   });
+
+  it("continues when the routes getter has no active session", async () => {
+    const idle = handle();
+    Object.defineProperty(idle, "routes", {
+      get() {
+        throw new Error(
+          "No active session. Run a command or call resume first.",
+        );
+      },
+    });
+    const sdk: SandboxSdk = {
+      getOrCreateSandbox: vi.fn(async () => idle),
+    };
+
+    await expect(ensureSandbox(config, sdk)).resolves.toBe(idle);
+    expect(idle.update).not.toHaveBeenCalled();
+    expect(idle.stop).not.toHaveBeenCalled();
+  });
+
+  it("reconciles region without stopping a sessionless sandbox", async () => {
+    const idle = {
+      ...handle(),
+      region: "iad1",
+    };
+    const noSession = new Error(
+      "No active session. Run a command or call resume first.",
+    );
+    Object.defineProperty(idle, "routes", {
+      get() {
+        throw noSession;
+      },
+    });
+    Object.defineProperty(idle, "status", {
+      get() {
+        throw noSession;
+      },
+    });
+    const sdk: SandboxSdk = {
+      getOrCreateSandbox: vi.fn(async () => idle),
+    };
+
+    await expect(ensureSandbox(config, sdk)).resolves.toBe(idle);
+    expect(idle.update).toHaveBeenCalledWith({
+      persistent: true,
+      region: "sin1",
+      failoverRegions: [],
+      ports: [],
+      timeout: 45 * 60 * 1000,
+      keepLastSnapshots: { count: 1 },
+    });
+    expect(idle.stop).not.toHaveBeenCalled();
+  });
+
+  it("records the sandbox API status and provider code", async () => {
+    const sdk: SandboxSdk = {
+      getOrCreateSandbox: vi.fn(async () => {
+        throw Object.assign(new Error("Status code 400 is not ok"), {
+          response: { status: 400 },
+          json: { error: { code: "snapshot_not_found" } },
+        });
+      }),
+    };
+
+    await expect(ensureSandbox(config, sdk)).rejects.toMatchObject({
+      message: "SANDBOX_UNAVAILABLE",
+      code: "snapshot_not_found",
+      status: 400,
+    });
+  });
 });
