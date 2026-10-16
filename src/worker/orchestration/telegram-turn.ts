@@ -99,6 +99,13 @@ export class TelegramTurn {
         updateId: string;
         userId: string;
       }): Promise<unknown>;
+      noteProgress?(progress: {
+        stage: string;
+        attempt?: number;
+        iteration?: number;
+        executionMode?: string;
+        tool?: string;
+      }): Promise<void> | void;
     },
     private accounting?: ModelAccounting,
     private skills?: SkillResolver,
@@ -147,6 +154,19 @@ export class TelegramTurn {
   }
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
+  }
+  private async note(progress: {
+    stage: string;
+    attempt?: number;
+    iteration?: number;
+    executionMode?: string;
+    tool?: string;
+  }): Promise<void> {
+    try {
+      await this.observability?.noteProgress?.(progress);
+    } catch {
+      return;
+    }
   }
   private async validateFinalAnswer(
     answer: string | undefined,
@@ -399,6 +419,7 @@ export class TelegramTurn {
             try {
               if (deterministic) answer = deterministic;
               else {
+                await this.note({ stage: "routing", attempt: requestAttempt });
                 if (!command && this.router && this.routing.mode === "shadow") {
                   const shadowContext = await this.conversations.context(
                     scopeKey,
@@ -676,6 +697,11 @@ export class TelegramTurn {
                   answer =
                     "I can't perform that action because the selected skill prohibits it.";
                 } else {
+                  await this.note({
+                    stage: "answer",
+                    attempt: requestAttempt,
+                    executionMode,
+                  });
                   const started = Date.now();
                   const context =
                     preparedContext ??
@@ -862,6 +888,7 @@ export class TelegramTurn {
         );
         const finalAnswer = finalValidation.answer;
         if (!finalAnswer) throw new Error("ASSISTANT_RESPONSE_MISSING");
+        await this.note({ stage: "delivery" });
         try {
           await retryTransient(() => deliver(finalAnswer), isTransient);
         } catch (error) {

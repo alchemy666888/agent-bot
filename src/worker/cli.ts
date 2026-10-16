@@ -20,6 +20,7 @@ import { openPersistenceStore } from "../shared/postgres/controller-log";
 import { safeError } from "../shared/logger";
 import { bindPersistenceSession } from "./persistence/database-sync";
 import { writeWorkerLog } from "./observability/worker-log";
+import { writeWorkerProgress } from "./observability/progress";
 import { createCapabilityRegistry } from "./capabilities";
 import { SkillResolver } from "./skills/resolver";
 import { skillCatalogSnapshotSchema } from "./skills/schemas";
@@ -53,6 +54,13 @@ async function telegramTurn(
   promptBundle?: PromptBundle,
   rawTelegramInput?: string,
   degradationNotices: readonly DegradationNotice[] = [],
+  noteProgress?: (progress: {
+    stage: string;
+    attempt?: number;
+    iteration?: number;
+    executionMode?: string;
+    tool?: string;
+  }) => Promise<void>,
 ) {
   const input = telegramInputSchema.parse(payload.input);
   // Ignored updates have no model work. Building a turn here required the
@@ -110,12 +118,14 @@ async function telegramTurn(
       },
       fetch,
       capabilities,
+      (progress) => noteProgress?.(progress),
     ),
     new TelegramClient(requiredEnv("TELEGRAM_BOT_TOKEN")),
     bundle,
     {
       correlationId,
       recordFailure: (failure) => errors.record({ correlationId, ...failure }),
+      noteProgress,
     },
     {
       inputPricePerMillion: envValue("DEEPSEEK_INPUT_PRICE_PER_MILLION"),
@@ -258,14 +268,29 @@ async function main() {
   const request = workerRequestSchema.parse(rawRequest);
   if (request.operation !== operation) throw new Error("OPERATION_MISMATCH");
   const started = Date.now();
+  const noteProgress = async (progress: {
+    stage: string;
+    attempt?: number;
+    iteration?: number;
+    executionMode?: string;
+    tool?: string;
+  }) => {
+    await writeWorkerProgress({
+      ...progress,
+      elapsedMs: Date.now() - started,
+    }).catch(() => undefined);
+  };
   let data: unknown;
   let failure: unknown;
   let failureStage = "bootstrap";
   try {
+    await noteProgress({ stage: failureStage });
     const store = openPersistenceStore();
     failureStage = "persistence-sync";
+    await noteProgress({ stage: failureStage });
     await bindPersistenceSession(ROOT, store, async () => {
       failureStage = "operation";
+      await noteProgress({ stage: failureStage });
       try {
         data =
           request.operation === "telegramTurn"
@@ -278,9 +303,8 @@ async function main() {
                 request.contractVersion === 2
                   ? request.rawTelegramInput
                   : undefined,
-                request.contractVersion === 2
-                  ? request.degradationNotices
-                  : undefined,
+                request.contractVersion === 2 ? request.degradationNotices : [],
+                noteProgress,
               )
             : request.operation === "export"
               ? await createExport()

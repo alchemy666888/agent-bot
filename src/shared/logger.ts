@@ -1,5 +1,6 @@
 import { ZodError } from "zod";
 import { redact, redactText } from "./redaction";
+import type { FailureContext } from "./worker-progress";
 
 export type LogResult = "success" | "failure" | "retry" | "degraded";
 export interface LogRecord {
@@ -138,6 +139,7 @@ export function safeError(
       "LOCK_TIMEOUT",
       "TELEGRAM_DELIVERY_FAILED",
       "DEEPSEEK_REQUEST_FAILED",
+      "WORKER_COMMAND_TIMEOUT",
     ].includes(code);
   const detail = errorDetail(error);
   const trace = errorTrace(error);
@@ -255,6 +257,7 @@ export function formatFailureDebug(input: {
   source: string;
   updateId?: string;
   inputKind?: string;
+  context?: FailureContext;
   failure: {
     code: string;
     classification: string;
@@ -283,6 +286,30 @@ export function formatFailureDebug(input: {
     `code: ${input.failure.code}`,
     `classification: ${input.failure.classification}`,
     `message: ${input.failure.message}`,
+    ...(input.context?.operation
+      ? [`operation: ${input.context.operation}`]
+      : []),
+    ...(input.context?.timeoutLimitMs === undefined
+      ? []
+      : [`timeoutLimitMs: ${input.context.timeoutLimitMs}`]),
+    ...(input.context?.progress
+      ? [
+          `workerStage: ${input.context.progress.stage}`,
+          `workerElapsedMs: ${input.context.progress.elapsedMs}`,
+          ...(input.context.progress.attempt === undefined
+            ? []
+            : [`attempt: ${input.context.progress.attempt}`]),
+          ...(input.context.progress.iteration === undefined
+            ? []
+            : [`iteration: ${input.context.progress.iteration}`]),
+          ...(input.context.progress.executionMode
+            ? [`executionMode: ${input.context.progress.executionMode}`]
+            : []),
+          ...(input.context.progress.tool
+            ? [`tool: ${input.context.progress.tool}`]
+            : []),
+        ]
+      : []),
     ...(diagnostic?.stage ? [`stage: ${diagnostic.stage}`] : []),
     ...(diagnostic?.kind ? [`kind: ${diagnostic.kind}`] : []),
     ...(diagnostic?.causeCode ? [`causeCode: ${diagnostic.causeCode}`] : []),

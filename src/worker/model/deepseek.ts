@@ -113,7 +113,25 @@ export class DeepSeekProvider implements ModelProvider {
     },
     private request: typeof fetch = fetch,
     private capabilities = new CapabilityRegistry(),
+    private note?: (progress: {
+      stage: "model" | "tool" | "recovery";
+      iteration: number;
+      executionMode: string;
+      tool?: string;
+    }) => Promise<void> | void,
   ) {}
+  private async report(progress: {
+    stage: "model" | "tool" | "recovery";
+    iteration: number;
+    executionMode: string;
+    tool?: string;
+  }): Promise<void> {
+    try {
+      await this.note?.(progress);
+    } catch {
+      return;
+    }
+  }
   async generate(input: ModelRequest): Promise<ModelResponse> {
     const audit: CapabilityAuditRecord[] = [];
     // New callers provide an explicit trusted channel. The role-based branch
@@ -206,6 +224,16 @@ export class DeepSeekProvider implements ModelProvider {
     const toolLimit = this.config.maxToolCalls ?? 4;
     for (let iteration = 0; iteration <= toolLimit; iteration++) {
       const started = Date.now();
+      const forcedSearch =
+        requireFreshSearch ||
+        (input.executionMode === "forced_web_search" && iteration === 0);
+      if (this.note)
+        await this.report({
+          stage: "model",
+          iteration,
+          executionMode: input.executionMode,
+          ...(forcedSearch ? { tool: "web_search" } : {}),
+        });
       const response = await this.request(`${this.config.baseUrl}/responses`, {
         method: "POST",
         headers: {
@@ -219,12 +247,7 @@ export class DeepSeekProvider implements ModelProvider {
           ...(tools.length
             ? {
                 tools,
-                tool_choice:
-                  requireFreshSearch ||
-                  (input.executionMode === "forced_web_search" &&
-                    iteration === 0)
-                    ? { type: "web_search" }
-                    : "auto",
+                tool_choice: forcedSearch ? { type: "web_search" } : "auto",
               }
             : {}),
           ...(instructions ? { instructions } : {}),
@@ -380,6 +403,15 @@ export class DeepSeekProvider implements ModelProvider {
         }
         let result: unknown;
         try {
+          if (this.note)
+            await this.report({
+              stage: "tool",
+              iteration,
+              executionMode: input.executionMode,
+              ...(/^[a-z][a-z0-9_-]{0,63}$/.test(call.data.name)
+                ? { tool: call.data.name }
+                : {}),
+            });
           result = await this.capabilities.invoke(
             call.data.name,
             args,
@@ -426,6 +458,12 @@ export class DeepSeekProvider implements ModelProvider {
     // Recovery is the one deliberate exception to generate's always-available
     // native search tool. It is a bounded, tool-free safety escape hatch after
     // malformed protocol, denied calls, failed search, or exhausted tool turns.
+    if (this.note)
+      await this.report({
+        stage: "recovery",
+        iteration: 0,
+        executionMode: input.executionMode,
+      });
     const response = await this.request(`${this.config.baseUrl}/responses`, {
       method: "POST",
       headers: {
