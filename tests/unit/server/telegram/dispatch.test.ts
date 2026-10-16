@@ -5,6 +5,7 @@ vi.mock("@vercel/connect", () => ({
 }));
 vi.mock("../../../../src/server/sandbox/controller", () => ({
   ensureSandbox: vi.fn(async () => ({})),
+  resetSandbox: vi.fn(async () => ({})),
 }));
 vi.mock("../../../../src/server/sandbox/transport", () => ({
   installWorker: vi.fn(async () => "worker.mjs"),

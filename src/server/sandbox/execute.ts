@@ -6,6 +6,7 @@ import { uuidV7 } from "../../shared/ids";
 import { logStructured, safeError } from "../../shared/logger";
 import type { WorkerRequest, WorkerResponse } from "../../shared/contracts";
 import { createLocalSandboxSdk } from "./local-adapter";
+import { isStaleSnapshotError } from "./provider-error";
 import type { SandboxHandle } from "./sdk-adapter";
 import { installWorker, invokeWorker } from "./transport";
 
@@ -57,6 +58,7 @@ export async function executeWorker(input: {
   request: WorkerRequest;
   env: Record<string, string>;
   openSandbox: () => Promise<SandboxHandle>;
+  resetSandbox?: () => Promise<SandboxHandle>;
   openLocal?: () => Promise<SandboxHandle>;
 }): Promise<WorkerResponse> {
   const correlationId = input.correlationId ?? uuidV7();
@@ -64,7 +66,10 @@ export async function executeWorker(input: {
     const workerPath = await installWorker(sandbox, input.source);
     return invokeWorker(sandbox, workerPath, input.request, input.env);
   };
-  const locally = async (code: string) => {
+  const locally = async (code: string, error?: unknown) => {
+    const recorded = error
+      ? safeError(error, "SANDBOX_UNAVAILABLE", "sandbox")
+      : undefined;
     logStructured({
       correlationId,
       component: "controller",
@@ -72,17 +77,37 @@ export async function executeWorker(input: {
       stage: "sandbox",
       result: "degraded",
       code,
+      ...(recorded?.diagnostic ? { metadata: recorded.diagnostic } : {}),
     });
     return run(
       await (input.openLocal ?? (() => localWorkerSandbox("local")))(),
     );
+  };
+  const replaced = async (error: unknown) => {
+    if (!input.resetSandbox || !isStaleSnapshotError(error)) return undefined;
+    try {
+      const response = await run(await input.resetSandbox());
+      if (!persistenceBlocked(response)) return response;
+      return locally(response.error?.code ?? "SANDBOX_UNAVAILABLE");
+    } catch (retryError) {
+      if (!sandboxFailureCanRunLocally(retryError)) throw retryError;
+      return locally(
+        safeError(retryError, "SANDBOX_UNAVAILABLE", "sandbox").code,
+        retryError,
+      );
+    }
   };
   try {
     const response = await run(await input.openSandbox());
     if (!persistenceBlocked(response)) return response;
     return locally(response.error?.code ?? "SANDBOX_UNAVAILABLE");
   } catch (error) {
+    const recovered = await replaced(error);
+    if (recovered) return recovered;
     if (!sandboxFailureCanRunLocally(error)) throw error;
-    return locally(safeError(error, "SANDBOX_UNAVAILABLE", "sandbox").code);
+    return locally(
+      safeError(error, "SANDBOX_UNAVAILABLE", "sandbox").code,
+      error,
+    );
   }
 }

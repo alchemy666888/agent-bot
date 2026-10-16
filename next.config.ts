@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Keep @vercel/oidc bundled. Externalizing @vercel/sandbox loads a second
+  // copy that cannot see the request OIDC header.
   serverExternalPackages: ["@vercel/sandbox"],
   outputFileTracingIncludes: {
     "/api/telegram/webhook": ["./dist/worker.mjs"],
