@@ -27,6 +27,7 @@ import type { PromptBundle } from "../shared/contracts/prompt";
 import type { DegradationNotice } from "../shared/contracts/worker";
 import { compiledEmergencyBundle, parsePromptBundle } from "./prompts/bundle";
 import { detectPromptChangeProposal } from "./prompts/proposal";
+import { clampTurnTimeout } from "../shared/worker-budget";
 
 const ROOT = process.env.TELEGRAM_AGENT_ROOT ?? "/tmp/telegram-agent";
 
@@ -136,10 +137,10 @@ async function telegramTurn(
         )
       : undefined,
     capabilities,
-    // One wall-clock budget for routing, web search, and delivery. It stays
-    // under the worker command timeout so a deadline can still send a reply
-    // instead of dying with the process.
-    optionalPositiveInteger("SKILL_EXECUTION_TIMEOUT_MS") ?? 220_000,
+    // One wall-clock budget for routing, web search, and delivery. Values that
+    // would meet the worker command timeout are clamped so a deadline can
+    // still send a reply instead of dying with the process.
+    clampTurnTimeout(optionalPositiveInteger("SKILL_EXECUTION_TIMEOUT_MS")),
     { mode: routingMode, minimumConfidence: routerMinimumConfidence },
     Object.freeze({
       catalogToken: authorizedSkillCatalog.catalogToken,
@@ -348,4 +349,9 @@ async function main() {
   await writeFile(responsePath, JSON.stringify(response), { mode: 0o600 });
 }
 
-void main();
+// A provider socket that ignores abort must not keep the process alive after
+// the response file is written. The sandbox treats a live process as a timeout.
+void main().then(
+  () => process.exit(0),
+  () => process.exit(1),
+);

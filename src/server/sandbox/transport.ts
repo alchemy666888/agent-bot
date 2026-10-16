@@ -8,16 +8,11 @@ import {
   type WorkerResponse,
 } from "../../shared/contracts";
 import type { SandboxHandle } from "./sdk-adapter";
+import { WORKER_COMMAND_TIMEOUT_MS } from "../../shared/worker-budget";
 
 const RUNTIME_ROOT = "/tmp/telegram-agent";
 
-/**
- * Hard stop for one worker process. The webhook function allows 300s.
- * Controller setup uses the first few seconds, and the worker still needs
- * time to send Telegram and write its response after its own deadline.
- * 3 × 60s used to land on this kill, so the process died before any reply.
- */
-export const WORKER_COMMAND_TIMEOUT_MS = 250_000;
+export { WORKER_COMMAND_TIMEOUT_MS };
 
 const commandFailureCodes: ReadonlyArray<[RegExp, string]> = [
   [/WORKER_COMMAND_TIMEOUT/, "WORKER_COMMAND_TIMEOUT"],

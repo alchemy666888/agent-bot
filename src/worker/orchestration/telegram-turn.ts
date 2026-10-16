@@ -44,9 +44,11 @@ import {
   unavailableClockRule,
   type CalendarClock,
 } from "../../shared/calendar-clock";
+import { deadline, settleOnAbort } from "../../shared/abort";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
+const CLEANUP_TIMEOUT_MS = 4_000;
 
 function isTransient(error: unknown): boolean {
   const status = (error as { status?: unknown })?.status;
@@ -148,6 +150,24 @@ export class TelegramTurn {
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
   }
+  /** Persistence must not consume the reserve left for Telegram delivery. */
+  private async noteFailure(input: {
+    stage: string;
+    error: unknown;
+    updateId: string;
+    userId: string;
+  }) {
+    const recording = this.observability?.recordFailure(input);
+    if (!recording) return undefined;
+    const cap = deadline(CLEANUP_TIMEOUT_MS);
+    try {
+      await settleOnAbort(recording, cap.signal);
+    } catch {
+      // A stuck failure record must not block the reply.
+    } finally {
+      cap.cancel();
+    }
+  }
   private async validateFinalAnswer(
     answer: string | undefined,
     originalRequest: string,
@@ -168,26 +188,29 @@ export class TelegramTurn {
           message.content.trim().length > 0 &&
           !containsInternalProtocol(message.content),
       );
-      const recovered = await this.model.generate({
-        executionMode: "direct",
-        ...(typeof turn === "string"
-          ? {
-              messages: [
-                { role: "system" as const, content: turn },
-                ...safeHistory,
-                { role: "user" as const, content: originalRequest },
-              ],
-            }
-          : {
-              trustedInstructions: [...turn.trustedInstructions],
-              messages: [...safeHistory, turn.currentRequest],
-            }),
-        generalCapabilities: [],
-        ...(includeSkillCatalog && this.authorizedSkillCatalog
-          ? { authorizedSkillCatalog: this.authorizedSkillCatalog }
-          : {}),
+      const recovered = await settleOnAbort(
+        this.model.generate({
+          executionMode: "direct",
+          ...(typeof turn === "string"
+            ? {
+                messages: [
+                  { role: "system" as const, content: turn },
+                  ...safeHistory,
+                  { role: "user" as const, content: originalRequest },
+                ],
+              }
+            : {
+                trustedInstructions: [...turn.trustedInstructions],
+                messages: [...safeHistory, turn.currentRequest],
+              }),
+          generalCapabilities: [],
+          ...(includeSkillCatalog && this.authorizedSkillCatalog
+            ? { authorizedSkillCatalog: this.authorizedSkillCatalog }
+            : {}),
+          signal,
+        }),
         signal,
-      });
+      );
       const recoveredAnswer = cleanReplyBoilerplate(recovered.content);
       if (recoveredAnswer.trim() && !containsInternalProtocol(recoveredAnswer))
         return { answer: recoveredAnswer, recovered };
@@ -683,20 +706,23 @@ export class TelegramTurn {
                       scopeKey,
                       this.composed(routedText),
                     ));
-                  generated = await this.model.generate({
-                    ...context,
-                    executionMode,
-                    generalCapabilities: routedCapabilities,
-                    ...(!group && this.authorizedSkillCatalog
-                      ? {
-                          authorizedSkillCatalog: this.authorizedSkillCatalog,
-                        }
-                      : {}),
-                    signal: turnController.signal,
-                    ...(resolution?.kind === "selected"
-                      ? { skill: resolution.skill }
-                      : {}),
-                  });
+                  generated = await settleOnAbort(
+                    this.model.generate({
+                      ...context,
+                      executionMode,
+                      generalCapabilities: routedCapabilities,
+                      ...(!group && this.authorizedSkillCatalog
+                        ? {
+                            authorizedSkillCatalog: this.authorizedSkillCatalog,
+                          }
+                        : {}),
+                      signal: turnController.signal,
+                      ...(resolution?.kind === "selected"
+                        ? { skill: resolution.skill }
+                        : {}),
+                    }),
+                    turnController.signal,
+                  );
                   latencyMs = Date.now() - started;
                   if (generated.outputRecovery?.triggered)
                     fallbackReason = "model_output_recovery";
@@ -708,7 +734,7 @@ export class TelegramTurn {
               }
               break;
             } catch (error) {
-              await this.observability?.recordFailure({
+              await this.noteFailure({
                 stage: "model",
                 error,
                 updateId: input.updateId,
@@ -865,7 +891,7 @@ export class TelegramTurn {
         try {
           await retryTransient(() => deliver(finalAnswer), isTransient);
         } catch (error) {
-          await this.observability?.recordFailure({
+          await this.noteFailure({
             stage: "delivery",
             error,
             updateId: input.updateId,

@@ -765,6 +765,77 @@ describe("model adapter", () => {
     await expect(pending).rejects.toThrow("cancelled");
   });
 
+  it("returns one search limitation when web search never settles", async () => {
+    let releaseHung: (() => void) | undefined;
+    const fetcher = vi.fn((_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { tools?: unknown };
+      if (fetcher.mock.calls.length === 1) {
+        expect(body.tools).toBeDefined();
+        return new Promise<Response>((resolve) => {
+          releaseHung = () =>
+            resolve(Response.json({ output_text: "too late" }));
+        });
+      }
+      expect(body.tools).toBeUndefined();
+      return Promise.resolve(
+        Response.json({
+          output_text: "Current information could not be verified.",
+        }),
+      );
+    });
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "x",
+        baseUrl: "https://example.test",
+        thinking: false,
+        requestTimeoutMs: 30,
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "CPI BTC" }],
+    });
+    expect(result.content).toBe("Current information could not be verified.");
+    expect(result.outputRecovery).toEqual({ triggered: true, succeeded: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    releaseHung?.();
+  });
+
+  it("stops reading a web-search body that never arrives", async () => {
+    let releaseHung: (() => void) | undefined;
+    const fetcher = vi.fn(() => {
+      if (fetcher.mock.calls.length === 1) {
+        releaseHung = () => undefined;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => new Promise(() => undefined),
+          body: { cancel: async () => undefined },
+        } as unknown as Response);
+      }
+      return Promise.resolve(
+        Response.json({
+          output_text: "Current information could not be verified.",
+        }),
+      );
+    });
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "x",
+        baseUrl: "https://example.test",
+        thinking: false,
+        requestTimeoutMs: 30,
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "CPI BTC" }],
+    });
+    expect(result.content).toBe("Current information could not be verified.");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    releaseHung?.();
+  });
+
   it("searches a user-specified date instead of the current clock", async () => {
     const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { instructions: string };
