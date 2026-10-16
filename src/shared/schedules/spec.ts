@@ -3,7 +3,6 @@ import type { CalendarClock } from "../calendar-clock";
 export const MAX_SCHEDULES_PER_USER = 20;
 export const MAX_SCHEDULE_PROMPT_LENGTH = 2_000;
 export const MAX_SCHEDULE_SOURCE_LENGTH = 4_000;
-export const MAX_SCHEDULES_PER_TICK = 3;
 
 export type ScheduleSpec =
   | { kind: "daily"; hour: number; minute: number }

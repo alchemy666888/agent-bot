@@ -121,7 +121,6 @@ These have no default. An empty value is invalid.
 | `VERCEL_OIDC_TOKEN`              | Unset. Production on Vercel uses managed OIDC and does not need this variable | Short-lived credential for local Sandbox SDK calls                                                                                                                                                    | From the project directory, run `vercel env pull`. That writes the token into `.env.local`. Do not copy it into the repository or into the Vercel production environment        |
 | `NEWS_MCP_API_KEY`               | Unset. The clock falls back to `Asia/Hong_Kong`                               | UUID bearer token for News MCP. The server sends `Authorization: Bearer <uuid>` and reads the same value from `NEWS-MCP-API-KEY` when that name is set                                                | Create the key for [news-mcp](https://github.com/alchemy666888/news-mcp) and set it in Vercel Project Settings → Environment Variables                                          |
 | `NEWS_MCP_URL`                   | `https://news-mcp.vercel.app/api/mcp`                                         | Streamable HTTP endpoint for `get_current_datetime`                                                                                                                                                   | Leave it unset for the hosted News MCP service                                                                                                                                  |
-| `SCHEDULE_API_SECRET`            | Unset. `POST /api/schedules/run` rejects every caller                         | Bearer token for the external crontab that runs due Telegram schedules                                                                                                                                | Choose it yourself, for example `openssl rand -hex 32`. Send it as `Authorization: Bearer`                                                                                      |
 
 ### Prompt hierarchy
 
@@ -133,11 +132,7 @@ Operator IDs are comma-separated canonical positive numeric strings with no spac
 
 ### Schedules
 
-A user can ask in a private Telegram chat to create, list, stop, or restart a schedule. The original message, schedule metadata, and the user prompt are stored in PostgreSQL. The external crontab calls `POST /api/schedules/run` once a minute with `Authorization: Bearer $SCHEDULE_API_SECRET`. The handler reads the trusted clock from News MCP, claims due tasks, and runs each stored prompt as a normal private message from the user who created it. The reply is delivered to that user's chat. When no task is due, the route returns `204` and does not call DeepSeek.
-
-```bash
-curl -X POST -H "Authorization: Bearer ${SCHEDULE_API_SECRET}" "${APP_URL}/api/schedules/run"
-```
+A user can ask in a private Telegram chat to create, list, stop, or restart a schedule. The original message, schedule metadata, and the user prompt are stored in PostgreSQL. Those commands are answered on the server and do not call DeepSeek. The clock used when a schedule is created or restarted comes from News MCP, with the server clock in `Asia/Hong_Kong` only when News MCP cannot be read.
 
 Examples: `/schedule daily 09:00 <prompt>`, `/schedule hourly <prompt>`, `/schedule every 15m <prompt>`, `/schedules`, `/schedule_stop <id>`, `/schedule_start <id>`. Chinese: `設定排程 每天 09:00 <提示>`, `排程列表`, `停止排程 <id>`, `啟動排程 <id>`.
 

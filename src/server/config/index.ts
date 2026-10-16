@@ -89,10 +89,6 @@ const telegramSchema = z.object({
   ),
 });
 
-const scheduleSchema = z.object({
-  SCHEDULE_API_SECRET: requiredString,
-});
-
 const dashboardSchema = z.object({
   DASHBOARD_SECRET: requiredString,
   SESSION_SIGNING_SECRET: requiredString,
@@ -350,12 +346,6 @@ export function readTelegramConfig(
       ? env
       : { ...env, ALLOW_USERS: allowUsersValue },
   );
-}
-
-export function readScheduleConfig(
-  env: Record<string, string | undefined> = process.env,
-): { SCHEDULE_API_SECRET: string } {
-  return scheduleSchema.parse(env);
 }
 
 export function readDashboardConfig(

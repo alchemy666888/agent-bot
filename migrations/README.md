@@ -21,7 +21,7 @@ startup still must not execute DDL.
 
 ## Scheduled tasks
 
-`20261014_scheduled_tasks.sql` stores Telegram schedule requests. Apply it before pointing an external crontab at `POST /api/schedules/run`. Application roles need DML only. Rollback is by unsetting `SCHEDULE_API_SECRET` and pausing rows, not by dropping the table. Rows hold the source message, the user prompt, and schedule metadata for the user who created them.
+`20261014_scheduled_tasks.sql` stores Telegram schedule requests. Application roles need DML only. Rollback is by pausing rows, not by dropping the table. Rows hold the source message, the user prompt, and schedule metadata for the user who created them.
 
 ## Prompt persistence (PH-003)
 
