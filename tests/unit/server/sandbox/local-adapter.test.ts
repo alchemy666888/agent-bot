@@ -61,4 +61,23 @@ describe("local sandbox adapter", () => {
       (await sandbox.runCommand("rm", ["-rf", "/workspace"])).exitCode,
     ).toBe(1);
   });
+
+  it("marks a killed command as a worker timeout", async () => {
+    root = await mkdtemp(join(tmpdir(), "local-sandbox-"));
+    const sandbox = await createLocalSandboxSdk(root).getOrCreateSandbox({
+      name: "agent",
+      region: "sin1",
+      persistent: true,
+      resume: true,
+      timeout: 1,
+      keepLastSnapshots: { count: 1 },
+    });
+    const result = await sandbox.runCommand({
+      cmd: "node",
+      args: ["-e", "setInterval(() => {}, 1000)"],
+      timeoutMs: 50,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(await result.stderr()).toContain("WORKER_COMMAND_TIMEOUT");
+  });
 });

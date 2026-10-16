@@ -38,7 +38,11 @@ function runProcess(
     });
     let stdout = "";
     let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -53,7 +57,13 @@ function runProcess(
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve(commandResult(code ?? 1, stdout, stderr));
+      resolve(
+        commandResult(
+          timedOut ? 1 : (code ?? 1),
+          stdout,
+          timedOut ? `${stderr}\nWORKER_COMMAND_TIMEOUT` : stderr,
+        ),
+      );
     });
   });
 }

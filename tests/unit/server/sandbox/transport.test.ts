@@ -49,7 +49,7 @@ describe("private worker transport", () => {
       cmd: "node",
       args: expect.any(Array),
       env: { REQUIRED_ONLY: "fixture" },
-      timeoutMs: 180_000,
+      timeoutMs: 250_000,
     });
     expect(target.runCommand).toHaveBeenLastCalledWith(
       "rm",
@@ -101,6 +101,8 @@ describe("private worker transport", () => {
       "DATABASE_AUTHENTICATION_FAILED",
     ],
     ["contains supersecretvalue", "WORKER_COMMAND_FAILED"],
+    ["WORKER_COMMAND_TIMEOUT", "WORKER_COMMAND_TIMEOUT"],
+    ["Error: Command timed out after 250000ms", "WORKER_COMMAND_TIMEOUT"],
   ])(
     "maps safe command diagnostics without exposing stderr",
     async (stderr, code) => {

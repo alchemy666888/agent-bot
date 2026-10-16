@@ -318,13 +318,26 @@ export class TelegramTurn {
         () => void this.telegram.typing(input.chatId).catch(() => undefined),
         4_000,
       );
-      // Reassigned on each whole-request attempt so a timed-out signal cannot
-      // abort the retry. The timer callback reads the current controller.
+      // Retries get a fresh signal, but they share one deadline. Resetting the
+      // full timeout on every attempt let three 60s web-search aborts meet the
+      // worker kill, so the process exited before Telegram was sent.
+      const deadline = Date.now() + this.turnTimeoutMs;
       let turnController = new AbortController();
-      let turnTimer = setTimeout(
-        () => turnController.abort(new Error("TURN_TIMEOUT")),
-        this.turnTimeoutMs,
-      );
+      let turnTimer: ReturnType<typeof setTimeout> | undefined;
+      const armTurnTimer = () => {
+        clearTimeout(turnTimer);
+        const remaining = deadline - Date.now();
+        turnController = new AbortController();
+        if (remaining <= 0) {
+          turnController.abort(new Error("TURN_TIMEOUT"));
+          return;
+        }
+        turnTimer = setTimeout(
+          () => turnController.abort(new Error("TURN_TIMEOUT")),
+          remaining,
+        );
+      };
+      armTurnTimer();
       let answer = existing?.assistantId
         ? (await this.conversations.message(existing.assistantId))?.text
         : undefined;
@@ -346,7 +359,8 @@ export class TelegramTurn {
             | undefined;
           // An exception retries the whole answer request: routing, context,
           // and generation. Per-call retries do not cover timeouts, and they
-          // leave a failed classification in place.
+          // leave a failed classification in place. The shared deadline above
+          // stops those retries from outliving the worker process.
           const requestAttempts = 3;
           for (
             let requestAttempt = 0;
@@ -354,12 +368,20 @@ export class TelegramTurn {
             requestAttempt++
           ) {
             if (requestAttempt > 0) {
-              clearTimeout(turnTimer);
-              turnController = new AbortController();
-              turnTimer = setTimeout(
-                () => turnController.abort(new Error("TURN_TIMEOUT")),
-                this.turnTimeoutMs,
-              );
+              armTurnTimer();
+              if (turnController.signal.aborted) {
+                await retryTransient(
+                  () => deliver(GENERIC_FAILURE),
+                  isTransient,
+                );
+                await this.checkpoint(scopeKey, {
+                  updateId: input.updateId,
+                  telegramUserId: input.userId,
+                  stage: "failed",
+                  updatedAt: new Date().toISOString(),
+                });
+                return;
+              }
               generated = undefined;
               latencyMs = 0;
               resolution = undefined;

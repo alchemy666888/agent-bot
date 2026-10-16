@@ -10,7 +10,18 @@ import {
 import type { SandboxHandle } from "./sdk-adapter";
 
 const RUNTIME_ROOT = "/tmp/telegram-agent";
+
+/**
+ * Hard stop for one worker process. The webhook function allows 300s.
+ * Controller setup uses the first few seconds, and the worker still needs
+ * time to send Telegram and write its response after its own deadline.
+ * 3 × 60s used to land on this kill, so the process died before any reply.
+ */
+export const WORKER_COMMAND_TIMEOUT_MS = 250_000;
+
 const commandFailureCodes: ReadonlyArray<[RegExp, string]> = [
+  [/WORKER_COMMAND_TIMEOUT/, "WORKER_COMMAND_TIMEOUT"],
+  [/command timed out/i, "WORKER_COMMAND_TIMEOUT"],
   [/Dynamic require of .+ is not supported/i, "WORKER_BUNDLE_INCOMPATIBLE"],
   [
     /ERR_MODULE_NOT_FOUND|Cannot find (?:module|package)/i,
@@ -76,7 +87,7 @@ export async function invokeWorker(
       cmd: "node",
       args: [workerPath, valid.operation, requestPath, responsePath],
       env,
-      timeoutMs: 180_000,
+      timeoutMs: WORKER_COMMAND_TIMEOUT_MS,
     });
     if (result.exitCode !== 0)
       throw new Error(await commandFailureCode(result));

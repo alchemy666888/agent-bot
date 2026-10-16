@@ -758,6 +758,58 @@ describe("Telegram turn", () => {
     expect(telegram.send).toHaveBeenCalledWith("3", "retried answer");
   });
 
+  it("sends a terminal failure instead of starting another model call after the turn deadline", async () => {
+    root = await mkdtemp(join(tmpdir(), "turn-"));
+    const model = {
+      generate: vi.fn(
+        (request: { signal?: AbortSignal }) =>
+          new Promise<{ content: string }>((_resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("still running")),
+              1_000,
+            );
+            request.signal?.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(new Error("TURN_TIMEOUT"));
+            });
+          }),
+      ),
+    };
+    const telegram = {
+      typing: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    const updates = new UpdateRepository(root);
+    await new TelegramTurn(
+      new LockCoordinator(root),
+      updates,
+      new ConversationService(),
+      model,
+      telegram,
+      "system",
+      undefined,
+      undefined,
+      undefined,
+      [],
+      undefined,
+      undefined,
+      40,
+    ).handle({
+      kind: "text",
+      updateId: "11",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      text: "hello",
+    });
+    expect(model.generate).toHaveBeenCalledTimes(1);
+    expect(telegram.send).toHaveBeenCalledWith(
+      "3",
+      expect.stringContaining("try again later"),
+    );
+    expect(await updates.get("11")).toMatchObject({ stage: "failed" });
+  });
+
   it("never replies to a group message", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const conversations = new ConversationService();

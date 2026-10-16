@@ -16,6 +16,7 @@ describe("PostgreSQL client configuration", () => {
         "postgres://user:pass@db.test/app?application_name=agent",
       max: 3,
       allowExitOnIdle: true,
+      connectionTimeoutMillis: 10_000,
       ssl: { ca, rejectUnauthorized: true },
     });
   });
@@ -27,6 +28,7 @@ describe("PostgreSQL client configuration", () => {
       connectionString,
       max: 3,
       allowExitOnIdle: true,
+      connectionTimeoutMillis: 10_000,
     });
   });
 });
