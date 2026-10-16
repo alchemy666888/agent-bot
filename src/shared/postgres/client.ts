@@ -82,6 +82,16 @@ class PostgresStore implements PersistenceStore {
     );
   }
 
+  async claim(relativePath: string, body: Buffer): Promise<boolean> {
+    assertPersistencePath(relativePath);
+    await this.initialize();
+    const result = await this.pool.query(
+      `INSERT INTO ${TABLE} (path, content) VALUES ($1, $2) ON CONFLICT (path) DO NOTHING RETURNING path`,
+      [relativePath, body],
+    );
+    return result.rowCount === 1;
+  }
+
   async delete(relativePath: string): Promise<void> {
     assertPersistencePath(relativePath);
     await this.initialize();

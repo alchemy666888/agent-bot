@@ -15,7 +15,11 @@ vi.mock("../../../src/server/telegram/dispatch", () => ({
   dispatchTelegramInput,
 }));
 
-import { POST } from "../../../src/app/api/telegram/webhook/route";
+import { resetWebhookFailureClaims } from "../../../src/app/api/telegram/webhook/failure-ack";
+import {
+  POST,
+  WEBHOOK_ACK_MS,
+} from "../../../src/app/api/telegram/webhook/route";
 
 const request = (body: unknown, secret = "fixture-secret") =>
   new Request("https://example.test/api/telegram/webhook", {
@@ -27,8 +31,23 @@ const request = (body: unknown, secret = "fixture-secret") =>
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
 
+const privateText = (updateId: number, text = "hello") => ({
+  update_id: updateId,
+  message: {
+    message_id: 3,
+    chat: { id: 4, type: "private" },
+    from: { id: 5, username: "duck" },
+    text,
+  },
+});
+
+async function flushMicrotasks(): Promise<void> {
+  for (let step = 0; step < 20; step++) await Promise.resolve();
+}
+
 describe("Telegram webhook", () => {
   beforeEach(() => {
+    resetWebhookFailureClaims();
     dispatchTelegramInput.mockReset();
     dispatchTelegramInput.mockResolvedValue({
       contractVersion: 1,
@@ -117,7 +136,31 @@ describe("Telegram webhook", () => {
     }
   });
 
-  it("keeps a transient worker failure retryable without a notice", async () => {
+  it("accepts a transient private failure without asking Telegram to retry", async () => {
+    dispatchTelegramInput.mockResolvedValueOnce({
+      contractVersion: 1,
+      correlationId: "0199-ignored-in-mock",
+      ok: false,
+      error: {
+        code: "DEEPSEEK_REQUEST_FAILED",
+        classification: "transient",
+        message: "Temporary operation failure",
+      },
+    });
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const response = await POST(request(privateText(8)));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a transient failure retryable when there is no private chat to notify", async () => {
     dispatchTelegramInput.mockResolvedValueOnce({
       contractVersion: 1,
       correlationId: "0199-ignored-in-mock",
@@ -132,18 +175,108 @@ describe("Telegram webhook", () => {
     vi.stubGlobal("fetch", fetchMock);
     try {
       const response = await POST(
-        request({
-          update_id: 2,
-          message: {
-            message_id: 3,
-            chat: { id: 4, type: "private" },
-            from: { id: 5 },
-            text: "hello",
-          },
-        }),
+        request({ update_id: 2, edited_message: {} }),
       );
       expect(response.status).toBe(503);
       expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("returns 200 before a slow private turn finishes and notifies only if it fails", async () => {
+    let rejectDispatch: (error: Error) => void = () => undefined;
+    dispatchTelegramInput.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectDispatch = reject;
+      }),
+    );
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = POST(request(privateText(11)));
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(WEBHOOK_ACK_MS);
+      const response = await pending;
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect(fetchMock).not.toHaveBeenCalled();
+      rejectDispatch(new Error("SANDBOX_UNAVAILABLE"));
+      await flushMicrotasks();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not send a failure notice when a slow private turn succeeds", async () => {
+    let resolveDispatch: (response: {
+      contractVersion: 1;
+      correlationId: string;
+      ok: true;
+      data: Record<string, never>;
+    }) => void = () => undefined;
+    dispatchTelegramInput.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDispatch = resolve;
+      }),
+    );
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const pending = POST(request(privateText(13)));
+      await flushMicrotasks();
+      await vi.advanceTimersByTimeAsync(WEBHOOK_ACK_MS);
+      const response = await pending;
+      expect(response.status).toBe(200);
+      resolveDispatch({
+        contractVersion: 1,
+        correlationId: "0199-ignored-in-mock",
+        ok: true,
+        data: {},
+      });
+      await flushMicrotasks();
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("sends the failure notice on the next delivery when Telegram rejects it", async () => {
+    dispatchTelegramInput.mockRejectedValue(new Error("SANDBOX_UNAVAILABLE"));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("{}", { status: 500 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const first = await POST(request(privateText(14)));
+      const second = await POST(request(privateText(14)));
+      expect(first.status).toBe(503);
+      expect(second.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not send the failure notice again for the same update", async () => {
+    dispatchTelegramInput.mockRejectedValue(new Error("SANDBOX_UNAVAILABLE"));
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const first = await POST(request(privateText(12)));
+      const second = await POST(request(privateText(12, "again")));
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(dispatchTelegramInput).toHaveBeenCalledTimes(1);
     } finally {
       vi.unstubAllGlobals();
     }
