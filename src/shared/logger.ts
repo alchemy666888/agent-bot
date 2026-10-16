@@ -1,5 +1,5 @@
 import { ZodError } from "zod";
-import { redact } from "./redaction";
+import { redact, redactText } from "./redaction";
 
 export type LogResult = "success" | "failure" | "retry" | "degraded";
 export interface LogRecord {
@@ -94,6 +94,8 @@ export function safeError(
   code: string;
   classification: "transient" | "permanent" | "internal";
   message: string;
+  detail?: string;
+  trace?: string[];
   diagnostic?: {
     stage: string;
     kind: string;
@@ -137,6 +139,8 @@ export function safeError(
       "TELEGRAM_DELIVERY_FAILED",
       "DEEPSEEK_REQUEST_FAILED",
     ].includes(code);
+  const detail = errorDetail(error);
+  const trace = errorTrace(error);
   return {
     code,
     classification: transient
@@ -145,6 +149,8 @@ export function safeError(
         ? "permanent"
         : "internal",
     message: transient ? "Temporary operation failure" : "Operation failed",
+    ...(detail ? { detail } : {}),
+    ...(trace.length ? { trace } : {}),
     ...(stage
       ? {
           diagnostic: {
@@ -159,4 +165,135 @@ export function safeError(
         }
       : {}),
   };
+}
+
+const DETAIL_LIMIT = 1800;
+const TRACE_LIMIT = 10;
+
+function errorAnnotations(error: object): string {
+  const record = error as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const key of ["code", "errno", "syscall"] as const) {
+    const value = record[key];
+    if (typeof value === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(value))
+      parts.push(`${key}=${value}`);
+    else if (typeof value === "number" && Number.isInteger(value))
+      parts.push(`${key}=${value}`);
+  }
+  const status = record.status ?? record.statusCode;
+  if (typeof status === "number" && status >= 100 && status <= 599)
+    parts.push(`status=${status}`);
+  if (typeof record.providerDetail === "string" && record.providerDetail.trim())
+    parts.push(`provider=${redactText(record.providerDetail, 400)}`);
+  return parts.join(" ");
+}
+
+function errorChain(error: unknown, depth = 0): string[] {
+  if (depth > 5 || error == null) return [];
+  if (typeof error === "string") return [redactText(error, 400)];
+  if (typeof error !== "object") return [redactText(String(error), 200)];
+  const name =
+    error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name)
+      ? error.name
+      : "UnknownError";
+  const message =
+    error instanceof ZodError
+      ? "configuration validation failed"
+      : error instanceof Error
+        ? redactText(error.message, 400)
+        : "";
+  const notes = errorAnnotations(error);
+  const line = [`${name}${notes ? ` (${notes})` : ""}`, message]
+    .filter(Boolean)
+    .join(": ");
+  const cause = (error as { cause?: unknown }).cause;
+  const nested = Array.isArray((error as { errors?: unknown }).errors)
+    ? (error as { errors: unknown[] }).errors.slice(0, 3)
+    : [];
+  return [
+    line,
+    ...errorChain(cause, depth + 1),
+    ...nested.flatMap((item) => errorChain(item, depth + 1)),
+  ];
+}
+
+function errorDetail(error: unknown): string | undefined {
+  const detail = errorChain(error).join("\n").slice(0, DETAIL_LIMIT);
+  return detail || undefined;
+}
+
+/** File names and line numbers only. Absolute paths can contain home directories. */
+function errorTrace(error: unknown): string[] {
+  if (!(error instanceof Error) || typeof error.stack !== "string") return [];
+  const frames: string[] = [];
+  for (const raw of error.stack.split("\n")) {
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith("at ")) continue;
+    const shortened = trimmed
+      .replace(/\((?:file:\/\/)?(?:\/|[A-Za-z]:\\)[^)]+\)/g, (match) => {
+        const inner = match.slice(1, -1);
+        return `(${inner.split(/[/\\]/).pop() ?? "unknown"})`;
+      })
+      .replace(
+        /(?:file:\/\/)?(?:\/|[A-Za-z]:\\)\S+/g,
+        (match) => match.split(/[/\\]/).pop() ?? "unknown",
+      );
+    const cleaned = redactText(shortened, 180);
+    if (cleaned.startsWith("at ")) frames.push(cleaned);
+  }
+  const application = frames.filter(
+    (frame) => !/node_modules|node:|<anonymous>/.test(frame),
+  );
+  const selected = application.length ? application : frames;
+  return selected.slice(0, TRACE_LIMIT);
+}
+
+export function formatFailureDebug(input: {
+  headline: string;
+  correlationId: string;
+  durationMs: number;
+  source: string;
+  updateId?: string;
+  inputKind?: string;
+  failure: {
+    code: string;
+    classification: string;
+    message: string;
+    detail?: string;
+    trace?: string[];
+    diagnostic?: {
+      stage?: string;
+      kind?: string;
+      causeCode?: string;
+      status?: number;
+      issues?: string[];
+    };
+  };
+}): string {
+  const diagnostic = input.failure.diagnostic;
+  const lines = [
+    input.headline,
+    "",
+    "debug",
+    `correlationId: ${input.correlationId}`,
+    ...(input.updateId ? [`updateId: ${input.updateId}`] : []),
+    ...(input.inputKind ? [`inputKind: ${input.inputKind}`] : []),
+    `durationMs: ${input.durationMs}`,
+    `source: ${input.source}`,
+    `code: ${input.failure.code}`,
+    `classification: ${input.failure.classification}`,
+    `message: ${input.failure.message}`,
+    ...(diagnostic?.stage ? [`stage: ${diagnostic.stage}`] : []),
+    ...(diagnostic?.kind ? [`kind: ${diagnostic.kind}`] : []),
+    ...(diagnostic?.causeCode ? [`causeCode: ${diagnostic.causeCode}`] : []),
+    ...(typeof diagnostic?.status === "number"
+      ? [`status: ${diagnostic.status}`]
+      : []),
+    ...(diagnostic?.issues?.length
+      ? [`issues: ${diagnostic.issues.join(", ")}`]
+      : []),
+    ...(input.failure.detail ? ["detail:", input.failure.detail] : []),
+    ...(input.failure.trace?.length ? ["trace:", ...input.failure.trace] : []),
+  ];
+  return redactText(lines.join("\n"), 3900);
 }

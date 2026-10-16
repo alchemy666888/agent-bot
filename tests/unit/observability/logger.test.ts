@@ -31,24 +31,29 @@ describe("sanitized observability", () => {
       safeError(
         Object.assign(new Error("DEEPSEEK_REQUEST_FAILED"), { status: 503 }),
       ),
-    ).toEqual({
+    ).toMatchObject({
       code: "DEEPSEEK_REQUEST_FAILED",
       classification: "transient",
       message: "Temporary operation failure",
+      detail: expect.stringContaining("status=503"),
     });
-    expect(safeError(new Error("Bearer bot-verysecretvalue"))).toEqual({
+    const secret = safeError(new Error("Bearer bot-verysecretvalue"));
+    expect(secret).toMatchObject({
       code: "INTERNAL_ERROR",
       classification: "permanent",
       message: "Operation failed",
     });
+    expect(JSON.stringify(secret)).not.toMatch(/bot-verysecretvalue|Bearer/i);
+    expect(secret.detail).toContain("[REDACTED]");
   });
 
-  it("reports allowlisted diagnostics without including exception messages", () => {
+  it("reports allowlisted diagnostics and a redacted error chain", () => {
     const error = Object.assign(
       new TypeError("postgres://user:secret@example.test/private"),
       { code: "ECONNRESET", status: 503 },
     );
-    expect(safeError(error, "INTERNAL_ERROR", "persistence-sync")).toEqual({
+    const failure = safeError(error, "INTERNAL_ERROR", "persistence-sync");
+    expect(failure).toMatchObject({
       code: "INTERNAL_ERROR",
       classification: "transient",
       message: "Temporary operation failure",
@@ -59,14 +64,20 @@ describe("sanitized observability", () => {
         status: 503,
       },
     });
-    expect(JSON.stringify(safeError(error))).not.toContain("secret");
+    expect(failure.detail).toContain("code=ECONNRESET");
+    expect(failure.detail).toContain("status=503");
+    expect(failure.trace?.[0]).toMatch(/^at /);
+    expect(failure.trace?.join("\n")).not.toMatch(/\/workspace\/|\/home\//);
+    expect(JSON.stringify(failure)).not.toMatch(/secret|postgres:\/\//i);
   });
 
   it("identifies an unreachable database network from its structured cause", () => {
     const error = Object.assign(new Error("connect ENETUNREACH private-host"), {
       code: "ENETUNREACH",
     });
-    expect(safeError(error, "INTERNAL_ERROR", "persistence-sync")).toEqual({
+    expect(
+      safeError(error, "INTERNAL_ERROR", "persistence-sync"),
+    ).toMatchObject({
       code: "DATABASE_NETWORK_UNREACHABLE",
       classification: "permanent",
       message: "Operation failed",
@@ -108,7 +119,8 @@ describe("sanitized observability", () => {
         code: "ENOTFOUND",
       },
     );
-    expect(safeError(error, "INTERNAL_ERROR", "persistence-sync")).toEqual({
+    const failure = safeError(error, "INTERNAL_ERROR", "persistence-sync");
+    expect(failure).toMatchObject({
       code: "DATABASE_HOST_NOT_FOUND",
       classification: "permanent",
       message: "Operation failed",
@@ -118,5 +130,7 @@ describe("sanitized observability", () => {
         causeCode: "ENOTFOUND",
       },
     });
+    expect(failure.detail).toContain("ENOTFOUND");
+    expect(failure.detail).toContain("private-host");
   });
 });

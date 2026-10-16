@@ -293,6 +293,19 @@ async function main() {
         failure = error;
       }
       if (!failure) failureStage = "worker-log";
+      const recorded = failure
+        ? safeError(failure, "INTERNAL_ERROR", failureStage)
+        : undefined;
+      const degradationNotices =
+        request.contractVersion === 2 ? request.degradationNotices : [];
+      const metadata = {
+        ...(degradationNotices.length
+          ? { degradationNotices: [...new Set(degradationNotices)] }
+          : {}),
+        ...(recorded?.diagnostic ?? {}),
+        ...(recorded?.detail ? { detail: recorded.detail } : {}),
+        ...(recorded?.trace?.length ? { trace: recorded.trace } : {}),
+      };
       try {
         await writeWorkerLog(
           ROOT,
@@ -303,17 +316,8 @@ async function main() {
             stage: "complete",
             result: failure ? "failure" : "success",
             durationMs: Date.now() - started,
-            ...(request.contractVersion === 2 &&
-            request.degradationNotices.length
-              ? {
-                  metadata: {
-                    degradationNotices: [
-                      ...new Set(request.degradationNotices),
-                    ],
-                  },
-                }
-              : {}),
-            ...(failure ? { code: safeError(failure).code } : {}),
+            ...(recorded ? { code: recorded.code } : {}),
+            ...(Object.keys(metadata).length ? { metadata } : {}),
           },
           store,
         );
