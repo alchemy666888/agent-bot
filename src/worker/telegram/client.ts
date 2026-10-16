@@ -180,15 +180,18 @@ export class TelegramClient {
       callback_query_id: callbackQueryId,
       ...(text ? { text } : {}),
     });
-    if (!response.ok) throw new Error("TELEGRAM_DELIVERY_FAILED");
+    if (!response.ok) throw await telegramDeliveryError(response);
   }
   async send(
     chatId: string,
     text: string,
     buttons?: readonly { text: string; callbackData: string }[],
     replyToMessageId?: string,
+    options?: { plain?: boolean },
   ) {
-    const formatted = formatTelegramText(text);
+    const formatted = options?.plain
+      ? text.replace(/\r\n?/g, "\n").trim()
+      : formatTelegramText(text);
     const chunks = chunkTelegramText(formatted);
     for (let index = 0; index < chunks.length; index++) {
       const chunk = chunks[index]!;
@@ -211,7 +214,28 @@ export class TelegramClient {
             }
           : {}),
       });
-      if (!response.ok) throw new Error("TELEGRAM_DELIVERY_FAILED");
+      if (!response.ok) throw await telegramDeliveryError(response);
     }
   }
+}
+
+async function telegramDeliveryError(response: Response): Promise<Error> {
+  let providerDetail = "";
+  try {
+    const payload = (await response.json()) as {
+      description?: unknown;
+      error_code?: unknown;
+    };
+    const description =
+      typeof payload.description === "string" ? payload.description : "";
+    const errorCode =
+      typeof payload.error_code === "number" ? String(payload.error_code) : "";
+    providerDetail = [errorCode, description].filter(Boolean).join(" ");
+  } catch {
+    providerDetail = "";
+  }
+  return Object.assign(new Error("TELEGRAM_DELIVERY_FAILED"), {
+    status: response.status,
+    ...(providerDetail ? { providerDetail: providerDetail.slice(0, 300) } : {}),
+  });
 }

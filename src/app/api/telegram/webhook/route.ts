@@ -7,7 +7,7 @@ import {
 } from "../../../../server/telegram/input";
 import { persistControllerLog } from "../../../../shared/postgres/controller-log";
 import { uuidV7 } from "../../../../shared/ids";
-import { safeError } from "../../../../shared/logger";
+import { formatFailureDebug, safeError } from "../../../../shared/logger";
 import { TelegramClient } from "../../../../worker/telegram/client";
 import {
   claimWebhookFailure,
@@ -49,9 +49,12 @@ function continueTurn(task: () => Promise<void>): void {
 async function notifyTurnFailed(
   token: string,
   chatId: string,
+  text: string,
 ): Promise<boolean> {
   try {
-    await new TelegramClient(token).send(chatId, TURN_FAILED_TEXT);
+    await new TelegramClient(token).send(chatId, text, undefined, undefined, {
+      plain: true,
+    });
     return true;
   } catch {
     return false;
@@ -67,11 +70,23 @@ async function privateFailure(
   chatId: string,
   updateId: string,
   correlationId: string,
+  text: string,
 ): Promise<NextResponse> {
   if (!(await claimWebhookFailure(updateId, correlationId))) return accepted();
-  if (await notifyTurnFailed(token, chatId)) return accepted();
+  if (await notifyTurnFailed(token, chatId, text)) return accepted();
   await releaseWebhookFailure(updateId);
   return NextResponse.json({ ok: false }, { status: 503, headers });
+}
+
+function failureMetadata(
+  failure: ReturnType<typeof safeError>,
+): Record<string, unknown> | undefined {
+  const metadata = {
+    ...(failure.diagnostic ?? {}),
+    ...(failure.detail ? { detail: failure.detail } : {}),
+    ...(failure.trace?.length ? { trace: failure.trace } : {}),
+  };
+  return Object.keys(metadata).length ? metadata : undefined;
 }
 
 async function finishDispatch(
@@ -82,38 +97,83 @@ async function finishDispatch(
   token: string,
 ): Promise<NextResponse> {
   const chatId = privateChatId(input);
+  const durationMs = Date.now() - started;
   if (outcome.state === "failed") {
     const failure = safeError(outcome.error, "INTERNAL_ERROR", "dispatch");
+    const metadata = failureMetadata(failure);
     await persistControllerLog({
       correlationId,
       component: "controller",
       operation: "telegramWebhook",
       stage: "dispatch",
       result: "failure",
-      durationMs: Date.now() - started,
+      durationMs,
       code: failure.code,
-      ...(failure.diagnostic ? { metadata: failure.diagnostic } : {}),
+      ...(metadata ? { metadata } : {}),
     });
     if (chatId)
-      return privateFailure(token, chatId, input.updateId, correlationId);
+      return privateFailure(
+        token,
+        chatId,
+        input.updateId,
+        correlationId,
+        formatFailureDebug({
+          headline: TURN_FAILED_TEXT,
+          correlationId,
+          durationMs,
+          source: "dispatch",
+          updateId: input.updateId,
+          inputKind: input.kind,
+          failure,
+        }),
+      );
     return NextResponse.json({ ok: false }, { status: 503, headers });
   }
   if (!outcome.response.ok) {
     const retryable = outcome.response.error?.classification === "transient";
+    const reported = outcome.response.error;
+    const metadata = reported
+      ? {
+          ...(reported.diagnostic ?? {}),
+          ...(reported.detail ? { detail: reported.detail } : {}),
+          ...(reported.trace?.length ? { trace: reported.trace } : {}),
+        }
+      : undefined;
     await persistControllerLog({
       correlationId,
       component: "controller",
       operation: "telegramWebhook",
       stage: "worker",
       result: "failure",
-      durationMs: Date.now() - started,
-      code: outcome.response.error?.code ?? "WORKER_FAILED",
-      ...(outcome.response.error?.diagnostic
-        ? { metadata: outcome.response.error.diagnostic }
-        : {}),
+      durationMs,
+      code: reported?.code ?? "WORKER_FAILED",
+      ...(metadata && Object.keys(metadata).length ? { metadata } : {}),
     });
     if (chatId)
-      return privateFailure(token, chatId, input.updateId, correlationId);
+      return privateFailure(
+        token,
+        chatId,
+        input.updateId,
+        correlationId,
+        formatFailureDebug({
+          headline: TURN_FAILED_TEXT,
+          correlationId,
+          durationMs,
+          source: "worker",
+          updateId: input.updateId,
+          inputKind: input.kind,
+          failure: {
+            code: reported?.code ?? "WORKER_FAILED",
+            classification: reported?.classification ?? "internal",
+            message: reported?.message ?? "Operation failed",
+            ...(reported?.detail ? { detail: reported.detail } : {}),
+            ...(reported?.trace?.length ? { trace: reported.trace } : {}),
+            ...(reported?.diagnostic
+              ? { diagnostic: reported.diagnostic }
+              : {}),
+          },
+        }),
+      );
     return NextResponse.json(
       { ok: false },
       { status: retryable ? 503 : 500, headers },

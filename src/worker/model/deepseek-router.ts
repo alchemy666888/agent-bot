@@ -4,6 +4,7 @@ import {
   type RoutingDecision,
   type RoutingRequest,
 } from "../../shared/contracts";
+import { providerFailure } from "./deepseek";
 
 type ResponsesBody = {
   id?: string;
@@ -195,14 +196,16 @@ export class DeepSeekRouter implements RequestRouter {
       );
     }
     if (!response.ok)
-      throw Object.assign(new Error("DEEPSEEK_ROUTING_FAILED"), {
-        status: response.status,
-        run: {
-          latencyMs: Date.now() - started,
-          validationOutcome: "invalid",
-          fallbackReason: "provider_error",
-        } satisfies RouterRunMetadata,
-      });
+      throw Object.assign(
+        await providerFailure("DEEPSEEK_ROUTING_FAILED", response),
+        {
+          run: {
+            latencyMs: Date.now() - started,
+            validationOutcome: "invalid",
+            fallbackReason: "provider_error",
+          } satisfies RouterRunMetadata,
+        },
+      );
 
     let body: ResponsesBody | undefined;
     try {

@@ -129,8 +129,14 @@ describe("Telegram webhook", () => {
       const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
       expect(body).toMatchObject({
         chat_id: "4",
-        text: "這次回覆沒有完成，請再傳一次。",
+        text: expect.stringContaining("這次回覆沒有完成，請再傳一次。"),
       });
+      expect(body.text).toContain("source: dispatch");
+      expect(body.text).toContain("code: SANDBOX_UNAVAILABLE");
+      expect(body.text).toContain("updateId: 2");
+      expect(body.text).toContain("inputKind: text");
+      expect(body.text).toContain("detail:");
+      expect(body.text).toContain("trace:");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -154,7 +160,10 @@ describe("Telegram webhook", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
       const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
+      expect(body.text).toContain("這次回覆沒有完成，請再傳一次。");
+      expect(body.text).toContain("source: worker");
+      expect(body.text).toContain("code: DEEPSEEK_REQUEST_FAILED");
+      expect(body.text).toContain("classification: transient");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -206,7 +215,9 @@ describe("Telegram webhook", () => {
       await flushMicrotasks();
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
+      expect(body.text).toContain("這次回覆沒有完成，請再傳一次。");
+      expect(body.text).toContain("code: SANDBOX_UNAVAILABLE");
+      expect(body.text).toContain("source: dispatch");
     } finally {
       vi.useRealTimers();
       vi.unstubAllGlobals();
@@ -310,7 +321,28 @@ describe("Telegram webhook", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true });
       const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
+      expect(body.text).toContain("這次回覆沒有完成，請再傳一次。");
+      expect(body.text).toContain("code: WORKER_CONFIGURATION_INVALID");
+      expect(body.text).toContain("classification: permanent");
+      expect(body.text).toContain("source: worker");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("omits secrets from the private failure notice", async () => {
+    dispatchTelegramInput.mockRejectedValueOnce(
+      new Error("Bearer sk-abcdefghijklmnopqrstuvwxyz012345"),
+    );
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const response = await POST(request(privateText(16)));
+      expect(response.status).toBe(200);
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body.text).toContain("這次回覆沒有完成，請再傳一次。");
+      expect(body.text).toContain("[REDACTED]");
+      expect(body.text).not.toMatch(/sk-|abcdefghijklmnopqrstuvwxyz/i);
     } finally {
       vi.unstubAllGlobals();
     }

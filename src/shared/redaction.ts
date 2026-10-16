@@ -2,6 +2,7 @@ const forbiddenKey =
   /authorization|cookie|token|secret|password|api.?key|reasoning|stack|prompt|instructions|skill(content|document)|tool(output|result)|raw(body|update|response)/i;
 const secretText =
   /(bearer\s+\S+|(?:sk|bot|oidc|ghp|xox[baprs])[-_][A-Za-z0-9._-]{6,}|(?:password|secret|api[_-]?key)\s*[:=]\s*\S+)/gi;
+const credentialUrl = /[a-z][a-z0-9+.-]*:\/\/[^\s/@]*:[^\s/@]*@/gi;
 
 const likelySecretText =
   /(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bAKIA[A-Z0-9]{16}\b|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b|\b(?:gh[opusr]|xox[baprs])_[A-Za-z0-9_-]{20,}|\bsk-[A-Za-z0-9_-]{20,}|\b(?:bearer|password|passwd|secret|api[_-]?key|access[_-]?token)\s*[:=]\s*[^\s]{6,})/i;
@@ -13,6 +14,15 @@ const persistenceLanguage =
 /** Heuristic defense in depth, not a complete secret scanner. */
 export function containsLikelySecret(value: string): boolean {
   return likelySecretText.test(value);
+}
+
+/** Bounded text with credentials, tokens, and URL userinfo removed. */
+export function redactText(value: string, max = 500): string {
+  return value
+    .replace(credentialUrl, "[REDACTED]")
+    .replace(secretText, "[REDACTED]")
+    .replace(likelySecretText, "[REDACTED]")
+    .slice(0, max);
 }
 
 /**

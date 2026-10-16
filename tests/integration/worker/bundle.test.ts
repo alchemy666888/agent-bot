@@ -277,7 +277,8 @@ globalThis.fetch = async (url, init = {}) => {
         ["dist/worker.mjs", "telegramTurn", requestPath, responsePath],
         { env },
       );
-      expect(JSON.parse(await readFile(responsePath, "utf8"))).toEqual({
+      const response = JSON.parse(await readFile(responsePath, "utf8"));
+      expect(response).toMatchObject({
         contractVersion: 1,
         correlationId,
         ok: false,
@@ -292,6 +293,9 @@ globalThis.fetch = async (url, init = {}) => {
           },
         },
       });
+      expect(response.error.detail).toContain("WORKER_CONFIGURATION_INVALID");
+      expect(response.error.detail).toContain("code=ASSISTANT_SYSTEM_PROMPT");
+      expect(response.error.trace.join("\n")).toMatch(/^at /m);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

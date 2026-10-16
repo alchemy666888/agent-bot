@@ -81,6 +81,8 @@ export const safeErrorSchema = z
       "internal",
     ]),
     message: z.string().max(256),
+    detail: z.string().max(2000).optional(),
+    trace: z.array(z.string().max(200)).max(12).optional(),
     diagnostic: z
       .object({
         stage: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
@@ -90,6 +92,7 @@ export const safeErrorSchema = z
           .regex(/^[A-Za-z0-9_.-]{1,64}$/)
           .optional(),
         status: z.number().int().min(100).max(599).optional(),
+        issues: z.array(z.string().max(80)).max(8).optional(),
       })
       .strict()
       .optional(),

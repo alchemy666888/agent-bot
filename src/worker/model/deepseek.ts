@@ -244,9 +244,7 @@ export class DeepSeekProvider implements ModelProvider {
           true,
         );
       if (!response.ok)
-        throw Object.assign(new Error("DEEPSEEK_REQUEST_FAILED"), {
-          status: response.status,
-        });
+        throw await providerFailure("DEEPSEEK_REQUEST_FAILED", response);
       const body = (await response.json()) as ResponsesBody;
       requestId = body.id ?? requestId;
       if (body.usage) {
@@ -455,9 +453,7 @@ export class DeepSeekProvider implements ModelProvider {
       signal: input.signal,
     });
     if (!response.ok)
-      throw Object.assign(new Error("DEEPSEEK_RECOVERY_FAILED"), {
-        status: response.status,
-      });
+      throw await providerFailure("DEEPSEEK_RECOVERY_FAILED", response);
     const body = (await response.json()) as ResponsesBody;
     requestId = body.id ?? requestId;
     if (body.usage) {
@@ -474,6 +470,43 @@ export class DeepSeekProvider implements ModelProvider {
       ...(audit.length ? { capabilityAudit: audit } : {}),
     });
   }
+}
+
+export async function providerFailure(
+  code: string,
+  response: Response,
+): Promise<Error> {
+  let providerDetail = "";
+  try {
+    const raw = (await response.text()).slice(0, 2000);
+    try {
+      const parsed = JSON.parse(raw) as {
+        error?: { message?: unknown; type?: unknown; code?: unknown };
+        message?: unknown;
+      };
+      const providerError = parsed.error;
+      const parts = [
+        typeof providerError?.type === "string" ? providerError.type : "",
+        typeof providerError?.code === "string" ||
+        typeof providerError?.code === "number"
+          ? String(providerError.code)
+          : "",
+        typeof providerError?.message === "string" ? providerError.message : "",
+        !providerError && typeof parsed.message === "string"
+          ? parsed.message
+          : "",
+      ].filter(Boolean);
+      providerDetail = parts.join(" | ");
+    } catch {
+      providerDetail = raw.replace(/\s+/g, " ");
+    }
+  } catch {
+    providerDetail = "";
+  }
+  return Object.assign(new Error(code), {
+    status: response.status,
+    ...(providerDetail ? { providerDetail: providerDetail.slice(0, 500) } : {}),
+  });
 }
 
 function isTransient(error: unknown): boolean {
