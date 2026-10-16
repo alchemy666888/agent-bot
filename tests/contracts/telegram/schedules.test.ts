@@ -12,6 +12,7 @@ vi.mock("@vercel/connect", () => ({
 }));
 vi.mock("../../../src/server/sandbox/controller", () => ({
   ensureSandbox: vi.fn(),
+  resetSandbox: vi.fn(),
 }));
 vi.mock("../../../src/server/sandbox/transport", () => ({
   installWorker: vi.fn(),

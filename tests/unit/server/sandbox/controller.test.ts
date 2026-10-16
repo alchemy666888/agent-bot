@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { ensureSandbox } from "../../../../src/server/sandbox/controller";
+import {
+  ensureSandbox,
+  resetSandbox,
+} from "../../../../src/server/sandbox/controller";
 import type {
   SandboxHandle,
   SandboxSdk,
@@ -23,7 +26,7 @@ const config = {
 };
 
 describe("sandbox lifecycle", () => {
-  it("uses one private sin1 sandbox with persistence and resume", async () => {
+  it("uses one private sin1 sandbox without resuming during lookup", async () => {
     const sdk: SandboxSdk = {
       getOrCreateSandbox: vi.fn(async () => handle()),
     };
@@ -34,7 +37,7 @@ describe("sandbox lifecycle", () => {
     expect(input).toMatchObject({
       region: "sin1",
       persistent: true,
-      resume: true,
+      resume: false,
     });
     expect(input).not.toHaveProperty("mounts");
     expect(input).not.toHaveProperty("ports");
@@ -188,5 +191,17 @@ describe("sandbox lifecycle", () => {
       code: "snapshot_not_found",
       status: 400,
     });
+  });
+
+  it("deletes a stale named sandbox before creating its replacement", async () => {
+    const sdk: SandboxSdk = {
+      getOrCreateSandbox: vi.fn(async () => handle()),
+      deleteSandbox: vi.fn(async () => undefined),
+    };
+    await expect(
+      resetSandbox(config, sdk, "correlation-id"),
+    ).resolves.toMatchObject({ name: "agent" });
+    expect(sdk.deleteSandbox).toHaveBeenCalledWith("agent");
+    expect(sdk.getOrCreateSandbox).toHaveBeenCalledOnce();
   });
 });

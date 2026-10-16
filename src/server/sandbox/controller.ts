@@ -113,7 +113,7 @@ export async function ensureSandbox(
       name: config.SANDBOX_NAME,
       region: "sin1",
       persistent: true,
-      resume: true,
+      resume: false,
       timeout: HOBBY_SANDBOX_TIMEOUT_MS,
       keepLastSnapshots: { count: 1 },
     }),
@@ -156,4 +156,16 @@ export async function ensureSandbox(
     }
   }
   return sandbox;
+}
+
+/** Deletes a named sandbox whose snapshot can no longer resume, then creates it. */
+export async function resetSandbox(
+  config: SandboxConfig,
+  sdk?: SandboxSdk,
+  correlationId?: string,
+): Promise<SandboxHandle> {
+  const resolved = sdk ?? selectSandboxSdk();
+  if (resolved.deleteSandbox)
+    await sandboxCall(() => resolved.deleteSandbox!(config.SANDBOX_NAME));
+  return ensureSandbox(config, resolved, correlationId);
 }

@@ -69,6 +69,45 @@ describe("executeWorker", () => {
     expect(invokeWorker).toHaveBeenCalledWith(local, "worker.mjs", request, {
       TELEGRAM_BOT_TOKEN: "token",
     });
+    const event = JSON.parse(
+      String(vi.mocked(console.info).mock.calls.at(-1)?.[0]),
+    );
+    expect(event).toMatchObject({
+      operation: "sandbox.local_fallback",
+      code: "SANDBOX_UNAVAILABLE",
+      metadata: { status: 400, causeCode: "snapshot_not_found" },
+    });
+  });
+
+  it("replaces a sandbox whose snapshot is gone instead of running locally", async () => {
+    vi.mocked(invokeWorker).mockResolvedValueOnce(answered);
+    const replacement = { name: "replacement" } as SandboxHandle;
+    const resetSandbox = vi.fn(async () => replacement);
+    const openLocal = vi.fn(async () => local);
+    await expect(
+      executeWorker({
+        correlationId: "correlation-id",
+        source: Buffer.from("worker"),
+        request,
+        env: {},
+        openSandbox: async () => {
+          throw Object.assign(new Error("Status code 400 is not ok"), {
+            response: { status: 400 },
+            json: { error: { code: "snapshot_not_found" } },
+          });
+        },
+        resetSandbox,
+        openLocal,
+      }),
+    ).resolves.toBe(answered);
+    expect(resetSandbox).toHaveBeenCalledOnce();
+    expect(openLocal).not.toHaveBeenCalled();
+    expect(invokeWorker).toHaveBeenCalledWith(
+      replacement,
+      "worker.mjs",
+      request,
+      {},
+    );
   });
 
   it("runs locally when sandbox persistence cannot sync", async () => {

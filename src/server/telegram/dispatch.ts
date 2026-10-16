@@ -9,7 +9,7 @@ import {
   readTelegramConfig,
   readPromptConfig,
 } from "../config";
-import { ensureSandbox } from "../sandbox/controller";
+import { ensureSandbox, resetSandbox } from "../sandbox/controller";
 import { executeWorker } from "../sandbox/execute";
 import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
@@ -429,8 +429,7 @@ export async function dispatchTelegramInput(
         payload: { input, skillCatalog: EMPTY_SKILL_CATALOG },
       },
       env: workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
-      openSandbox: () =>
-        ensureSandbox(readSandboxConfig(), undefined, correlationId),
+      ...sandboxOpeners(correlationId),
     });
   }
 
@@ -559,9 +558,16 @@ export async function dispatchTelegramInput(
       rawTelegramInput: input.text,
     },
     env: workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
-    openSandbox: () =>
-      ensureSandbox(readSandboxConfig(), undefined, correlationId),
+    ...sandboxOpeners(correlationId),
   });
+}
+
+function sandboxOpeners(correlationId: string) {
+  const config = readSandboxConfig();
+  return {
+    openSandbox: () => ensureSandbox(config, undefined, correlationId),
+    resetSandbox: () => resetSandbox(config, undefined, correlationId),
+  };
 }
 
 async function withTrustedCalendar(

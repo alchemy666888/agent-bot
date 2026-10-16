@@ -10,6 +10,9 @@ importers:
       "@vercel/connect":
         specifier: ^2.3.4
         version: 2.3.4
+      "@vercel/oidc":
+        specifier: 3.2.0
+        version: 3.2.0
       "@vercel/sandbox":
         specifier: ^3.3.0
         version: 3.3.0
