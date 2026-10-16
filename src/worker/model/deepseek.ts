@@ -27,6 +27,8 @@ import {
   CapabilityRegistry,
   type CapabilityAuditRecord,
 } from "../capabilities/registry";
+import { abortError, deadline, settleOnAbort } from "../../shared/abort";
+import { PROVIDER_REQUEST_TIMEOUT_MS } from "../../shared/worker-budget";
 
 type Output = {
   type?: string;
@@ -110,6 +112,7 @@ export class DeepSeekProvider implements ModelProvider {
       maxToolCalls?: number;
       now?: () => Date;
       timeZone?: string;
+      requestTimeoutMs?: number;
     },
     private request: typeof fetch = fetch,
     private capabilities = new CapabilityRegistry(),
@@ -205,14 +208,11 @@ export class DeepSeekProvider implements ModelProvider {
     let requireFreshSearch = false;
     const toolLimit = this.config.maxToolCalls ?? 4;
     for (let iteration = 0; iteration <= toolLimit; iteration++) {
+      if (input.signal?.aborted) throw abortError(input.signal);
       const started = Date.now();
-      const response = await this.request(`${this.config.baseUrl}/responses`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${this.config.apiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
+      let posted: ProviderExchange;
+      try {
+        posted = await this.postResponses(input, {
           model: "deepseek-v4-pro",
           stream: false,
           reasoning: { effort: this.config.thinking ? "medium" : "none" },
@@ -229,11 +229,21 @@ export class DeepSeekProvider implements ModelProvider {
             : {}),
           ...(instructions ? { instructions } : {}),
           input: conversation,
-        }),
-        signal: input.signal,
-      });
+        });
+      } catch (error) {
+        if (isProviderTimeout(error))
+          return this.timeoutResult(
+            input,
+            instructions,
+            conversation,
+            usage,
+            requestId,
+            audit,
+          );
+        throw error;
+      }
       requireFreshSearch = false;
-      if (!response.ok && input.executionMode === "forced_web_search")
+      if (!posted.ok && input.executionMode === "forced_web_search")
         return this.recover(
           input,
           instructions,
@@ -243,9 +253,9 @@ export class DeepSeekProvider implements ModelProvider {
           audit,
           true,
         );
-      if (!response.ok)
-        throw await providerFailure("DEEPSEEK_REQUEST_FAILED", response);
-      const body = (await response.json()) as ResponsesBody;
+      if (!posted.ok)
+        throw await providerFailure("DEEPSEEK_REQUEST_FAILED", posted.response);
+      const body = posted.body;
       requestId = body.id ?? requestId;
       if (body.usage) {
         usage.inputTokens += body.usage.input_tokens;
@@ -414,6 +424,91 @@ export class DeepSeekProvider implements ModelProvider {
     );
   }
 
+  /**
+   * One `/responses` exchange. The caller signal and a per-call cap both abort
+   * it, and a socket that ignores abort still unblocks the await.
+   */
+  private async postResponses(
+    input: ModelRequest,
+    payload: unknown,
+  ): Promise<ProviderExchange> {
+    if (input.signal?.aborted) throw abortError(input.signal);
+    const timeoutMs =
+      this.config.requestTimeoutMs ?? PROVIDER_REQUEST_TIMEOUT_MS;
+    const cap = deadline(timeoutMs);
+    const signal = input.signal
+      ? AbortSignal.any([input.signal, cap.signal])
+      : cap.signal;
+    const failed = (error: unknown): Error => {
+      if (input.signal?.aborted) return abortError(input.signal);
+      if (signal.aborted || cap.signal.aborted || isAbortLike(error))
+        return new Error("PROVIDER_REQUEST_TIMEOUT");
+      return error instanceof Error
+        ? error
+        : new Error("PROVIDER_REQUEST_TIMEOUT");
+    };
+    try {
+      const response = await settleOnAbort(
+        this.request(`${this.config.baseUrl}/responses`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${this.config.apiKey}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(payload),
+          signal,
+        }),
+        signal,
+      ).catch((error: unknown) => {
+        throw failed(error);
+      });
+      if (!response.ok) {
+        if (signal.aborted) {
+          await cancelBody(response);
+          throw new Error("PROVIDER_REQUEST_TIMEOUT");
+        }
+        return { ok: false, response };
+      }
+      const body = await settleOnAbort(
+        response.json() as Promise<ResponsesBody>,
+        signal,
+      ).catch(async (error: unknown) => {
+        await cancelBody(response);
+        throw failed(error);
+      });
+      if (signal.aborted) {
+        await cancelBody(response);
+        throw new Error("PROVIDER_REQUEST_TIMEOUT");
+      }
+      return { ok: true, body };
+    } finally {
+      cap.cancel();
+    }
+  }
+
+  /** A timed-out web search gets one tool-free limitation reply, then stops. */
+  private timeoutResult(
+    input: ModelRequest,
+    trustedInstructions: string,
+    conversation: unknown[],
+    usage: { inputTokens: number; outputTokens: number },
+    requestId: string | undefined,
+    audit: CapabilityAuditRecord[],
+  ): Promise<ModelResponse> {
+    if (input.signal?.aborted) throw abortError(input.signal);
+    if (input.executionMode !== "forced_web_search")
+      throw new Error("PROVIDER_REQUEST_TIMEOUT");
+    return this.recover(
+      input,
+      trustedInstructions,
+      conversation,
+      usage,
+      requestId,
+      audit,
+      true,
+    );
+  }
+
   private async recover(
     input: ModelRequest,
     trustedInstructions: string,
@@ -426,35 +521,27 @@ export class DeepSeekProvider implements ModelProvider {
     // Recovery is the one deliberate exception to generate's always-available
     // native search tool. It is a bounded, tool-free safety escape hatch after
     // malformed protocol, denied calls, failed search, or exhausted tool turns.
-    const response = await this.request(`${this.config.baseUrl}/responses`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.config.apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "deepseek-v4-pro",
-        stream: false,
-        reasoning: { effort: this.config.thinking ? "medium" : "none" },
-        instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
-        input: [
-          ...originalConversation.filter(
-            (item) =>
-              (item as { role?: string }).role === "user" ||
-              (item as { role?: string }).role === "assistant",
-          ),
-          {
-            role: "user",
-            content:
-              "Provide the final answer to my original request now. Use no tools or internal protocol.",
-          },
-        ],
-      }),
-      signal: input.signal,
+    const posted = await this.postResponses(input, {
+      model: "deepseek-v4-pro",
+      stream: false,
+      reasoning: { effort: this.config.thinking ? "medium" : "none" },
+      instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
+      input: [
+        ...originalConversation.filter(
+          (item) =>
+            (item as { role?: string }).role === "user" ||
+            (item as { role?: string }).role === "assistant",
+        ),
+        {
+          role: "user",
+          content:
+            "Provide the final answer to my original request now. Use no tools or internal protocol.",
+        },
+      ],
     });
-    if (!response.ok)
-      throw await providerFailure("DEEPSEEK_RECOVERY_FAILED", response);
-    const body = (await response.json()) as ResponsesBody;
+    if (!posted.ok)
+      throw await providerFailure("DEEPSEEK_RECOVERY_FAILED", posted.response);
+    const body = posted.body;
     requestId = body.id ?? requestId;
     if (body.usage) {
       usage.inputTokens += body.usage.input_tokens;
@@ -507,6 +594,28 @@ export async function providerFailure(
     status: response.status,
     ...(providerDetail ? { providerDetail: providerDetail.slice(0, 500) } : {}),
   });
+}
+
+type ProviderExchange =
+  { ok: true; body: ResponsesBody } | { ok: false; response: Response };
+
+function isProviderTimeout(error: unknown): boolean {
+  return error instanceof Error && error.message === "PROVIDER_REQUEST_TIMEOUT";
+}
+
+function isAbortLike(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
+}
+
+async function cancelBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The caller is already leaving this response.
+  }
 }
 
 function isTransient(error: unknown): boolean {
