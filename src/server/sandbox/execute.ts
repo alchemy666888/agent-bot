@@ -6,7 +6,7 @@ import { uuidV7 } from "../../shared/ids";
 import { logStructured, safeError } from "../../shared/logger";
 import type { WorkerRequest, WorkerResponse } from "../../shared/contracts";
 import { createLocalSandboxSdk } from "./local-adapter";
-import { isStaleSnapshotError } from "./provider-error";
+import { annotateSandboxError, isStaleSnapshotError } from "./provider-error";
 import type { SandboxHandle } from "./sdk-adapter";
 import { installWorker, invokeWorker } from "./transport";
 
@@ -26,9 +26,27 @@ const LOCAL_FALLBACK_CODES = new Set([
   "DATABASE_AUTHENTICATION_FAILED",
 ]);
 
+function recordedSandboxFailure(error: unknown) {
+  return safeError(
+    annotateSandboxError(error),
+    "SANDBOX_UNAVAILABLE",
+    "sandbox",
+  );
+}
+
 export function sandboxFailureCanRunLocally(error: unknown): boolean {
-  return LOCAL_FALLBACK_CODES.has(
-    safeError(error, "SANDBOX_UNAVAILABLE", "sandbox").code,
+  return LOCAL_FALLBACK_CODES.has(recordedSandboxFailure(error).code);
+}
+
+/**
+ * A classified worker/database failure should run locally. An unclassified
+ * sandbox Error should recreate the named sandbox first: lookup can succeed
+ * with resume:false while the first command still throws a plain Error.
+ */
+function shouldRecreateSandbox(error: unknown): boolean {
+  return (
+    isStaleSnapshotError(error) ||
+    recordedSandboxFailure(error).code === "SANDBOX_UNAVAILABLE"
   );
 }
 
@@ -67,9 +85,7 @@ export async function executeWorker(input: {
     return invokeWorker(sandbox, workerPath, input.request, input.env);
   };
   const locally = async (code: string, error?: unknown) => {
-    const recorded = error
-      ? safeError(error, "SANDBOX_UNAVAILABLE", "sandbox")
-      : undefined;
+    const recorded = error ? recordedSandboxFailure(error) : undefined;
     logStructured({
       correlationId,
       component: "controller",
@@ -84,17 +100,14 @@ export async function executeWorker(input: {
     );
   };
   const replaced = async (error: unknown) => {
-    if (!input.resetSandbox || !isStaleSnapshotError(error)) return undefined;
+    if (!input.resetSandbox || !shouldRecreateSandbox(error)) return undefined;
     try {
       const response = await run(await input.resetSandbox());
       if (!persistenceBlocked(response)) return response;
       return locally(response.error?.code ?? "SANDBOX_UNAVAILABLE");
     } catch (retryError) {
       if (!sandboxFailureCanRunLocally(retryError)) throw retryError;
-      return locally(
-        safeError(retryError, "SANDBOX_UNAVAILABLE", "sandbox").code,
-        retryError,
-      );
+      return locally(recordedSandboxFailure(retryError).code, retryError);
     }
   };
   try {
@@ -105,9 +118,6 @@ export async function executeWorker(input: {
     const recovered = await replaced(error);
     if (recovered) return recovered;
     if (!sandboxFailureCanRunLocally(error)) throw error;
-    return locally(
-      safeError(error, "SANDBOX_UNAVAILABLE", "sandbox").code,
-      error,
-    );
+    return locally(recordedSandboxFailure(error).code, error);
   }
 }
