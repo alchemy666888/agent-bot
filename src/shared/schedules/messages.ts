@@ -111,15 +111,6 @@ export function schedulePromptTooLong(locale: ScheduleLocale): string {
     : "A schedule prompt can be at most 2000 characters.";
 }
 
-export function schedulePausedAfterFailures(
-  locale: ScheduleLocale,
-  publicId: string,
-): string {
-  return locale === "zh"
-    ? `排程 ${publicId} 連續失敗，已先停止。可用「啟動排程 ${publicId}」重新啟動。`
-    : `Schedule ${publicId} stopped after repeated failures. Restart it with /schedule_start ${publicId}.`;
-}
-
 function clip(prompt: string): string {
   const flat = prompt.replace(/\s+/g, " ").trim();
   return flat.length > 80 ? `${flat.slice(0, 79)}…` : flat;
