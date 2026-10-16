@@ -136,7 +136,10 @@ async function telegramTurn(
         )
       : undefined,
     capabilities,
-    optionalPositiveInteger("SKILL_EXECUTION_TIMEOUT_MS") ?? 60_000,
+    // One wall-clock budget for routing, web search, and delivery. It stays
+    // under the worker command timeout so a deadline can still send a reply
+    // instead of dying with the process.
+    optionalPositiveInteger("SKILL_EXECUTION_TIMEOUT_MS") ?? 220_000,
     { mode: routingMode, minimumConfidence: routerMinimumConfidence },
     Object.freeze({
       catalogToken: authorizedSkillCatalog.catalogToken,

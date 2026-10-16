@@ -19,7 +19,12 @@ export function postgresPoolConfig(
   certificateAuthority?: string,
 ): PoolConfig {
   if (!certificateAuthority)
-    return { connectionString, max: 3, allowExitOnIdle: true };
+    return {
+      connectionString,
+      max: 3,
+      allowExitOnIdle: true,
+      connectionTimeoutMillis: 10_000,
+    };
 
   const url = new URL(connectionString);
   // node-postgres replaces an explicit `ssl` object when SSL query parameters
@@ -30,6 +35,7 @@ export function postgresPoolConfig(
     connectionString: url.toString(),
     max: 3,
     allowExitOnIdle: true,
+    connectionTimeoutMillis: 10_000,
     ssl: { ca: certificateAuthority, rejectUnauthorized: true },
   };
 }
