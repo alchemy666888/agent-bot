@@ -71,6 +71,52 @@ describe("private worker transport", () => {
       expect.arrayContaining(["-f"]),
     );
   });
+  it("returns the worker response when cleanup has no session", async () => {
+    const correlationId = uuidV7();
+    const target = sandbox({
+      contractVersion: 1,
+      correlationId,
+      ok: true,
+      data: {},
+    });
+    vi.mocked(target.runCommand)
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: async () => "",
+        stderr: async () => "",
+      })
+      .mockRejectedValueOnce(
+        new Error("No active session. Run a command or call resume first."),
+      );
+    await expect(
+      invokeWorker(target, "/tmp/worker.mjs", {
+        contractVersion: 1,
+        correlationId,
+        operation: "health",
+        payload: {},
+      }),
+    ).resolves.toMatchObject({ ok: true });
+  });
+  it("keeps the worker failure when cleanup has no session", async () => {
+    const target = sandbox({}, 1);
+    vi.mocked(target.runCommand)
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: async () => "",
+        stderr: async () => "",
+      })
+      .mockRejectedValueOnce(
+        new Error("No active session. Run a command or call resume first."),
+      );
+    await expect(
+      invokeWorker(target, "/tmp/worker.mjs", {
+        contractVersion: 1,
+        correlationId: uuidV7(),
+        operation: "health",
+        payload: {},
+      }),
+    ).rejects.toThrow("WORKER_COMMAND_FAILED");
+  });
   it("propagates command failure only after cleanup", async () => {
     const target = sandbox({}, 1);
     await expect(

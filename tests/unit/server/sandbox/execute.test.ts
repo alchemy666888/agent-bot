@@ -137,6 +137,73 @@ describe("executeWorker", () => {
     expect(openLocal).toHaveBeenCalledOnce();
   });
 
+  it("recreates the sandbox when a command throws a plain session error", async () => {
+    vi.mocked(invokeWorker)
+      .mockRejectedValueOnce(
+        new Error("No active session. Run a command or call resume first."),
+      )
+      .mockResolvedValueOnce(answered);
+    const replacement = { name: "replacement" } as SandboxHandle;
+    const resetSandbox = vi.fn(async () => replacement);
+    const openLocal = vi.fn(async () => local);
+    await expect(
+      executeWorker({
+        correlationId: "correlation-id",
+        source: Buffer.from("worker"),
+        request,
+        env: {},
+        openSandbox: async () => sandbox,
+        resetSandbox,
+        openLocal,
+      }),
+    ).resolves.toBe(answered);
+    expect(resetSandbox).toHaveBeenCalledOnce();
+    expect(openLocal).not.toHaveBeenCalled();
+    expect(invokeWorker).toHaveBeenCalledWith(
+      replacement,
+      "worker.mjs",
+      request,
+      {},
+    );
+  });
+
+  it("records the plain session cause when recreation also fails", async () => {
+    vi.mocked(invokeWorker).mockResolvedValueOnce(answered);
+    const openLocal = vi.fn(async () => local);
+    const sessionError = new Error(
+      "No active session. Run a command or call resume first.",
+    );
+    await expect(
+      executeWorker({
+        correlationId: "correlation-id",
+        source: Buffer.from("worker"),
+        request,
+        env: {},
+        openSandbox: async () => {
+          throw sessionError;
+        },
+        resetSandbox: async () => {
+          throw sessionError;
+        },
+        openLocal,
+      }),
+    ).resolves.toBe(answered);
+    expect(openLocal).toHaveBeenCalledOnce();
+    const event = JSON.parse(
+      String(vi.mocked(console.info).mock.calls.at(-1)?.[0]),
+    );
+    expect(event).toMatchObject({
+      operation: "sandbox.local_fallback",
+      result: "degraded",
+      code: "SANDBOX_UNAVAILABLE",
+      metadata: {
+        stage: "sandbox",
+        kind: "Error",
+        causeCode: "sandbox_session_missing",
+      },
+    });
+  });
+
   it("does not hide a request the sandbox rejected as invalid", async () => {
     const openLocal = vi.fn(async () => local);
     await expect(

@@ -95,7 +95,12 @@ export async function invokeWorker(
     if (!response) throw new Error("WORKER_RESPONSE_MISSING");
     return workerResponseSchema.parse(JSON.parse(response.toString("utf8")));
   } finally {
-    await sandbox.runCommand("rm", ["-f", requestPath, responsePath]);
+    // Cleanup runs after the worker result is known. A dead session throws a
+    // plain Error here and would otherwise replace that result, which the
+    // controller logs as SANDBOX_UNAVAILABLE and runs the turn again locally.
+    await sandbox
+      .runCommand("rm", ["-f", requestPath, responsePath])
+      .catch(() => undefined);
   }
 }
 
