@@ -1,3 +1,5 @@
+import { deadline, settleOnAbort } from "../../shared/abort";
+
 export function chunkTelegramText(text: string, limit = 4096): string[] {
   if (!text) return [];
   const chunks: string[] = [];
@@ -160,17 +162,32 @@ export function formatTelegramText(text: string): string {
   return stripSummarySectionBars(formatted).trim();
 }
 
+export const TELEGRAM_REQUEST_TIMEOUT_MS = 8_000;
+
 export class TelegramClient {
   constructor(
     private token: string,
     private request: typeof fetch = fetch,
+    private timeoutMs = TELEGRAM_REQUEST_TIMEOUT_MS,
   ) {}
   private async call(method: string, body: unknown) {
-    return this.request(`https://api.telegram.org/bot${this.token}/${method}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const cap = deadline(this.timeoutMs, "TELEGRAM_DELIVERY_FAILED");
+    try {
+      return await settleOnAbort(
+        this.request(`https://api.telegram.org/bot${this.token}/${method}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: cap.signal,
+        }),
+        cap.signal,
+      );
+    } catch (error) {
+      if (cap.signal.aborted) throw new Error("TELEGRAM_DELIVERY_FAILED");
+      throw error;
+    } finally {
+      cap.cancel();
+    }
   }
   async typing(chatId: string) {
     await this.call("sendChatAction", { chat_id: chatId, action: "typing" });

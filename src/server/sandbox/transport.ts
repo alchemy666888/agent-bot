@@ -9,6 +9,7 @@ import {
 } from "../../shared/contracts";
 import { sanitizeProgress } from "../../shared/worker-progress";
 import type { SandboxHandle } from "./sdk-adapter";
+import { WORKER_COMMAND_TIMEOUT_MS } from "../../shared/worker-budget";
 
 const RUNTIME_ROOT = "/tmp/telegram-agent";
 
