@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { logStructured, safeError } from "../../../src/shared/logger";
+import {
+  formatFailureDebug,
+  logStructured,
+  safeError,
+} from "../../../src/shared/logger";
 import { uuidV7 } from "../../../src/shared/ids";
 
 describe("sanitized observability", () => {
@@ -132,5 +136,52 @@ describe("sanitized observability", () => {
     });
     expect(failure.detail).toContain("ENOTFOUND");
     expect(failure.detail).toContain("private-host");
+  });
+
+  it("includes the last worker progress in a private failure message", () => {
+    const failure = safeError(
+      Object.assign(new Error("WORKER_COMMAND_TIMEOUT"), {
+        operation: "telegramTurn",
+        timeoutLimitMs: 250_000,
+        progress: {
+          stage: "model",
+          elapsedMs: 248_000,
+          iteration: 2,
+          executionMode: "forced_web_search",
+          tool: "web_search",
+          prompt: "CPI數據",
+        },
+      }),
+      "INTERNAL_ERROR",
+      "dispatch",
+    );
+    expect(failure.classification).toBe("transient");
+    const text = formatFailureDebug({
+      headline: "這次回覆沒有完成，請再傳一次。",
+      correlationId: uuidV7(),
+      durationMs: 255_230,
+      source: "dispatch",
+      updateId: "566922337",
+      inputKind: "text",
+      context: {
+        operation: "telegramTurn",
+        timeoutLimitMs: 250_000,
+        progress: {
+          stage: "model",
+          elapsedMs: 248_000,
+          iteration: 2,
+          executionMode: "forced_web_search",
+          tool: "web_search",
+        },
+      },
+      failure,
+    });
+    expect(text).toContain("timeoutLimitMs: 250000");
+    expect(text).toContain("workerStage: model");
+    expect(text).toContain("workerElapsedMs: 248000");
+    expect(text).toContain("iteration: 2");
+    expect(text).toContain("executionMode: forced_web_search");
+    expect(text).toContain("tool: web_search");
+    expect(text).not.toContain("CPI");
   });
 });

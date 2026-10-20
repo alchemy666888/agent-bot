@@ -741,6 +741,26 @@ describe("model adapter", () => {
     expect(recovery.tools).toBeUndefined();
   });
 
+  it("records model progress before the provider request", async () => {
+    const notes: string[] = [];
+    const fetcher = vi.fn(async () =>
+      Response.json({ output_text: "Useful answer" }),
+    );
+    await new DeepSeekProvider(
+      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
+      fetcher as typeof fetch,
+      undefined,
+      async (progress) => {
+        notes.push(`${progress.stage}:${progress.tool ?? ""}`);
+      },
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "CPI" }],
+    });
+    expect(notes).toEqual(["model:web_search"]);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it("forwards caller aborts to the provider request", async () => {
     const controller = new AbortController();
     const fetcher = vi.fn(

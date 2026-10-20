@@ -7,12 +7,25 @@ import {
   type WorkerRequest,
   type WorkerResponse,
 } from "../../shared/contracts";
+import { sanitizeProgress } from "../../shared/worker-progress";
 import type { SandboxHandle } from "./sdk-adapter";
 import { WORKER_COMMAND_TIMEOUT_MS } from "../../shared/worker-budget";
 
 const RUNTIME_ROOT = "/tmp/telegram-agent";
 
-export { WORKER_COMMAND_TIMEOUT_MS };
+export function workerProgressPath(correlationId: string): string {
+  if (!/^[A-Za-z0-9-]+$/.test(correlationId))
+    throw new Error("PERSISTENCE_PATH_REJECTED");
+  return `${RUNTIME_ROOT}/progress/${correlationId}.json`;
+}
+
+/**
+ * Hard stop for one worker process. The webhook function allows 300s.
+ * Controller setup uses the first few seconds, and the worker still needs
+ * time to send Telegram and write its response after its own deadline.
+ * 3 × 60s used to land on this kill, so the process died before any reply.
+ */
+export const WORKER_COMMAND_TIMEOUT_MS = 250_000;
 
 const commandFailureCodes: ReadonlyArray<[RegExp, string]> = [
   [/WORKER_COMMAND_TIMEOUT/, "WORKER_COMMAND_TIMEOUT"],
@@ -72,20 +85,36 @@ export async function invokeWorker(
   const nonce = randomUUID();
   const requestPath = `${RUNTIME_ROOT}/requests/${nonce}.json`;
   const responsePath = `${RUNTIME_ROOT}/responses/${nonce}.json`;
+  const progressPath = workerProgressPath(valid.correlationId);
   try {
     await sandbox.writeFiles([
       { path: requestPath, content: Buffer.from(JSON.stringify(valid)) },
+      {
+        path: progressPath,
+        content: Buffer.from(
+          JSON.stringify({ stage: "command", elapsedMs: 0 }),
+        ),
+      },
     ]);
     // The SDK positional form keeps only signal and timeout. Operation
     // secrets must use the object form or they never reach the worker.
     const result = await sandbox.runCommand({
       cmd: "node",
       args: [workerPath, valid.operation, requestPath, responsePath],
-      env,
+      env: { ...env, WORKER_PROGRESS_FILE: progressPath },
       timeoutMs: WORKER_COMMAND_TIMEOUT_MS,
     });
-    if (result.exitCode !== 0)
-      throw new Error(await commandFailureCode(result));
+    if (result.exitCode !== 0) {
+      const code = await commandFailureCode(result);
+      const progress = await readCommandProgress(sandbox, progressPath);
+      throw Object.assign(new Error(code), {
+        operation: valid.operation,
+        ...(code === "WORKER_COMMAND_TIMEOUT"
+          ? { timeoutLimitMs: WORKER_COMMAND_TIMEOUT_MS }
+          : {}),
+        ...(progress ? { progress } : {}),
+      });
+    }
     const response = await sandbox.readFileToBuffer({ path: responsePath });
     if (!response) throw new Error("WORKER_RESPONSE_MISSING");
     return workerResponseSchema.parse(JSON.parse(response.toString("utf8")));
@@ -94,8 +123,21 @@ export async function invokeWorker(
     // plain Error here and would otherwise replace that result, which the
     // controller logs as SANDBOX_UNAVAILABLE and runs the turn again locally.
     await sandbox
-      .runCommand("rm", ["-f", requestPath, responsePath])
+      .runCommand("rm", ["-f", requestPath, responsePath, progressPath])
       .catch(() => undefined);
+  }
+}
+
+async function readCommandProgress(
+  sandbox: SandboxHandle,
+  path: string,
+): Promise<ReturnType<typeof sanitizeProgress>> {
+  const buffer = await sandbox.readFileToBuffer({ path }).catch(() => null);
+  if (!buffer) return undefined;
+  try {
+    return sanitizeProgress(JSON.parse(buffer.toString("utf8")));
+  } catch {
+    return undefined;
   }
 }
 

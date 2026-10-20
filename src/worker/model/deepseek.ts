@@ -116,7 +116,25 @@ export class DeepSeekProvider implements ModelProvider {
     },
     private request: typeof fetch = fetch,
     private capabilities = new CapabilityRegistry(),
+    private note?: (progress: {
+      stage: "model" | "tool" | "recovery";
+      iteration: number;
+      executionMode: string;
+      tool?: string;
+    }) => Promise<void> | void,
   ) {}
+  private async report(progress: {
+    stage: "model" | "tool" | "recovery";
+    iteration: number;
+    executionMode: string;
+    tool?: string;
+  }): Promise<void> {
+    try {
+      await this.note?.(progress);
+    } catch {
+      return;
+    }
+  }
   async generate(input: ModelRequest): Promise<ModelResponse> {
     const audit: CapabilityAuditRecord[] = [];
     // New callers provide an explicit trusted channel. The role-based branch
@@ -210,21 +228,30 @@ export class DeepSeekProvider implements ModelProvider {
     for (let iteration = 0; iteration <= toolLimit; iteration++) {
       if (input.signal?.aborted) throw abortError(input.signal);
       const started = Date.now();
-      let posted: ProviderExchange;
-      try {
-        posted = await this.postResponses(input, {
+      const forcedSearch =
+        requireFreshSearch ||
+        (input.executionMode === "forced_web_search" && iteration === 0);
+      if (this.note)
+        await this.report({
+          stage: "model",
+          iteration,
+          executionMode: input.executionMode,
+          ...(forcedSearch ? { tool: "web_search" } : {}),
+        });
+      const response = await this.request(`${this.config.baseUrl}/responses`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.config.apiKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
           model: "deepseek-v4-pro",
           stream: false,
           reasoning: { effort: this.config.thinking ? "medium" : "none" },
           ...(tools.length
             ? {
                 tools,
-                tool_choice:
-                  requireFreshSearch ||
-                  (input.executionMode === "forced_web_search" &&
-                    iteration === 0)
-                    ? { type: "web_search" }
-                    : "auto",
+                tool_choice: forcedSearch ? { type: "web_search" } : "auto",
               }
             : {}),
           ...(instructions ? { instructions } : {}),
@@ -390,6 +417,15 @@ export class DeepSeekProvider implements ModelProvider {
         }
         let result: unknown;
         try {
+          if (this.note)
+            await this.report({
+              stage: "tool",
+              iteration,
+              executionMode: input.executionMode,
+              ...(/^[a-z][a-z0-9_-]{0,63}$/.test(call.data.name)
+                ? { tool: call.data.name }
+                : {}),
+            });
           result = await this.capabilities.invoke(
             call.data.name,
             args,
@@ -521,23 +557,37 @@ export class DeepSeekProvider implements ModelProvider {
     // Recovery is the one deliberate exception to generate's always-available
     // native search tool. It is a bounded, tool-free safety escape hatch after
     // malformed protocol, denied calls, failed search, or exhausted tool turns.
-    const posted = await this.postResponses(input, {
-      model: "deepseek-v4-pro",
-      stream: false,
-      reasoning: { effort: this.config.thinking ? "medium" : "none" },
-      instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
-      input: [
-        ...originalConversation.filter(
-          (item) =>
-            (item as { role?: string }).role === "user" ||
-            (item as { role?: string }).role === "assistant",
-        ),
-        {
-          role: "user",
-          content:
-            "Provide the final answer to my original request now. Use no tools or internal protocol.",
-        },
-      ],
+    if (this.note)
+      await this.report({
+        stage: "recovery",
+        iteration: 0,
+        executionMode: input.executionMode,
+      });
+    const response = await this.request(`${this.config.baseUrl}/responses`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${this.config.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "deepseek-v4-pro",
+        stream: false,
+        reasoning: { effort: this.config.thinking ? "medium" : "none" },
+        instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
+        input: [
+          ...originalConversation.filter(
+            (item) =>
+              (item as { role?: string }).role === "user" ||
+              (item as { role?: string }).role === "assistant",
+          ),
+          {
+            role: "user",
+            content:
+              "Provide the final answer to my original request now. Use no tools or internal protocol.",
+          },
+        ],
+      }),
+      signal: input.signal,
     });
     if (!posted.ok)
       throw await providerFailure("DEEPSEEK_RECOVERY_FAILED", posted.response);

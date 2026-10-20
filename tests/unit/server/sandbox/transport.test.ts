@@ -48,7 +48,12 @@ describe("private worker transport", () => {
     expect(target.runCommand).toHaveBeenNthCalledWith(1, {
       cmd: "node",
       args: expect.any(Array),
-      env: { REQUIRED_ONLY: "fixture" },
+      env: {
+        REQUIRED_ONLY: "fixture",
+        WORKER_PROGRESS_FILE: expect.stringMatching(
+          /^\/tmp\/telegram-agent\/progress\/[A-Za-z0-9-]+\.json$/,
+        ),
+      },
       timeoutMs: 250_000,
     });
     expect(target.runCommand).toHaveBeenLastCalledWith(
@@ -163,4 +168,41 @@ describe("private worker transport", () => {
       ).rejects.toThrow(code);
     },
   );
+  it("attaches the last worker progress and drops unrecognized fields", async () => {
+    const correlationId = uuidV7();
+    const target = sandbox({}, 1, "WORKER_COMMAND_TIMEOUT");
+    vi.mocked(target.readFileToBuffer).mockImplementation(async (file) => {
+      if (!file.path.includes("/progress/")) return null;
+      return Buffer.from(
+        JSON.stringify({
+          stage: "model",
+          elapsedMs: 248_000,
+          iteration: 2,
+          executionMode: "forced_web_search",
+          tool: "web_search",
+          secret: "sk-should-not-pass",
+          prompt: "CPI",
+        }),
+      );
+    });
+    await expect(
+      invokeWorker(target, "/tmp/worker.mjs", {
+        contractVersion: 1,
+        correlationId,
+        operation: "telegramTurn",
+        payload: {},
+      }),
+    ).rejects.toMatchObject({
+      message: "WORKER_COMMAND_TIMEOUT",
+      operation: "telegramTurn",
+      timeoutLimitMs: 250_000,
+      progress: {
+        stage: "model",
+        elapsedMs: 248_000,
+        iteration: 2,
+        executionMode: "forced_web_search",
+        tool: "web_search",
+      },
+    });
+  });
 });

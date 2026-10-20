@@ -8,6 +8,10 @@ import {
 import { persistControllerLog } from "../../../../shared/postgres/controller-log";
 import { uuidV7 } from "../../../../shared/ids";
 import { formatFailureDebug, safeError } from "../../../../shared/logger";
+import {
+  failureContext,
+  type FailureContext,
+} from "../../../../shared/worker-progress";
 import { TelegramClient } from "../../../../worker/telegram/client";
 import {
   claimWebhookFailure,
@@ -80,9 +84,15 @@ async function privateFailure(
 
 function failureMetadata(
   failure: ReturnType<typeof safeError>,
+  context?: FailureContext,
 ): Record<string, unknown> | undefined {
   const metadata = {
     ...(failure.diagnostic ?? {}),
+    ...(context?.operation ? { operation: context.operation } : {}),
+    ...(context?.timeoutLimitMs === undefined
+      ? {}
+      : { timeoutLimitMs: context.timeoutLimitMs }),
+    ...(context?.progress ? { progress: context.progress } : {}),
     ...(failure.detail ? { detail: failure.detail } : {}),
     ...(failure.trace?.length ? { trace: failure.trace } : {}),
   };
@@ -100,7 +110,8 @@ async function finishDispatch(
   const durationMs = Date.now() - started;
   if (outcome.state === "failed") {
     const failure = safeError(outcome.error, "INTERNAL_ERROR", "dispatch");
-    const metadata = failureMetadata(failure);
+    const context = failureContext(outcome.error);
+    const metadata = failureMetadata(failure, context);
     await persistControllerLog({
       correlationId,
       component: "controller",
@@ -124,6 +135,7 @@ async function finishDispatch(
           source: "dispatch",
           updateId: input.updateId,
           inputKind: input.kind,
+          ...(context ? { context } : {}),
           failure,
         }),
       );

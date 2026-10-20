@@ -142,6 +142,39 @@ describe("Telegram webhook", () => {
     }
   });
 
+  it("adds the worker progress to a private timeout message", async () => {
+    dispatchTelegramInput.mockRejectedValueOnce(
+      Object.assign(new Error("WORKER_COMMAND_TIMEOUT"), {
+        operation: "telegramTurn",
+        timeoutLimitMs: 250_000,
+        progress: {
+          stage: "model",
+          elapsedMs: 248_000,
+          iteration: 1,
+          executionMode: "forced_web_search",
+          tool: "web_search",
+        },
+      }),
+    );
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const response = await POST(request(privateText(21)));
+      expect(response.status).toBe(200);
+      const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(body.text).toContain("code: WORKER_COMMAND_TIMEOUT");
+      expect(body.text).toContain("classification: transient");
+      expect(body.text).toContain("operation: telegramTurn");
+      expect(body.text).toContain("timeoutLimitMs: 250000");
+      expect(body.text).toContain("workerStage: model");
+      expect(body.text).toContain("workerElapsedMs: 248000");
+      expect(body.text).toContain("executionMode: forced_web_search");
+      expect(body.text).toContain("tool: web_search");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("accepts a transient private failure without asking Telegram to retry", async () => {
     dispatchTelegramInput.mockResolvedValueOnce({
       contractVersion: 1,
