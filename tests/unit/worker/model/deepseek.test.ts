@@ -4,6 +4,7 @@ import {
   CLOCK_ONLY_GUIDANCE,
   containsInternalProtocol,
   DeepSeekProvider,
+  SAFE_OUTPUT_FALLBACK,
 } from "../../../../src/worker/model/deepseek";
 import { retryTransient } from "../../../../src/worker/model/retry";
 import { REPLY_STYLE_GUIDANCE } from "../../../../src/worker/model/reply-style";
@@ -149,121 +150,79 @@ describe("model adapter", () => {
     expect(body.tools).toBeUndefined();
     expect(body.tool_choice).toBeUndefined();
   });
-  it("handles an unexpected legacy web_search_call without enabling search", async () => {
-    const searchCall = {
-      type: "web_search_call",
-      id: "ws1",
-      status: "completed",
-      action: { query: "Hong Kong weather" },
-    };
-    let round = 0;
-    const fetcher = vi.fn(async (...args: unknown[]) => {
-      const body = JSON.parse(
-        String((args[1] as RequestInit | undefined)?.body),
-      ) as { input: unknown[]; tools: unknown[]; tool_choice: unknown };
-      round += 1;
-      if (round === 1)
-        return new Response(JSON.stringify({ id: "r1", output: [searchCall] }));
-      expect(body.input).toEqual([
-        { role: "user", content: "weather" },
-        searchCall,
-      ]);
-      expect(body.tools).toBeUndefined();
-      expect(body.tool_choice).toBeUndefined();
-      return new Response(
-        JSON.stringify({
-          id: "r2",
-          output_text: "Hong Kong is sunny.",
-          usage: { input_tokens: 4, output_tokens: 5 },
-        }),
-      );
-    });
-    const result = await new DeepSeekProvider(
-      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
-      fetcher as typeof fetch,
-    ).generate({
-      executionMode: "forced_web_search",
-      messages: [{ role: "user", content: "weather" }],
-    });
-    const initial = JSON.parse(
-      String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
-    );
-    expect(initial.tool_choice).toBeUndefined();
-    expect(result.content).toBe("Hong Kong is sunny.");
-    expect(result.capabilityAudit).toEqual([
-      {
-        capabilityId: "web_search",
-        outcome: "success",
-        durationMs: expect.any(Number),
-      },
-    ]);
-    expect(fetcher).toHaveBeenCalledTimes(2);
-  });
-  it("turns a failed forced search into a safe final limitation", async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            output: [{ type: "web_search_call", id: "ws1", status: "failed" }],
+  it.each(["completed", "failed"])(
+    "rejects unsolicited %s search output without continuing a search loop",
+    async (status) => {
+      const fetcher = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            id: "r1",
+            output: [{ type: "web_search_call", id: "ws1", status }],
+            output_text: "It is definitely sunny today.",
+            usage: { input_tokens: 2, output_tokens: 3 },
           }),
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            output_text: "I couldn't verify current information right now.",
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            id: "r2",
+            output_text: "Please share the current weather data.",
+            usage: { input_tokens: 4, output_tokens: 5 },
           }),
+        );
+      const result = await new DeepSeekProvider(
+        { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
+        fetcher as typeof fetch,
+      ).generate({
+        executionMode: "direct",
+        messages: [{ role: "user", content: "weather" }],
+      });
+      expect(result).toMatchObject({
+        content: "Please share the current weather data.",
+        usage: { inputTokens: 6, outputTokens: 8 },
+        outputRecovery: { triggered: true, succeeded: true },
+      });
+      expect(result.capabilityAudit).toBeUndefined();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      for (const [, init] of fetcher.mock.calls) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.tools).toBeUndefined();
+        expect(body.tool_choice).toBeUndefined();
+        expect(JSON.stringify(body.input)).not.toContain("web_search_call");
+      }
+    },
+  );
+
+  it.each(["direct", "forced_web_search"] as const)(
+    "surfaces provider errors without a search recovery in %s mode",
+    async (executionMode) => {
+      const fetcher = vi.fn(async () =>
+        Response.json(
+          {
+            error: { message: "Unavailable" },
+          },
+          { status: 503 },
         ),
       );
-    const result = await new DeepSeekProvider(
-      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
-      fetcher as typeof fetch,
-    ).generate({
-      executionMode: "forced_web_search",
-      messages: [{ role: "user", content: "latest news" }],
-    });
-    expect(result).toMatchObject({
-      content: "I couldn't verify current information right now.",
-      outputRecovery: { triggered: true, succeeded: true },
-      capabilityAudit: [{ capabilityId: "web_search", outcome: "failure" }],
-    });
-    const recoveryBody = JSON.parse(
-      String((fetcher.mock.calls[1]?.[1] as RequestInit | undefined)?.body),
-    );
-    const initialBody = JSON.parse(
-      String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
-    );
-    expect(initialBody.tools).toBeUndefined();
-    expect(initialBody.tool_choice).toBeUndefined();
-    expect(recoveryBody.tools).toBeUndefined();
-    expect(recoveryBody.instructions).toContain(REPLY_STYLE_GUIDANCE);
-    expect(recoveryBody.instructions).toContain(
-      "failed or produced no useful results",
-    );
-  });
-  it("does not accept a factual answer accompanying a failed forced search", async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json({
-          output: [{ type: "web_search_call", id: "ws", status: "failed" }],
-          output_text: "It is definitely sunny today.",
+      await expect(
+        new DeepSeekProvider(
+          {
+            apiKey: "fixture",
+            baseUrl: "https://example.test",
+            thinking: false,
+          },
+          fetcher as typeof fetch,
+        ).generate({
+          executionMode,
+          messages: [{ role: "user", content: "latest news" }],
         }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({ output_text: "I could not verify current weather." }),
-      );
-    const result = await new DeepSeekProvider(
-      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
-      fetcher as typeof fetch,
-    ).generate({
-      executionMode: "forced_web_search",
-      messages: [{ role: "user", content: "weather" }],
-    });
-    expect(result.content).toBe("I could not verify current weather.");
-    expect(result.outputRecovery).toMatchObject({ triggered: true });
-  });
+      ).rejects.toMatchObject({
+        message: "DEEPSEEK_REQUEST_FAILED",
+        status: 503,
+      });
+      expect(fetcher).toHaveBeenCalledOnce();
+    },
+  );
 
   it("corrects a draft about another place without enabling native search", async () => {
     const request = "今天香港有什麼新聞";
@@ -458,6 +417,61 @@ describe("model adapter", () => {
       },
     ]);
   });
+  it("denies a legacy search function even when the selected skill declares it", async () => {
+    const execute = vi.fn(async () => ({ results: [] }));
+    const registry = new CapabilityRegistry([
+      {
+        request: {
+          id: "web_search",
+          description: "Legacy search",
+          inputSchema: { type: "object" },
+        },
+        input: z.object({}),
+        execute,
+      },
+    ]);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          output: [
+            {
+              type: "function_call",
+              name: "web_search",
+              call_id: "ws1",
+              arguments: "{}",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ output_text: "Please provide the current figures." }),
+      );
+    const result = await new DeepSeekProvider(
+      { apiKey: "x", baseUrl: "https://example.test", thinking: false },
+      fetcher,
+      registry,
+    ).generate({
+      executionMode: "selected_skill",
+      messages: [{ role: "user", content: "latest news" }],
+      skill: {
+        id: "news",
+        version: "1",
+        instructions: "Summarize the news",
+        capabilities: registry.requests(["web_search"]),
+        prohibitedActions: [],
+      },
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      content: "Please provide the current figures.",
+      capabilityAudit: [{ capabilityId: "web_search", outcome: "denied" }],
+    });
+    for (const [, init] of fetcher.mock.calls) {
+      expect(JSON.parse(String(init?.body)).tools).toBeUndefined();
+    }
+  });
+
   it("offers only authorized function tools for a selected skill", async () => {
     const fetcher = vi.fn(
       async () =>
@@ -714,58 +728,22 @@ describe("model adapter", () => {
     expect(result.content).not.toContain("hidden rationale");
   });
 
-  it("bounds repeated native web-search iterations and recovers to final text", async () => {
+  it("uses tool-free recovery for empty output", async () => {
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            output: [
-              { type: "web_search_call", id: "one", status: "completed" },
-            ],
-          }),
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            output: [
-              { type: "web_search_call", id: "two", status: "completed" },
-            ],
-          }),
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            output_text: "Search could not be completed safely.",
-          }),
-        ),
-      );
+      .mockResolvedValueOnce(Response.json({ output: [] }))
+      .mockResolvedValueOnce(Response.json({ output_text: "Useful answer" }));
     const result = await new DeepSeekProvider(
-      {
-        apiKey: "x",
-        baseUrl: "https://example.test",
-        thinking: false,
-        maxToolCalls: 1,
-      },
+      { apiKey: "x", baseUrl: "https://example.test", thinking: false },
       fetcher as typeof fetch,
     ).generate({
-      executionMode: "forced_web_search",
-      messages: [{ role: "user", content: "latest" }],
+      executionMode: "direct",
+      messages: [{ role: "user", content: "hello" }],
     });
-    expect(fetcher).toHaveBeenCalledTimes(3);
-    expect(result).toMatchObject({
-      content: "Search could not be completed safely.",
-      outputRecovery: { triggered: true, succeeded: true },
-    });
-    const first = JSON.parse(
-      String((fetcher.mock.calls[0]![1] as RequestInit).body),
-    );
-    expect(first.tool_choice).toBeUndefined();
-    const recovery = JSON.parse(
-      String((fetcher.mock.calls[2]![1] as RequestInit).body),
-    );
+    expect(result.content).toBe("Useful answer");
+    expect(result.outputRecovery).toEqual({ triggered: true, succeeded: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const recovery = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
     expect(recovery.tools).toBeUndefined();
   });
 
@@ -813,105 +791,39 @@ describe("model adapter", () => {
     await expect(pending).rejects.toThrow("cancelled");
   });
 
-  it("returns one search limitation when web search never settles", async () => {
-    let releaseHung: (() => void) | undefined;
-    const fetcher = vi.fn((_url: unknown, init?: RequestInit) => {
-      const body = JSON.parse(String(init?.body)) as { tools?: unknown };
-      if (fetcher.mock.calls.length === 1) {
-        expect(body.tools).toBeUndefined();
-        return new Promise<Response>((resolve) => {
-          releaseHung = () =>
-            resolve(Response.json({ output_text: "too late" }));
-        });
-      }
-      expect(body.tools).toBeUndefined();
-      return Promise.resolve(
-        Response.json({
-          output_text: "Current information could not be verified.",
-        }),
+  it.each(["direct", "forced_web_search"] as const)(
+    "bounds body reads without a search recovery in %s mode",
+    async (executionMode) => {
+      const cancel = vi.fn(async () => {});
+      const fetcher = vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 200,
+            json: () => new Promise(() => undefined),
+            body: { cancel },
+          }) as unknown as Response,
       );
-    });
-    const result = await new DeepSeekProvider(
-      {
-        apiKey: "x",
-        baseUrl: "https://example.test",
-        thinking: false,
-        requestTimeoutMs: 30,
-      },
-      fetcher as typeof fetch,
-    ).generate({
-      executionMode: "forced_web_search",
-      messages: [{ role: "user", content: "CPI BTC" }],
-    });
-    expect(result.content).toBe("Current information could not be verified.");
-    expect(result.outputRecovery).toEqual({ triggered: true, succeeded: true });
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    releaseHung?.();
-  });
-
-  it("bounds recovery when both search and the recovery request hang", async () => {
-    const signals: AbortSignal[] = [];
-    const fetcher = vi.fn((_url: unknown, init?: RequestInit) => {
-      signals.push(init!.signal!);
-      return new Promise<Response>(() => undefined);
-    });
-    const pending = new DeepSeekProvider(
-      {
-        apiKey: "x",
-        baseUrl: "https://example.test",
-        thinking: false,
-        requestTimeoutMs: 10,
-      },
-      fetcher as typeof fetch,
-    ).generate({
-      executionMode: "forced_web_search",
-      messages: [{ role: "user", content: "CPI BTC" }],
-    });
-    await expect(pending).resolves.toMatchObject({
-      content:
-        "Current information could not be verified. Please try again later.",
-      outputRecovery: { triggered: true, succeeded: false },
-    });
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(signals.every((signal) => signal.aborted)).toBe(true);
-  });
-
-  it("stops reading a web-search body that never arrives", async () => {
-    let releaseHung: (() => void) | undefined;
-    const fetcher = vi.fn(() => {
-      if (fetcher.mock.calls.length === 1) {
-        releaseHung = () => undefined;
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () => new Promise(() => undefined),
-          body: { cancel: async () => undefined },
-        } as unknown as Response);
-      }
-      return Promise.resolve(
-        Response.json({
-          output_text: "Current information could not be verified.",
+      await expect(
+        new DeepSeekProvider(
+          {
+            apiKey: "x",
+            baseUrl: "https://example.test",
+            thinking: false,
+            requestTimeoutMs: 10,
+          },
+          fetcher as typeof fetch,
+        ).generate({
+          executionMode,
+          messages: [{ role: "user", content: "CPI BTC" }],
         }),
-      );
-    });
-    const result = await new DeepSeekProvider(
-      {
-        apiKey: "x",
-        baseUrl: "https://example.test",
-        thinking: false,
-        requestTimeoutMs: 30,
-      },
-      fetcher as typeof fetch,
-    ).generate({
-      executionMode: "forced_web_search",
-      messages: [{ role: "user", content: "CPI BTC" }],
-    });
-    expect(result.content).toBe("Current information could not be verified.");
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    releaseHung?.();
-  });
+      ).rejects.toThrow("PROVIDER_REQUEST_TIMEOUT");
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(cancel).toHaveBeenCalledOnce();
+    },
+  );
 
-  it("searches a user-specified date instead of the current clock", async () => {
+  it("uses a user-specified date instead of the current clock", async () => {
     const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { instructions: string };
       expect(body.instructions).toContain("current_year: 2026");
@@ -935,31 +847,36 @@ describe("model adapter", () => {
     expect(result.content).toContain("2024年3月15日");
   });
 
-  it("bounds a direct request even when fetch ignores abort", async () => {
-    const fetcher = vi.fn<typeof fetch>(
-      () => new Promise<Response>(() => undefined),
-    );
-    const pending = new DeepSeekProvider(
-      {
-        apiKey: "x",
-        baseUrl: "https://example.test",
-        thinking: false,
-        requestTimeoutMs: 10,
-      },
-      fetcher as typeof fetch,
-    ).generate({
-      executionMode: "direct",
-      messages: [{ role: "user", content: "hello" }],
-    });
-    await expect(pending).rejects.toThrow("PROVIDER_REQUEST_TIMEOUT");
-    expect(fetcher).toHaveBeenCalledOnce();
-    expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
-  });
+  it.each(["direct", "forced_web_search"] as const)(
+    "bounds a %s request even when fetch ignores abort",
+    async (executionMode) => {
+      const fetcher = vi.fn<typeof fetch>(
+        () => new Promise<Response>(() => undefined),
+      );
+      await expect(
+        new DeepSeekProvider(
+          {
+            apiKey: "x",
+            baseUrl: "https://example.test",
+            thinking: false,
+            requestTimeoutMs: 10,
+          },
+          fetcher,
+        ).generate({
+          executionMode,
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      ).rejects.toThrow("PROVIDER_REQUEST_TIMEOUT");
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    },
+  );
 
-  it("stops after one timed-out search and one timed-out recovery", async () => {
-    const fetcher = vi.fn<typeof fetch>(
-      () => new Promise<Response>(() => undefined),
-    );
+  it("returns safe text when tool-free recovery times out", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ output: [] }))
+      .mockImplementationOnce(() => new Promise<Response>(() => undefined));
     const result = await new DeepSeekProvider(
       {
         apiKey: "x",
@@ -967,19 +884,17 @@ describe("model adapter", () => {
         thinking: false,
         requestTimeoutMs: 10,
       },
-      fetcher as typeof fetch,
+      fetcher,
     ).generate({
-      executionMode: "forced_web_search",
-      messages: [{ role: "user", content: "CPI BTC" }],
+      executionMode: "direct",
+      messages: [{ role: "user", content: "hello" }],
     });
-    expect(result.content).toContain("could not be verified");
+    expect(result.content).toBe(SAFE_OUTPUT_FALLBACK);
     expect(result.outputRecovery).toEqual({
       triggered: true,
       succeeded: false,
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
-    const recovery = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
-    expect(recovery.tools).toBeUndefined();
   });
 
   it("bounds error-body reads and does not wait for body cancellation", async () => {

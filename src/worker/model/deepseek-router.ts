@@ -142,12 +142,7 @@ export class DeepSeekRouter implements RequestRouter {
                     ],
                     additionalProperties: false,
                   },
-                  ...[
-                    "web_search_fallback",
-                    "direct",
-                    "unavailable",
-                    "refuse",
-                  ].map((kind) => ({
+                  ...["direct", "unavailable", "refuse"].map((kind) => ({
                     properties: {
                       kind: { const: kind },
                       confidence: { type: "number" },

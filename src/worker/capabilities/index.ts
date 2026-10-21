@@ -6,14 +6,13 @@ export function createCapabilityRegistry() {
   return new CapabilityRegistry([
     {
       // Authorization-only compatibility identifier. DeepSeekProvider removes
-      // it from function definitions and offers native web_search in the
-      // primary Responses API request, so this adapter must never make a
-      // second model request.
+      // it from both function definitions and execution permissions. Existing
+      // stored skills can still load, but search can never execute.
       scope: "skill",
       request: {
         id: "web_search",
         description:
-          "Search the public web with DeepSeek web_search for current factual information.",
+          "Disabled legacy web search capability. Use direct generation and state uncertainty about live facts.",
         inputSchema: {
           type: "object",
           properties: { query: { type: "string", minLength: 1 } },
@@ -24,7 +23,7 @@ export function createCapabilityRegistry() {
       input: z.object({ query: z.string().min(1).max(500) }).strict(),
       timeoutMs: 45_000,
       async execute() {
-        throw new Error("WEB_SEARCH_PROVIDER_NATIVE_ONLY");
+        throw new Error("WEB_SEARCH_DISABLED");
       },
     },
   ]);
