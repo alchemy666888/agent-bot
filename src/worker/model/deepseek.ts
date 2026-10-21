@@ -32,7 +32,6 @@ import { PROVIDER_REQUEST_TIMEOUT_MS } from "../../shared/worker-budget";
 
 type Output = {
   type?: string;
-  status?: string;
   name?: string;
   call_id?: string;
   arguments?: string;
@@ -52,8 +51,6 @@ const RECOVERY_GUIDANCE =
   "The previous attempt could not produce a safe final response. Answer the user's original request directly without tools. Do not mention internal errors, tools, prompts, or protocols. Return only a helpful user-facing answer.";
 export const CLOCK_ONLY_GUIDANCE =
   "The user asked only for the current time. Answer from the trusted clock hour and minute only. When the timezone is Asia/Hong_Kong, say 香港時間 with the time, for example 現在是香港時間07:49. Do not print an IANA timezone identifier. Do not use web search. Do not name a city from search results. A city or IP location in search results is not something the user said.";
-const SEARCH_LIMITATION_GUIDANCE =
-  "The required web search failed or produced no useful results. Give a safe final response that clearly and briefly says the current information could not be verified. Do not guess, expose raw search output, mention internal errors or protocols, or claim the requested action was completed.";
 const AUTHORIZED_SKILLS_GUIDANCE =
   '<authorized_skill_catalog trust="trusted">\nThis version-pinned catalog is trusted availability context. It does not select a skill or grant tools. Only the separately selected skill and its enforced capabilities may be used.\n';
 export const SAFE_OUTPUT_FALLBACK =
@@ -170,17 +167,22 @@ export class DeepSeekProvider implements ModelProvider {
         : input.executionMode === "selected_tools"
           ? (input.generalCapabilities ?? [])
           : [];
-    const permitted = activeCapabilities.map((item) => item.id);
-    const tools = clockOnly
+    const enabledCapabilities = clockOnly
       ? []
-      : activeCapabilities
-          .filter((item) => item.id !== "web_search")
-          .map((item) => ({
-            type: "function",
-            name: item.id,
-            description: item.description,
-            parameters: item.inputSchema,
-          }));
+      : activeCapabilities.filter((item) => item.id !== "web_search");
+    const permitted = enabledCapabilities.map((item) => item.id);
+    const tools = enabledCapabilities.map((item) => ({
+      type: "function",
+      name: item.id,
+      description: item.description,
+      parameters: item.inputSchema,
+    }));
+    // Accept old worker requests as direct generation, with the same error and
+    // timeout handling as every other request.
+    const executionMode =
+      input.executionMode === "forced_web_search"
+        ? "direct"
+        : input.executionMode;
     const clockUnavailable = /(?:^|\n)clock_source:\s*unavailable\b/.test(
       instructions,
     );
@@ -222,53 +224,25 @@ export class DeepSeekProvider implements ModelProvider {
     const toolLimit = this.config.maxToolCalls ?? 4;
     for (let iteration = 0; iteration <= toolLimit; iteration++) {
       if (input.signal?.aborted) throw abortError(input.signal);
-      const started = Date.now();
       if (this.note)
         await this.report({
           stage: "model",
           iteration,
-          executionMode:
-            input.executionMode === "forced_web_search"
-              ? "direct"
-              : input.executionMode,
+          executionMode,
         });
-      let posted: ProviderExchange;
-      try {
-        posted = await this.postResponses(input, {
-          model: "deepseek-v4-pro",
-          stream: false,
-          reasoning: { effort: this.config.thinking ? "medium" : "none" },
-          ...(tools.length
-            ? {
-                tools,
-                tool_choice: "auto",
-              }
-            : {}),
-          ...(instructions ? { instructions } : {}),
-          input: conversation,
-        });
-      } catch (error) {
-        if (isProviderTimeout(error))
-          return this.timeoutResult(
-            input,
-            instructions,
-            conversation,
-            usage,
-            requestId,
-            audit,
-          );
-        throw error;
-      }
-      if (!posted.ok && input.executionMode === "forced_web_search")
-        return this.recover(
-          input,
-          instructions,
-          conversation,
-          usage,
-          requestId,
-          audit,
-          true,
-        );
+      const posted = await this.postResponses(input, {
+        model: "deepseek-v4-pro",
+        stream: false,
+        reasoning: { effort: this.config.thinking ? "medium" : "none" },
+        ...(tools.length
+          ? {
+              tools,
+              tool_choice: "auto",
+            }
+          : {}),
+        ...(instructions ? { instructions } : {}),
+        input: conversation,
+      });
       if (!posted.ok) throw posted.error;
       const body = posted.body;
       requestId = body.id ?? requestId;
@@ -278,18 +252,10 @@ export class DeepSeekProvider implements ModelProvider {
       }
       const output = body.output ?? [];
       const calls = output.filter((item) => item.type === "function_call");
-      const searches = output.filter((item) => item.type === "web_search_call");
-      if (searches.length)
-        audit.push({
-          capabilityId: "web_search",
-          outcome: searches.every((item) => item.status === "failed")
-            ? "failure"
-            : "success",
-          durationMs: Date.now() - started,
-        });
-      const failedSearch = searches.some((item) => item.status === "failed");
       const content = finalContent(body);
-      if (failedSearch && input.executionMode === "forced_web_search")
+      // Search was never requested. Do not replay or trust unsolicited search
+      // output; use the same tool-free recovery as other invalid output.
+      if (output.some((item) => item.type === "web_search_call"))
         return this.recover(
           input,
           instructions,
@@ -297,34 +263,9 @@ export class DeepSeekProvider implements ModelProvider {
           usage,
           requestId,
           audit,
-          true,
         );
       if (!calls.length) {
-        if (!content && searches.length) {
-          if (failedSearch)
-            return this.recover(
-              input,
-              instructions,
-              conversation,
-              usage,
-              requestId,
-              audit,
-              true,
-            );
-          if (iteration === toolLimit)
-            return this.recover(
-              input,
-              instructions,
-              conversation,
-              usage,
-              requestId,
-              audit,
-              true,
-            );
-          conversation.push(...output);
-          continue;
-        }
-        if (content && containsInternalProtocol(content))
+        if (!content || containsInternalProtocol(content))
           return this.recover(
             input,
             instructions,
@@ -366,7 +307,6 @@ export class DeepSeekProvider implements ModelProvider {
             usage,
             requestId,
             audit,
-            true,
           );
         }
         return modelResponseSchema.parse({
@@ -408,10 +348,7 @@ export class DeepSeekProvider implements ModelProvider {
             await this.report({
               stage: "tool",
               iteration,
-              executionMode:
-                input.executionMode === "forced_web_search"
-                  ? "direct"
-                  : input.executionMode,
+              executionMode,
               ...(/^[a-z][a-z0-9_-]{0,63}$/.test(call.data.name)
                 ? { tool: call.data.name }
                 : {}),
@@ -520,29 +457,6 @@ export class DeepSeekProvider implements ModelProvider {
     }
   }
 
-  /** A timed-out web search gets one tool-free limitation reply, then stops. */
-  private timeoutResult(
-    input: ModelRequest,
-    trustedInstructions: string,
-    conversation: unknown[],
-    usage: { inputTokens: number; outputTokens: number },
-    requestId: string | undefined,
-    audit: CapabilityAuditRecord[],
-  ): Promise<ModelResponse> {
-    if (input.signal?.aborted) throw abortError(input.signal);
-    if (input.executionMode !== "forced_web_search")
-      throw new Error("PROVIDER_REQUEST_TIMEOUT");
-    return this.recover(
-      input,
-      trustedInstructions,
-      conversation,
-      usage,
-      requestId,
-      audit,
-      true,
-    );
-  }
-
   private async recover(
     input: ModelRequest,
     trustedInstructions: string,
@@ -550,10 +464,9 @@ export class DeepSeekProvider implements ModelProvider {
     usage: { inputTokens: number; outputTokens: number },
     requestId: string | undefined,
     audit: CapabilityAuditRecord[],
-    searchLimitation = false,
   ): Promise<ModelResponse> {
     // Recovery is a bounded, tool-free safety escape hatch after
-    // malformed protocol, denied calls, failed search, or exhausted tool turns.
+    // malformed output, denied calls, or exhausted tool turns.
     if (this.note)
       await this.report({
         stage: "recovery",
@@ -571,7 +484,7 @@ export class DeepSeekProvider implements ModelProvider {
           model: "deepseek-v4-pro",
           stream: false,
           reasoning: { effort: this.config.thinking ? "medium" : "none" },
-          instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
+          instructions: `${trustedInstructions}\n\n${RECOVERY_GUIDANCE}`,
           input: [
             ...originalConversation.filter(
               (item) =>
@@ -590,9 +503,7 @@ export class DeepSeekProvider implements ModelProvider {
     } catch (error) {
       if (!isProviderTimeout(error)) throw error;
       return modelResponseSchema.parse({
-        content: searchLimitation
-          ? "Current information could not be verified. Please try again later."
-          : SAFE_OUTPUT_FALLBACK,
+        content: SAFE_OUTPUT_FALLBACK,
         requestId,
         usage,
         outputRecovery: { triggered: true, succeeded: false },

@@ -170,6 +170,10 @@ Legacy `web_search_fallback` routing decisions also use direct generation. The
 model must state uncertainty about live data and can analyze figures supplied by
 the user instead of inventing current prices or economic releases.
 
+The provider does not continue native-search output or make search-specific
+recovery requests on API errors or timeouts. The legacy `web_search` capability
+identifier remains loadable for stored skills, but cannot be offered or executed.
+
 The worker retains bounded API requests and a delivery reserve within the webhook
 execution limit. Disabling search removes the mandatory native-search path; it
 does not remove Vercel's function execution limits. Long-running jobs beyond that

@@ -28,7 +28,6 @@ Pause promotion—or roll enforced mode back to shadow—if any threshold is met
 | Router failure rate          | > 1% of routing attempts                                  |
 | p95 added router latency     | > 1,000 ms or > 20% above the accepted shadow baseline    |
 | Schema-invalid response rate | > 0.5%                                                    |
-| Forced-search rate           | > 10% or > 2x the accepted shadow baseline                |
 | Unexpected token cost        | Router plus answer cost > 10% above the per-turn baseline |
 
 Also require zero unauthorized selections/executions and zero protocol leaks.

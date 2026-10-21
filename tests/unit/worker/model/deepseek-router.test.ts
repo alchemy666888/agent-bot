@@ -74,6 +74,9 @@ describe("DeepSeek router adapter", () => {
     );
     expect(body.input[0].content).not.toContain("instructions");
     expect(body.text.format.strict).toBe(true);
+    expect(JSON.stringify(body.text.format.schema)).not.toContain(
+      "web_search_fallback",
+    );
   });
 
   it.each([

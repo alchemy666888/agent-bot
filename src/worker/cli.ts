@@ -147,7 +147,7 @@ async function telegramTurn(
         )
       : undefined,
     capabilities,
-    // One wall-clock budget for routing, web search, and delivery. Values that
+    // One wall-clock budget for routing, model generation, and delivery. Values that
     // would meet the worker command timeout are clamped so a deadline can
     // still send a reply instead of dying with the process.
     clampTurnTimeout(optionalPositiveInteger("SKILL_EXECUTION_TIMEOUT_MS")),
