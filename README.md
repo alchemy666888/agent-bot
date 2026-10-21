@@ -2,7 +2,9 @@
 
 Telegram Agent is a public conversational assistant for private Telegram chats. People message the bot in text. The app answers with DeepSeek model `deepseek-v4-pro`, stores application state in PostgreSQL, stores skill definitions in GitHub, and gives the operator a secret-protected read-only dashboard plus a consistent export.
 
-Telegram is the user interface. Next.js on Vercel receives webhooks, serves the dashboard, and controls a private Sandbox in Singapore (`sin1`). The Sandbox is the only process that reads and writes application data. All durable application data and structured logs are stored in PostgreSQL. The Sandbox filesystem is only a scratch working copy.
+Telegram is the user interface. Next.js on Vercel receives webhooks and runs Telegram turns in the bundled local worker process. Chat requests do not provision a remote Sandbox, so Sandbox billing or availability cannot block a reply. Dashboard and export operations still use the private Sandbox in Singapore (`sin1`). All durable application data and structured logs are stored in PostgreSQL; local and Sandbox filesystems are scratch working copies.
+
+Each Telegram turn resolves its context and routes once, then generates and delivers the answer. Temporary provider failures retry generation within the same turn deadline. Each provider exchange, including response-body reads and recovery, is capped at 45 seconds. Timeouts do not restart routing. The turn deadline leaves 30 seconds before the 250-second worker hard stop for delivery and cleanup. If a turn still fails, Telegram receives a concise message and diagnostics remain in server logs.
 
 Supported input includes private text, `/start`, `/help`, `/new`, and the installed-skill commands specified in `specs/telegram-agent/requirements.md`. A skill is drafted through categorized clarification, reviewed, iteratively revised, and installed only after revision-bound explicit approval. User-created skills are private to their Telegram owner; operator-managed global skills are visible to everyone. There is no user sharing or public marketplace. Discovery never implies selection: `/skill use <stable-id>` or an equivalent signed button is required before execution.
 
@@ -59,7 +61,7 @@ Deploy this repository as one Next.js project on the Vercel Hobby plan. The buil
 
 Runtime constraints that this app accepts:
 
-- One named Sandbox runs the worker while PostgreSQL remains independently durable.
+- Telegram runs the trusted bundled worker locally; one named Sandbox serves dashboard and export operations. PostgreSQL remains independently durable.
 - The controller always requests region `sin1` and a single `/workspace` mount. It opens no public Sandbox port.
 - The Sandbox timeout sent by the controller is 45 minutes, which is the Hobby ceiling used in code.
 - Availability is best-effort. The app adds no rate limit, storage cap, or login lockout of its own. Hobby, PostgreSQL-provider, Telegram, and DeepSeek limits still apply.

@@ -705,7 +705,7 @@ describe("Telegram turn", () => {
     );
   });
 
-  it("retries routing and generation together after a non-transient failure", async () => {
+  it("stops after a timeout without repeating routing or generation", async () => {
     root = await mkdtemp(join(tmpdir(), "turn-"));
     const signals: AbortSignal[] = [];
     const abortedAtStart: boolean[] = [];
@@ -751,11 +751,14 @@ describe("Telegram turn", () => {
       userId: "4",
       text: "hello",
     });
-    expect(route).toHaveBeenCalledTimes(2);
-    expect(model.generate).toHaveBeenCalledTimes(2);
-    expect(signals[0]).not.toBe(signals[1]);
-    expect(abortedAtStart).toEqual([false, false]);
-    expect(telegram.send).toHaveBeenCalledWith("3", "retried answer");
+    expect(route).toHaveBeenCalledOnce();
+    expect(model.generate).toHaveBeenCalledOnce();
+    expect(abortedAtStart).toEqual([false]);
+    expect(telegram.send).toHaveBeenCalledOnce();
+    expect(telegram.send).toHaveBeenCalledWith(
+      "3",
+      expect.stringContaining("try again later"),
+    );
   });
 
   it("sends a terminal failure instead of starting another model call after the turn deadline", async () => {

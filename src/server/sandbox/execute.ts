@@ -70,6 +70,17 @@ export function localWorkerSandbox(name: string): Promise<SandboxHandle> {
   });
 }
 
+/** Trusted Telegram worker; no remote sandbox provisioning on the chat path. */
+export async function executeLocalWorker(input: {
+  source: Buffer;
+  request: WorkerRequest;
+  env: Record<string, string>;
+}): Promise<WorkerResponse> {
+  const sandbox = await localWorkerSandbox("local");
+  const workerPath = await installWorker(sandbox, input.source);
+  return invokeWorker(sandbox, workerPath, input.request, input.env);
+}
+
 export async function executeWorker(input: {
   correlationId?: string;
   source: Buffer;

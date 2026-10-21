@@ -134,7 +134,7 @@ function localHandle(root: string): SandboxHandle {
   };
 }
 
-/** Test-only private worker adapter. Ignored whenever `VERCEL` is set. */
+/** Runs the trusted, bundled worker in a local process with explicit environment. */
 export function createLocalSandboxSdk(root: string): SandboxSdk {
   const sandbox = localHandle(root);
   return {
