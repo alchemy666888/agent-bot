@@ -238,13 +238,9 @@ export class DeepSeekProvider implements ModelProvider {
           executionMode: input.executionMode,
           ...(forcedSearch ? { tool: "web_search" } : {}),
         });
-      const response = await this.request(`${this.config.baseUrl}/responses`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${this.config.apiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
+      let posted: ProviderExchange;
+      try {
+        posted = await this.postResponses(input, {
           model: "deepseek-v4-pro",
           stream: false,
           reasoning: { effort: this.config.thinking ? "medium" : "none" },
@@ -563,31 +559,23 @@ export class DeepSeekProvider implements ModelProvider {
         iteration: 0,
         executionMode: input.executionMode,
       });
-    const response = await this.request(`${this.config.baseUrl}/responses`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.config.apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "deepseek-v4-pro",
-        stream: false,
-        reasoning: { effort: this.config.thinking ? "medium" : "none" },
-        instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
-        input: [
-          ...originalConversation.filter(
-            (item) =>
-              (item as { role?: string }).role === "user" ||
-              (item as { role?: string }).role === "assistant",
-          ),
-          {
-            role: "user",
-            content:
-              "Provide the final answer to my original request now. Use no tools or internal protocol.",
-          },
-        ],
-      }),
-      signal: input.signal,
+    const posted = await this.postResponses(input, {
+      model: "deepseek-v4-pro",
+      stream: false,
+      reasoning: { effort: this.config.thinking ? "medium" : "none" },
+      instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
+      input: [
+        ...originalConversation.filter(
+          (item) =>
+            (item as { role?: string }).role === "user" ||
+            (item as { role?: string }).role === "assistant",
+        ),
+        {
+          role: "user",
+          content:
+            "Provide the final answer to my original request now. Use no tools or internal protocol.",
+        },
+      ],
     });
     if (!posted.ok)
       throw await providerFailure("DEEPSEEK_RECOVERY_FAILED", posted.response);

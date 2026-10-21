@@ -157,6 +157,18 @@ export class TelegramTurn {
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
   }
+  private async noteFailure(input: {
+    stage: string;
+    error: unknown;
+    updateId: string;
+    userId: string;
+  }): Promise<void> {
+    try {
+      await this.observability?.recordFailure(input);
+    } catch {
+      return;
+    }
+  }
   private async note(progress: {
     stage: string;
     attempt?: number;
