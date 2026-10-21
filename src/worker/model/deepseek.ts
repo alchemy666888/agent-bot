@@ -269,8 +269,7 @@ export class DeepSeekProvider implements ModelProvider {
           audit,
           true,
         );
-      if (!posted.ok)
-        throw await providerFailure("DEEPSEEK_REQUEST_FAILED", posted.response);
+      if (!posted.ok) throw posted.error;
       const body = posted.body;
       requestId = body.id ?? requestId;
       if (body.usage) {
@@ -458,6 +457,7 @@ export class DeepSeekProvider implements ModelProvider {
   private async postResponses(
     input: ModelRequest,
     payload: unknown,
+    failureCode = "DEEPSEEK_REQUEST_FAILED",
   ): Promise<ProviderExchange> {
     if (input.signal?.aborted) throw abortError(input.signal);
     const timeoutMs =
@@ -491,20 +491,27 @@ export class DeepSeekProvider implements ModelProvider {
       });
       if (!response.ok) {
         if (signal.aborted) {
-          await cancelBody(response);
+          void cancelBody(response);
           throw new Error("PROVIDER_REQUEST_TIMEOUT");
         }
-        return { ok: false, response };
+        const error = await settleOnAbort(
+          providerFailure(failureCode, response),
+          signal,
+        ).catch((error: unknown) => {
+          void cancelBody(response);
+          throw failed(error);
+        });
+        return { ok: false, error };
       }
       const body = await settleOnAbort(
         response.json() as Promise<ResponsesBody>,
         signal,
-      ).catch(async (error: unknown) => {
-        await cancelBody(response);
+      ).catch((error: unknown) => {
+        void cancelBody(response);
         throw failed(error);
       });
       if (signal.aborted) {
-        await cancelBody(response);
+        void cancelBody(response);
         throw new Error("PROVIDER_REQUEST_TIMEOUT");
       }
       return { ok: true, body };
@@ -556,26 +563,43 @@ export class DeepSeekProvider implements ModelProvider {
             ? "direct"
             : input.executionMode,
       });
-    const posted = await this.postResponses(input, {
-      model: "deepseek-v4-pro",
-      stream: false,
-      reasoning: { effort: this.config.thinking ? "medium" : "none" },
-      instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
-      input: [
-        ...originalConversation.filter(
-          (item) =>
-            (item as { role?: string }).role === "user" ||
-            (item as { role?: string }).role === "assistant",
-        ),
+    let posted: ProviderExchange;
+    try {
+      posted = await this.postResponses(
+        input,
         {
-          role: "user",
-          content:
-            "Provide the final answer to my original request now. Use no tools or internal protocol.",
+          model: "deepseek-v4-pro",
+          stream: false,
+          reasoning: { effort: this.config.thinking ? "medium" : "none" },
+          instructions: `${trustedInstructions}\n\n${searchLimitation ? SEARCH_LIMITATION_GUIDANCE : RECOVERY_GUIDANCE}`,
+          input: [
+            ...originalConversation.filter(
+              (item) =>
+                (item as { role?: string }).role === "user" ||
+                (item as { role?: string }).role === "assistant",
+            ),
+            {
+              role: "user",
+              content:
+                "Provide the final answer to my original request now. Use no tools or internal protocol.",
+            },
+          ],
         },
-      ],
-    });
-    if (!posted.ok)
-      throw await providerFailure("DEEPSEEK_RECOVERY_FAILED", posted.response);
+        "DEEPSEEK_RECOVERY_FAILED",
+      );
+    } catch (error) {
+      if (!isProviderTimeout(error)) throw error;
+      return modelResponseSchema.parse({
+        content: searchLimitation
+          ? "Current information could not be verified. Please try again later."
+          : SAFE_OUTPUT_FALLBACK,
+        requestId,
+        usage,
+        outputRecovery: { triggered: true, succeeded: false },
+        ...(audit.length ? { capabilityAudit: audit } : {}),
+      });
+    }
+    if (!posted.ok) throw posted.error;
     const body = posted.body;
     requestId = body.id ?? requestId;
     if (body.usage) {
@@ -632,7 +656,7 @@ export async function providerFailure(
 }
 
 type ProviderExchange =
-  { ok: true; body: ResponsesBody } | { ok: false; response: Response };
+  { ok: true; body: ResponsesBody } | { ok: false; error: Error };
 
 function isProviderTimeout(error: unknown): boolean {
   return error instanceof Error && error.message === "PROVIDER_REQUEST_TIMEOUT";

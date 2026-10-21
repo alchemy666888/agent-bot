@@ -5,12 +5,10 @@ import { join } from "node:path";
 import { Pool } from "pg";
 import {
   readModelConfig,
-  readSandboxConfig,
   readTelegramConfig,
   readPromptConfig,
 } from "../config";
-import { ensureSandbox, resetSandbox } from "../sandbox/controller";
-import { executeWorker } from "../sandbox/execute";
+import { executeLocalWorker } from "../sandbox/execute";
 import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
 import { TELEGRAM_ACCESS_DENIED_TEXT, telegramUpdateAllowed } from "./access";
@@ -419,8 +417,7 @@ export async function dispatchTelegramInput(
   if (input.kind !== "text") {
     // Preserve the legacy worker behavior for non-model updates while keeping
     // prompt resolution and identity material out of that path.
-    return executeWorker({
-      correlationId,
+    return executeLocalWorker({
       source: await readFile(workerSourcePath),
       request: {
         contractVersion: 1,
@@ -429,7 +426,6 @@ export async function dispatchTelegramInput(
         payload: { input, skillCatalog: EMPTY_SKILL_CATALOG },
       },
       env: workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
-      ...sandboxOpeners(correlationId),
     });
   }
 
@@ -544,8 +540,7 @@ export async function dispatchTelegramInput(
   }
   if (promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES)
     throw new Error("WORKER_CONTEXT_TOO_LARGE");
-  return executeWorker({
-    correlationId,
+  return executeLocalWorker({
     source: await readFile(workerSourcePath),
     request: {
       contractVersion: 2,
@@ -558,16 +553,7 @@ export async function dispatchTelegramInput(
       rawTelegramInput: input.text,
     },
     env: workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
-    ...sandboxOpeners(correlationId),
   });
-}
-
-function sandboxOpeners(correlationId: string) {
-  const config = readSandboxConfig();
-  return {
-    openSandbox: () => ensureSandbox(config, undefined, correlationId),
-    resetSandbox: () => resetSandbox(config, undefined, correlationId),
-  };
 }
 
 async function withTrustedCalendar(

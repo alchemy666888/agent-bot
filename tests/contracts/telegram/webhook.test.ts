@@ -131,18 +131,14 @@ describe("Telegram webhook", () => {
         chat_id: "4",
         text: expect.stringContaining("這次回覆沒有完成，請再傳一次。"),
       });
-      expect(body.text).toContain("source: dispatch");
-      expect(body.text).toContain("code: SANDBOX_UNAVAILABLE");
-      expect(body.text).toContain("updateId: 2");
-      expect(body.text).toContain("inputKind: text");
-      expect(body.text).toContain("detail:");
-      expect(body.text).toContain("trace:");
+      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  it("adds the worker progress to a private timeout message", async () => {
+  it("keeps timeout diagnostics in logs and sends a concise private message", async () => {
+    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
     dispatchTelegramInput.mockRejectedValueOnce(
       Object.assign(new Error("WORKER_COMMAND_TIMEOUT"), {
         operation: "telegramTurn",
@@ -162,15 +158,23 @@ describe("Telegram webhook", () => {
       const response = await POST(request(privateText(21)));
       expect(response.status).toBe(200);
       const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-      expect(body.text).toContain("code: WORKER_COMMAND_TIMEOUT");
-      expect(body.text).toContain("classification: transient");
-      expect(body.text).toContain("operation: telegramTurn");
-      expect(body.text).toContain("timeoutLimitMs: 250000");
-      expect(body.text).toContain("workerStage: model");
-      expect(body.text).toContain("workerElapsedMs: 248000");
-      expect(body.text).toContain("executionMode: forced_web_search");
-      expect(body.text).toContain("tool: web_search");
+      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
+      const records = log.mock.calls.map(([line]) => JSON.parse(String(line)));
+      expect(records).toContainEqual(
+        expect.objectContaining({
+          code: "WORKER_COMMAND_TIMEOUT",
+          metadata: expect.objectContaining({
+            operation: "telegramTurn",
+            timeoutLimitMs: 250_000,
+            progress: expect.objectContaining({
+              stage: "model",
+              executionMode: "forced_web_search",
+            }),
+          }),
+        }),
+      );
     } finally {
+      log.mockRestore();
       vi.unstubAllGlobals();
     }
   });
@@ -194,9 +198,7 @@ describe("Telegram webhook", () => {
       expect(await response.json()).toEqual({ ok: true });
       const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
       expect(body.text).toContain("這次回覆沒有完成，請再傳一次。");
-      expect(body.text).toContain("source: worker");
-      expect(body.text).toContain("code: DEEPSEEK_REQUEST_FAILED");
-      expect(body.text).toContain("classification: transient");
+      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -249,8 +251,7 @@ describe("Telegram webhook", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
       expect(body.text).toContain("這次回覆沒有完成，請再傳一次。");
-      expect(body.text).toContain("code: SANDBOX_UNAVAILABLE");
-      expect(body.text).toContain("source: dispatch");
+      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
     } finally {
       vi.useRealTimers();
       vi.unstubAllGlobals();
@@ -355,9 +356,7 @@ describe("Telegram webhook", () => {
       expect(await response.json()).toEqual({ ok: true });
       const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
       expect(body.text).toContain("這次回覆沒有完成，請再傳一次。");
-      expect(body.text).toContain("code: WORKER_CONFIGURATION_INVALID");
-      expect(body.text).toContain("classification: permanent");
-      expect(body.text).toContain("source: worker");
+      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -374,7 +373,7 @@ describe("Telegram webhook", () => {
       expect(response.status).toBe(200);
       const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
       expect(body.text).toContain("這次回覆沒有完成，請再傳一次。");
-      expect(body.text).toContain("[REDACTED]");
+      expect(body.text).toBe("這次回覆沒有完成，請再傳一次。");
       expect(body.text).not.toMatch(/sk-|abcdefghijklmnopqrstuvwxyz/i);
     } finally {
       vi.unstubAllGlobals();

@@ -7,7 +7,7 @@ import {
 } from "../../../../server/telegram/input";
 import { persistControllerLog } from "../../../../shared/postgres/controller-log";
 import { uuidV7 } from "../../../../shared/ids";
-import { formatFailureDebug, safeError } from "../../../../shared/logger";
+import { safeError } from "../../../../shared/logger";
 import {
   failureContext,
   type FailureContext,
@@ -128,16 +128,7 @@ async function finishDispatch(
         chatId,
         input.updateId,
         correlationId,
-        formatFailureDebug({
-          headline: TURN_FAILED_TEXT,
-          correlationId,
-          durationMs,
-          source: "dispatch",
-          updateId: input.updateId,
-          inputKind: input.kind,
-          ...(context ? { context } : {}),
-          failure,
-        }),
+        TURN_FAILED_TEXT,
       );
     return NextResponse.json({ ok: false }, { status: 503, headers });
   }
@@ -167,24 +158,7 @@ async function finishDispatch(
         chatId,
         input.updateId,
         correlationId,
-        formatFailureDebug({
-          headline: TURN_FAILED_TEXT,
-          correlationId,
-          durationMs,
-          source: "worker",
-          updateId: input.updateId,
-          inputKind: input.kind,
-          failure: {
-            code: reported?.code ?? "WORKER_FAILED",
-            classification: reported?.classification ?? "internal",
-            message: reported?.message ?? "Operation failed",
-            ...(reported?.detail ? { detail: reported.detail } : {}),
-            ...(reported?.trace?.length ? { trace: reported.trace } : {}),
-            ...(reported?.diagnostic
-              ? { diagnostic: reported.diagnostic }
-              : {}),
-          },
-        }),
+        TURN_FAILED_TEXT,
       );
     return NextResponse.json(
       { ok: false },

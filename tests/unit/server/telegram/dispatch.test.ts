@@ -38,6 +38,10 @@ import {
 } from "../../../../src/server/config";
 import { readDatabaseConfig } from "../../../../src/shared/postgres/config";
 import { invokeWorker } from "../../../../src/server/sandbox/transport";
+import {
+  ensureSandbox,
+  resetSandbox,
+} from "../../../../src/server/sandbox/controller";
 import { workerRequestSchema } from "../../../../src/shared/contracts/worker";
 import { compiledEmergencyBundle } from "../../../../src/worker/prompts/bundle";
 import type { GitHubPromptStore } from "../../../../src/server/prompts/github-store";
@@ -98,6 +102,23 @@ describe("Telegram dispatch skill catalog", () => {
     userId: "4",
     text: "今天香港天氣怎樣？",
   };
+
+  it("runs Telegram locally without sandbox configuration or provisioning", async () => {
+    vi.stubEnv("SANDBOX_NAME", "");
+    vi.stubEnv("VERCEL", "1");
+    vi.mocked(ensureSandbox).mockRejectedValueOnce(
+      Object.assign(new Error("SANDBOX_UNAVAILABLE"), { status: 402 }),
+    );
+    await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(ensureSandbox).not.toHaveBeenCalled();
+    expect(resetSandbox).not.toHaveBeenCalled();
+    expect(invokeWorker).toHaveBeenCalledOnce();
+    expect(vi.mocked(invokeWorker).mock.calls[0]![0]).toMatchObject({
+      name: "local",
+    });
+  });
 
   it("loads published skills from PostgreSQL and does not read GitHub", async () => {
     const shouldHandle = vi

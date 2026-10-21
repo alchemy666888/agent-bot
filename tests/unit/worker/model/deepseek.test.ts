@@ -867,7 +867,11 @@ describe("model adapter", () => {
       executionMode: "forced_web_search",
       messages: [{ role: "user", content: "CPI BTC" }],
     });
-    await expect(pending).rejects.toThrow("PROVIDER_REQUEST_TIMEOUT");
+    await expect(pending).resolves.toMatchObject({
+      content:
+        "Current information could not be verified. Please try again later.",
+      outputRecovery: { triggered: true, succeeded: false },
+    });
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
@@ -929,6 +933,82 @@ describe("model adapter", () => {
       messages: [{ role: "user", content: "2024年3月15日下午3點的新聞" }],
     });
     expect(result.content).toContain("2024年3月15日");
+  });
+
+  it("bounds a direct request even when fetch ignores abort", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      () => new Promise<Response>(() => undefined),
+    );
+    const pending = new DeepSeekProvider(
+      {
+        apiKey: "x",
+        baseUrl: "https://example.test",
+        thinking: false,
+        requestTimeoutMs: 10,
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "direct",
+      messages: [{ role: "user", content: "hello" }],
+    });
+    await expect(pending).rejects.toThrow("PROVIDER_REQUEST_TIMEOUT");
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+  });
+
+  it("stops after one timed-out search and one timed-out recovery", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      () => new Promise<Response>(() => undefined),
+    );
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "x",
+        baseUrl: "https://example.test",
+        thinking: false,
+        requestTimeoutMs: 10,
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "CPI BTC" }],
+    });
+    expect(result.content).toContain("could not be verified");
+    expect(result.outputRecovery).toEqual({
+      triggered: true,
+      succeeded: false,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const recovery = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
+    expect(recovery.tools).toBeUndefined();
+  });
+
+  it("bounds error-body reads and does not wait for body cancellation", async () => {
+    const cancel = vi.fn(() => new Promise<void>(() => undefined));
+    const fetcher = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status: 503,
+          text: () => new Promise<string>(() => undefined),
+          body: { cancel },
+        }) as unknown as Response,
+    );
+    await expect(
+      new DeepSeekProvider(
+        {
+          apiKey: "x",
+          baseUrl: "https://example.test",
+          thinking: false,
+          requestTimeoutMs: 10,
+        },
+        fetcher as typeof fetch,
+      ).generate({
+        executionMode: "direct",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    ).rejects.toThrow("PROVIDER_REQUEST_TIMEOUT");
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it("keeps an injected news-mcp clock instead of the server clock", async () => {
