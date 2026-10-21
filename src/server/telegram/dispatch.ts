@@ -1,642 +1,115 @@
 import "server-only";
 
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { Pool } from "pg";
-import {
-  readModelConfig,
-  readTelegramConfig,
-  readPromptConfig,
-} from "../config";
-import { executeLocalWorker } from "../sandbox/execute";
-import { databaseProcessEnv } from "../../shared/postgres/config";
+import { readDirectModelConfig, readTelegramConfig } from "../config";
 import { uuidV7 } from "../../shared/ids";
+import type { WorkerResponse } from "../../shared/contracts/worker";
+import { deadline, settleOnAbort } from "../../shared/abort";
+import { PROVIDER_REQUEST_TIMEOUT_MS } from "../../shared/worker-budget";
+import { assistantTimeZone } from "../../shared/calendar-clock";
+import { DeepSeekProvider } from "../../worker/model/deepseek";
+import { cleanReplyBoilerplate } from "../../worker/model/reply-style";
+import { TelegramClient } from "../../worker/telegram/client";
 import { TELEGRAM_ACCESS_DENIED_TEXT, telegramUpdateAllowed } from "./access";
 import type { TelegramInput } from "./input";
-import { logStructured, safeError } from "../../shared/logger";
-import { PostgresSkillDefinitionStore } from "../skills/postgres-definition-store";
-import {
-  PostgresSkillRepository,
-  type SkillRepositoryEvent,
-} from "../skills/postgres-skill-repository";
-import {
-  EMPTY_SKILL_CATALOG_TOKEN,
-  skillCatalogToken,
-  type SkillCatalogSnapshot,
-} from "../../worker/skills/schemas";
-import { TelegramClient } from "../../worker/telegram/client";
-import { derivePromptUserKey } from "../prompts/identity";
-import { PromptService } from "../prompts/service";
-import {
-  parseConfirmationCallback,
-  type PromptConfirmationService,
-} from "../prompts/confirmation";
-import { GitHubContentsTransport } from "../github/contents-client";
-import { GitHubPromptStore } from "../prompts/github-store";
-import { PromptSnapshotCache } from "../prompts/cache";
-import { PostgresPromptRepository } from "../prompts/postgres";
-import { readDatabaseConfig } from "../../shared/postgres/config";
-import { postgresPoolConfig } from "../../shared/postgres/client";
-import { createCapabilityRegistry } from "../../worker/capabilities";
-import { PromptMetadataRouter } from "../../worker/prompts/router";
-import {
-  MAX_AUTHORIZED_SKILL_CATALOG_BYTES,
-  MAX_AUTHORIZED_SKILL_COUNT,
-} from "../../shared/contracts";
-import type { DegradationNotice } from "../../shared/contracts/worker";
-import {
-  assistantTimeZone,
-  calendarClock,
-  trustedCalendarContext,
-} from "../../shared/calendar-clock";
-import { fetchNewsMcpClock } from "../news-mcp/datetime";
-import { replyToScheduleMessage } from "../schedules/commands";
-import type { PromptBundle } from "../../shared/contracts/prompt";
 
-const MAX_SKILL_CATALOG_BYTES = MAX_AUTHORIZED_SKILL_CATALOG_BYTES;
-// The catalog crosses the worker boundary and is then serialized once more as
-// trusted model context, so budget both representations plus the prompt.
-export const MAX_WORKER_CONTEXT_BYTES = MAX_SKILL_CATALOG_BYTES * 2;
+const UPDATE_TTL_MS = 10 * 60_000;
+const MAX_RECENT_UPDATES = 1_000;
+const DIRECT_CHAT_GUIDANCE =
+  "Answer the current message independently. No conversation history or action tools are available. Do not claim to remember previous messages, save information, create schedules, or perform external actions.";
+const recentUpdates = new Map<
+  string,
+  { expiresAt: number; result: Promise<WorkerResponse> }
+>();
 
-const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
-
-type SkillCatalog = SkillCatalogSnapshot;
-
-export function promptDegradationNotices(
-  promptBundle: Awaited<ReturnType<DispatchPromptServices["resolve"]>>,
-  requestText: string,
-): DegradationNotice[] {
-  const notices: DegradationNotice[] = [];
-  if (
-    promptBundle.telemetry.degraded &&
-    promptBundle.degradedModeSource === "verified_snapshot"
-  )
-    notices.push("stale_snapshot");
-  if (
-    promptBundle.telemetry.degraded &&
-    (promptBundle.degradedModeSource === "compiled_emergency" ||
-      promptBundle.commonSystemPrompt.source === "compiled_emergency")
-  )
-    notices.push("system_prompt_missing", "compiled_emergency_prompt");
-  // A default request prompt is normal. It is degraded only when the user
-  // actually attempted to select a request prompt and selection fell back.
-  if (
-    promptBundle.resolutionSource === "default" &&
-    promptBundle.telemetry.resolution === "fallback" &&
-    /^\/prompt(?:@[A-Za-z0-9_]{5,32})?(?:\s|$)/i.test(requestText)
-  )
-    notices.push("request_prompt_missing");
-  return notices;
-}
-
-const EMPTY_SKILL_CATALOG: SkillCatalog = {
-  catalogToken: EMPTY_SKILL_CATALOG_TOKEN,
-  skills: [],
-};
-
-let skillPool: Pool | undefined;
-
-function skillRepository(audit?: (event: SkillRepositoryEvent) => void) {
-  const database = readDatabaseConfig();
-  skillPool ??= new Pool(
-    postgresPoolConfig(database.DATABASE_URL, database.AIVEN_PG_CA),
-  );
-  return new PostgresSkillRepository(
-    new PostgresSkillDefinitionStore(skillPool),
-    audit ? { audit } : {},
-  );
-}
-
-type DispatchPromptServices = {
-  resolve(input: {
-    userKey: string;
-    text: string;
-    language?: string;
-    correlationId?: string;
-    pinnedSnapshot?: import("../prompts/github-store").VerifiedPromptSnapshot;
-  }): ReturnType<PromptService["resolve"]>;
-  confirmation?: Pick<PromptConfirmationService, "respond">;
-  repository?: {
-    store: GitHubPromptStore;
-    identity: {
-      connector: string;
-      owner: string;
-      repository: string;
-      branch: string;
-    };
-  };
-};
-
-let promptServices: DispatchPromptServices | undefined;
-let repositoryPromptServices: DispatchPromptServices | undefined;
-
-/** Installs trusted, repository-backed services without putting their authority in the worker. */
-export function installDispatchPromptServices(
-  services?: DispatchPromptServices,
-) {
-  promptServices = services;
-}
-
-function emergencyPromptService(systemPrompt: string): DispatchPromptServices {
-  const service = new PromptService({
-    get: async () => ({
-      source: "compiled_emergency" as const,
-      snapshot: null,
-      emergencySystemPrompt: systemPrompt,
-    }),
+/** Best-effort replay protection within one server instance, without persistence. */
+function once(updateId: string, action: () => Promise<WorkerResponse>) {
+  const now = Date.now();
+  for (const [id, entry] of recentUpdates)
+    if (entry.expiresAt <= now) recentUpdates.delete(id);
+  const existing = recentUpdates.get(updateId);
+  if (existing) return existing.result;
+  if (recentUpdates.size >= MAX_RECENT_UPDATES)
+    recentUpdates.delete(recentUpdates.keys().next().value!);
+  const result = action().catch((error: unknown) => {
+    recentUpdates.delete(updateId);
+    throw error;
   });
-  return { resolve: (input) => service.resolve(input) };
+  recentUpdates.set(updateId, { expiresAt: now + UPDATE_TTL_MS, result });
+  return result;
 }
 
-function configuredPromptService(
-  config: ReturnType<typeof readPromptConfig>,
-  model: ReturnType<typeof readModelConfig>,
-): DispatchPromptServices {
-  if (!config.PROMPT_READS_ENABLED)
-    return emergencyPromptService(model.ASSISTANT_SYSTEM_PROMPT);
-  if (repositoryPromptServices) return repositoryPromptServices;
-
-  const database = readDatabaseConfig();
-  const repository = new PostgresPromptRepository(
-    new Pool(postgresPoolConfig(database.DATABASE_URL, database.AIVEN_PG_CA)),
-  );
-  const identity = {
-    owner: config.GITHUB_PROMPTS_OWNER as string,
-    name: config.GITHUB_PROMPTS_REPO as string,
-    prefix: config.GITHUB_PROMPTS_PREFIX as string,
-    branch: "main",
-  };
-  const store = new GitHubPromptStore(
-    new GitHubContentsTransport({
-      connector: config.GITHUB_CONNECTOR as string,
-      owner: identity.owner,
-      repository: identity.name,
-    }),
-    { branch: identity.branch, prefix: identity.prefix },
-  );
-  const service = new PromptService(
-    new PromptSnapshotCache(store, repository, identity),
-    {
-      routerEnabled: config.PROMPT_ROUTER_ENABLED,
-      personalReadsEnabled: config.PROMPT_PERSONAL_READS_ENABLED,
-      confidenceThreshold: config.PROMPT_ROUTER_CONFIDENCE_THRESHOLD as number,
-      router: new PromptMetadataRouter({
-        apiKey: model.DEEPSEEK_API_KEY,
-        baseUrl: model.DEEPSEEK_BASE_URL,
-        timeoutMs: model.DEEPSEEK_ROUTER_TIMEOUT_MS,
-      }),
-    },
-  );
-  const emergency = emergencyPromptService(model.ASSISTANT_SYSTEM_PROMPT);
-  repositoryPromptServices = {
-    resolve: async (input) => {
-      try {
-        return await service.resolve(input);
-      } catch (error) {
-        const failure = safeError(
-          error,
-          "PROMPT_REPOSITORY_UNAVAILABLE",
-          "prompt",
-        );
-        logStructured({
-          correlationId: input.correlationId ?? uuidV7(),
-          component: "controller",
-          operation: "prompt.resolve",
-          stage: "prompt-repository",
-          result: "degraded",
-          code: failure.code,
-        });
-        return emergency.resolve(input);
-      }
-    },
-    repository: {
-      store,
-      identity: {
-        connector: config.GITHUB_CONNECTOR as string,
-        owner: identity.owner,
-        repository: identity.name,
-        branch: identity.branch,
-      },
-    },
-  };
-  return repositoryPromptServices;
+export function resetTelegramUpdates(): void {
+  recentUpdates.clear();
 }
 
-/**
- * Skills are an optional enhancement to an ordinary Telegram conversation.
- * Fail closed (with no skills) when PostgreSQL is unavailable so a database
- * outage cannot prevent the bot from answering normal messages.
- */
-export async function loadSkillCatalog(
-  load: () => Promise<SkillCatalog>,
-  correlationId: string,
-): Promise<{
-  catalog: SkillCatalog;
-  degradationReason?: "repository_unavailable" | "catalog_missing";
-}> {
-  const started = Date.now();
-  try {
-    const catalog = await load();
-    return {
-      catalog,
-      ...(catalog.skills.length === 0
-        ? { degradationReason: "catalog_missing" as const }
-        : {}),
-    };
-  } catch (error) {
-    const failure = safeError(error, "SKILL_CATALOG_UNAVAILABLE", "catalog");
-    logStructured({
-      correlationId,
-      component: "controller",
-      operation: "skill.catalog_load",
-      stage: "skill-repository",
-      result: "degraded",
-      durationMs: Date.now() - started,
-      code: "SKILL_CATALOG_UNAVAILABLE",
-      ...(failure.diagnostic ? { metadata: failure.diagnostic } : {}),
-    });
-    return {
-      catalog: EMPTY_SKILL_CATALOG,
-      degradationReason: "repository_unavailable",
-    };
-  }
-}
-
-function auditSkillEvent(correlationId: string, event: SkillRepositoryEvent) {
-  logStructured({
-    correlationId,
-    component: "controller",
-    operation: event.operation,
-    stage: "skill-repository",
-    result:
-      event.result === "denied" || event.result === "failure"
-        ? "failure"
-        : event.result,
-    durationMs: event.durationMs,
-    ...(event.code ? { code: event.code } : {}),
-    metadata: {
-      ...(event.skillId ? { skillId: event.skillId } : {}),
-      ...(event.versionId ? { versionId: event.versionId } : {}),
-    },
-  });
-}
-
-/** Dispatches only the minimized Telegram input and operation-required secrets. */
+/** Stateless Telegram → DeepSeek → Telegram. No worker, database, or repository reads. */
 export async function dispatchTelegramInput(
   input: TelegramInput,
   correlationId = uuidV7(),
-) {
-  const telegram = readTelegramConfig();
-  const promptConfig = readPromptConfig({
-    ...process.env,
-    GITHUB_PROMPTS_BRANCH: "main",
-  });
-  const client = new TelegramClient(telegram.TELEGRAM_BOT_TOKEN);
-  if (input.kind === "ignored") {
-    return {
-      contractVersion: 1 as const,
-      correlationId,
-      ok: true as const,
-      data: { acknowledged: true },
-    };
-  }
-  // Group chats must not receive allowlist denials, commands, or model replies.
+): Promise<WorkerResponse> {
+  const accepted: WorkerResponse = {
+    contractVersion: 1,
+    correlationId,
+    ok: true,
+    data: { acknowledged: true },
+  };
   if (
+    input.kind === "ignored" ||
     (input.kind === "text" && input.chatScope === "group") ||
     ("chatId" in input && input.chatId.startsWith("-"))
-  ) {
-    return {
-      contractVersion: 1 as const,
-      correlationId,
-      ok: true as const,
-      data: { acknowledged: true },
-    };
-  }
+  )
+    return accepted;
+
+  const telegram = readTelegramConfig();
+  const client = new TelegramClient(telegram.TELEGRAM_BOT_TOKEN);
   if (!telegramUpdateAllowed(telegram.ALLOW_USERS, input)) {
-    if ("chatId" in input)
-      await client.send(
-        input.chatId,
-        TELEGRAM_ACCESS_DENIED_TEXT,
-        undefined,
-        "replyToMessageId" in input ? input.replyToMessageId : undefined,
-      );
+    await client.send(input.chatId, TELEGRAM_ACCESS_DENIED_TEXT);
     if (input.kind === "callback")
       await client.acknowledgeCallback(input.callbackQueryId);
-    logStructured({
-      correlationId,
-      component: "controller",
-      operation: "telegram.allowlist",
-      stage: "access",
-      result: "failure",
-      code: "TELEGRAM_USER_NOT_ALLOWLISTED",
-    });
-    return {
-      contractVersion: 1 as const,
-      correlationId,
-      ok: true as const,
-      data: { acknowledged: true },
-    };
-  }
-  if (input.kind === "text" && input.chatScope !== "group") {
-    const scheduleReply = await replyToScheduleMessage({
-      text: input.text,
-      userId: input.userId,
-      chatId: input.chatId,
-      username: input.username,
-      languageCode: input.languageCode,
-      updateId: input.updateId,
-      messageId: input.messageId,
-    });
-    if (scheduleReply !== undefined) {
-      await client.send(
-        input.chatId,
-        scheduleReply,
-        undefined,
-        input.replyToMessageId,
-      );
-      return {
-        contractVersion: 1 as const,
-        correlationId,
-        ok: true as const,
-        data: { acknowledged: true },
-      };
-    }
+    return accepted;
   }
   if (input.kind === "callback") {
-    // Capabilities are consumed only by the trusted confirmation coordinator.
-    // They are never copied into a worker request or model-visible history.
-    const callback = parseConfirmationCallback(input.data);
-    if (
-      callback &&
-      promptServices?.confirmation &&
-      promptConfig.PROMPT_USER_KEY_SECRET
-    ) {
-      const result = await promptServices.confirmation.respond({
-        actor: {
-          canonicalId: input.userId,
-          userKey: derivePromptUserKey(
-            promptConfig.PROMPT_USER_KEY_SECRET as string,
-            input.userId,
-          ),
-        },
-        chatId: input.chatId,
-        decision: callback.decision,
-        nonce: callback.nonce,
-      });
-      if (result.prompt)
-        await client.send(
-          input.chatId,
-          result.prompt.text,
-          result.prompt.buttons,
-        );
-    }
     await client.acknowledgeCallback(input.callbackQueryId);
-    return {
-      contractVersion: 1 as const,
-      correlationId,
-      ok: true as const,
-      data: { acknowledged: true },
-    };
+    return accepted;
   }
-  const model = readModelConfig();
-  let services: DispatchPromptServices;
-  try {
-    services = promptServices ?? configuredPromptService(promptConfig, model);
-  } catch (error) {
-    const failure = safeError(error, "PROMPT_REPOSITORY_UNAVAILABLE", "prompt");
-    logStructured({
-      correlationId,
-      component: "controller",
-      operation: "prompt.resolve",
-      stage: "prompt-repository",
-      result: "degraded",
-      code: failure.code,
-    });
-    services = emergencyPromptService(model.ASSISTANT_SYSTEM_PROMPT);
-  }
-  if (input.kind !== "text") {
-    // Preserve the legacy worker behavior for non-model updates while keeping
-    // prompt resolution and identity material out of that path.
-    return executeLocalWorker({
-      source: await readFile(workerSourcePath),
-      request: {
-        contractVersion: 1,
-        correlationId,
-        operation: "telegramTurn",
-        payload: { input, skillCatalog: EMPTY_SKILL_CATALOG },
-      },
-      env: workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
-    });
+  if (input.kind === "unsupported") {
+    await client.send(input.chatId, "Please send a text message.");
+    return accepted;
   }
 
-  // Telegram conversations only consume published PostgreSQL skills.
-  const catalogResult = await loadSkillCatalog(async () => {
-    const catalog = await skillRepository((event) =>
-      auditSkillEvent(correlationId, event),
-    ).loadCatalogSnapshot({ telegramUserId: input.userId });
-    const capabilities = createCapabilityRegistry();
-    const skills = catalog.skills.filter((skill) => {
-      try {
-        capabilities.requests(skill.tools);
-        return true;
-      } catch {
-        logStructured({
-          correlationId,
-          component: "controller",
-          operation: "skill.catalog_load",
-          stage: "skill-repository",
-          result: "degraded",
-          code: "SKILL_CAPABILITY_UNAVAILABLE",
-        });
-        return false;
-      }
+  return once(input.updateId, async () => {
+    const model = readDirectModelConfig();
+    const provider = new DeepSeekProvider({
+      apiKey: model.DEEPSEEK_API_KEY,
+      baseUrl: model.DEEPSEEK_BASE_URL,
+      thinking: model.DEEPSEEK_THINKING_ENABLED,
+      maxToolCalls: 0,
+      timeZone: assistantTimeZone(),
     });
-    return {
-      catalogToken: skillCatalogToken(skills.map((skill) => skill.versionId)),
-      skills,
-    };
-  }, correlationId);
-  const skillCatalogDegradation = catalogResult.degradationReason;
-  const promptInput = {
-    // Group replies use shared prompts only, so a personal overlay cannot
-    // be written into a room the owner does not control.
-    userKey:
-      input.chatScope === "group"
-        ? "group"
-        : promptConfig.PROMPT_USER_KEY_SECRET
-          ? derivePromptUserKey(
-              promptConfig.PROMPT_USER_KEY_SECRET as string,
-              input.userId,
-            )
-          : "u1_" + "A".repeat(43),
-    text: input.text,
-    correlationId,
-    ...(input.languageCode ? { language: input.languageCode } : {}),
-  };
-  let promptBundle: Awaited<ReturnType<DispatchPromptServices["resolve"]>>;
-  let repositoryCommitSha: string | null = null;
-  try {
-    if (promptConfig.PROMPT_READS_ENABLED && services.repository) {
-      const identity = services.repository.identity;
-      if (
-        identity.branch !== "main" ||
-        identity.connector !== promptConfig.GITHUB_CONNECTOR ||
-        identity.owner !== promptConfig.GITHUB_PROMPTS_OWNER ||
-        identity.repository !== promptConfig.GITHUB_PROMPTS_REPO
-      )
-        throw new Error("REPOSITORY_IDENTITY_MISMATCH");
-      const pinnedSnapshot = await services.repository.store.load();
-      if (!/^[0-9a-f]{40}$/.test(pinnedSnapshot.commitSha))
-        throw new Error("INVALID_REPOSITORY_COMMIT");
-      repositoryCommitSha = pinnedSnapshot.commitSha;
-      promptBundle = await services.resolve({ ...promptInput, pinnedSnapshot });
-    } else {
-      promptBundle = await services.resolve(promptInput);
-      repositoryCommitSha = promptBundle.repositoryCommitSha;
-    }
-    if (promptBundle.repositoryCommitSha !== repositoryCommitSha)
-      throw new Error("REPOSITORY_COMMIT_MISMATCH");
-  } catch (error) {
-    const failure = safeError(error, "PROMPT_REPOSITORY_UNAVAILABLE", "prompt");
-    logStructured({
-      correlationId,
-      component: "controller",
-      operation: "prompt.resolve",
-      stage: "prompt-repository",
-      result: "degraded",
-      code: failure.code,
-    });
-    promptBundle = await emergencyPromptService(
-      model.ASSISTANT_SYSTEM_PROMPT,
-    ).resolve(promptInput);
-    repositoryCommitSha = promptBundle.repositoryCommitSha;
-  }
-  promptBundle = await withTrustedCalendar(
-    {
-      ...promptBundle,
-      repositoryCommitSha,
-      turnPin: { ...promptBundle.turnPin, commitSha: repositoryCommitSha },
-    },
-    correlationId,
-  );
-  let skillCatalog: SkillCatalog = catalogResult.catalog;
-  const degradationNotices = promptDegradationNotices(promptBundle, input.text);
-  if (skillCatalogDegradation) degradationNotices.push(skillCatalogDegradation);
-  else if (skillCatalog.skills.length === 0)
-    degradationNotices.push("catalog_missing");
-  const promptBytes = Buffer.byteLength(JSON.stringify(promptBundle), "utf8");
-  let skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
-  if (
-    skillCatalog.skills.length > MAX_AUTHORIZED_SKILL_COUNT ||
-    skillBytes > MAX_SKILL_CATALOG_BYTES ||
-    promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES
-  ) {
-    // Drop an unusable catalog in its entirety. Never truncate a snapshot or
-    // allow its size to block web-search fallback.
-    skillCatalog = EMPTY_SKILL_CATALOG;
-    if (!degradationNotices.includes("catalog_too_large"))
-      degradationNotices.push("catalog_too_large");
-    skillBytes = Buffer.byteLength(JSON.stringify(skillCatalog), "utf8");
-  }
-  if (promptBytes + skillBytes * 2 > MAX_WORKER_CONTEXT_BYTES)
-    throw new Error("WORKER_CONTEXT_TOO_LARGE");
-  return executeLocalWorker({
-    source: await readFile(workerSourcePath),
-    request: {
-      contractVersion: 2,
-      correlationId,
-      operation: "telegramTurn",
-      payload: { input, skillCatalog },
-      promptBundle,
-      repositoryCommitSha,
-      degradationNotices: [...new Set(degradationNotices)],
-      rawTelegramInput: input.text,
-    },
-    env: workerEnvironment(telegram.TELEGRAM_BOT_TOKEN, model),
-  });
-}
-
-async function withTrustedCalendar(
-  bundle: PromptBundle,
-  correlationId: string,
-): Promise<PromptBundle> {
-  const timeZone = assistantTimeZone();
-  const sampled = await fetchNewsMcpClock({ timeZone });
-  if (!sampled.ok)
-    logStructured({
-      correlationId,
-      component: "controller",
-      operation: "news-mcp.datetime",
-      stage: "clock",
-      result: "degraded",
-      code: sampled.code,
-    });
-  const injected = trustedCalendarContext(
-    sampled.ok ? sampled.clock : calendarClock(new Date(), timeZone),
-  );
-  const keys = new Set(injected.map((item) => item.key));
-  return {
-    ...bundle,
-    trustedRuntimeContext: [
-      ...injected,
-      ...bundle.trustedRuntimeContext.filter((item) => !keys.has(item.key)),
-    ].slice(0, 16),
-  };
-}
-
-function optionalWorkerInteger(name: string): string | undefined {
-  const value = process.env[name]?.trim();
-  if (!value) return undefined;
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1)
-    throw Object.assign(new Error("WORKER_CONFIGURATION_INVALID"), {
-      code: name,
-    });
-  return String(parsed);
-}
-
-/** Values the sandbox command actually receives. Every value is one line. */
-export function workerEnvironment(
-  telegramToken: string,
-  model: ReturnType<typeof readModelConfig>,
-) {
-  const skillsEnabled = process.env.SKILLS_ENABLED?.trim();
-  const skillSteps = optionalWorkerInteger("SKILL_MAX_TOOL_STEPS");
-  const skillTimeout = optionalWorkerInteger("SKILL_EXECUTION_TIMEOUT_MS");
-  return {
-    TELEGRAM_BOT_TOKEN: telegramToken,
-    DEEPSEEK_API_KEY: model.DEEPSEEK_API_KEY,
-    DEEPSEEK_BASE_URL: model.DEEPSEEK_BASE_URL,
-    DEEPSEEK_THINKING_ENABLED: String(model.DEEPSEEK_THINKING_ENABLED),
-    DEEPSEEK_REASONING_EFFORT: model.DEEPSEEK_REASONING_EFFORT,
-    DEEPSEEK_ROUTING_ENABLED: String(model.DEEPSEEK_ROUTING_ENABLED),
-    DEEPSEEK_ROUTING_MODE: model.DEEPSEEK_ROUTING_MODE,
-    DEEPSEEK_ROUTER_TIMEOUT_MS: String(model.DEEPSEEK_ROUTER_TIMEOUT_MS),
-    ...(model.DEEPSEEK_ROUTER_MIN_CONFIDENCE === undefined
-      ? {}
-      : {
-          DEEPSEEK_ROUTER_MIN_CONFIDENCE: String(
-            model.DEEPSEEK_ROUTER_MIN_CONFIDENCE,
-          ),
+    // The whole generation, including any output recovery, shares one cap.
+    const cap = deadline(PROVIDER_REQUEST_TIMEOUT_MS);
+    let answer: string;
+    try {
+      const generated = await settleOnAbort(
+        provider.generate({
+          executionMode: "direct",
+          messages: [
+            {
+              role: "system",
+              content: `${model.ASSISTANT_SYSTEM_PROMPT}\n\n${DIRECT_CHAT_GUIDANCE}`,
+            },
+            { role: "user", content: input.text },
+          ],
+          signal: cap.signal,
         }),
-    DEEPSEEK_INPUT_PRICE_PER_MILLION: String(
-      model.DEEPSEEK_INPUT_PRICE_PER_MILLION,
-    ),
-    DEEPSEEK_OUTPUT_PRICE_PER_MILLION: String(
-      model.DEEPSEEK_OUTPUT_PRICE_PER_MILLION,
-    ),
-    // v1 turns (media, edits, non-private chats) build the emergency bundle
-    // from this value. Leaving it out fails the worker before any reply.
-    ASSISTANT_SYSTEM_PROMPT: model.ASSISTANT_SYSTEM_PROMPT.replace(
-      /\s+/g,
-      " ",
-    ).trim(),
-    ASSISTANT_TIMEZONE: assistantTimeZone(),
-    ...(skillsEnabled === "true" || skillsEnabled === "false"
-      ? { SKILLS_ENABLED: skillsEnabled }
-      : {}),
-    ...(skillSteps ? { SKILL_MAX_TOOL_STEPS: skillSteps } : {}),
-    ...(skillTimeout ? { SKILL_EXECUTION_TIMEOUT_MS: skillTimeout } : {}),
-    ...databaseProcessEnv(),
-  };
+        cap.signal,
+      );
+      answer = cleanReplyBoilerplate(generated.content);
+      if (!answer.trim()) throw new Error("ASSISTANT_RESPONSE_MISSING");
+    } finally {
+      cap.cancel();
+    }
+    await client.send(input.chatId, answer, undefined, input.replyToMessageId);
+    return accepted;
+  });
 }

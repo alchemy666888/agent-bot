@@ -1,495 +1,183 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@vercel/connect", () => ({
-  getToken: vi.fn(async () => "github-token"),
-}));
-vi.mock("../../../../src/server/sandbox/controller", () => ({
-  ensureSandbox: vi.fn(async () => ({})),
-  resetSandbox: vi.fn(async () => ({})),
-}));
-vi.mock("../../../../src/server/sandbox/transport", () => ({
-  installWorker: vi.fn(async () => "worker.mjs"),
-  invokeWorker: vi.fn(async () => ({
-    ok: true,
-    data: { handled: "telegramTurn" },
-  })),
-}));
-const { skillQuery, fetchNewsMcpClock } = vi.hoisted(() => ({
-  skillQuery: vi.fn(async () => ({ rows: [] as Record<string, unknown>[] })),
-  fetchNewsMcpClock: vi.fn(),
-}));
-vi.mock("../../../../src/server/news-mcp/datetime", async () => {
-  const actual = await vi.importActual<
-    typeof import("../../../../src/server/news-mcp/datetime")
-  >("../../../../src/server/news-mcp/datetime");
-  return { ...actual, fetchNewsMcpClock };
-});
+const databaseAccess = vi.hoisted(() =>
+  vi.fn(() => {
+    throw new Error("Telegram must not open a database");
+  }),
+);
 vi.mock("pg", () => ({
   Pool: class {
-    query(...args: unknown[]) {
-      return skillQuery(...args);
+    constructor() {
+      databaseAccess();
     }
   },
 }));
 
-import {
-  DEFAULT_SYSTEM_PROMPT,
-  readModelConfig,
-} from "../../../../src/server/config";
-import { readDatabaseConfig } from "../../../../src/shared/postgres/config";
-import { invokeWorker } from "../../../../src/server/sandbox/transport";
-import {
-  ensureSandbox,
-  resetSandbox,
-} from "../../../../src/server/sandbox/controller";
-import { workerRequestSchema } from "../../../../src/shared/contracts/worker";
-import { compiledEmergencyBundle } from "../../../../src/worker/prompts/bundle";
-import type { GitHubPromptStore } from "../../../../src/server/prompts/github-store";
-import { SkillAuthoringService } from "../../../../src/server/skills/service";
-import { EMPTY_SKILL_CATALOG_TOKEN } from "../../../../src/worker/skills/schemas";
 import { TELEGRAM_ACCESS_DENIED_TEXT } from "../../../../src/server/telegram/access";
 import {
   dispatchTelegramInput,
-  installDispatchPromptServices,
-  loadSkillCatalog,
-  workerEnvironment,
+  resetTelegramUpdates,
 } from "../../../../src/server/telegram/dispatch";
 
-describe("Telegram dispatch skill catalog", () => {
+const input = {
+  kind: "text" as const,
+  updateId: "1",
+  messageId: "2",
+  chatId: "3",
+  userId: "4",
+  text: "CPI數據出來了，BTC有沒有交易機會",
+};
+const fetchMock = vi.fn<typeof fetch>();
+
+describe("stateless Telegram dispatch", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    resetTelegramUpdates();
+    databaseAccess.mockClear();
     for (const [key, value] of Object.entries({
-      SANDBOX_NAME: "test-sandbox",
       TELEGRAM_BOT_TOKEN: "token",
       TELEGRAM_WEBHOOK_SECRET: "secret",
       DEEPSEEK_API_KEY: "key",
-      DEEPSEEK_INPUT_PRICE_PER_MILLION: "1",
-      DEEPSEEK_OUTPUT_PRICE_PER_MILLION: "2",
-      PROMPT_READS_ENABLED: "false",
-      GITHUB_CONNECTOR: "github/skills-repo",
-      GITHUB_SKILLS_OWNER: "alchemy666888",
-      GITHUB_SKILLS_REPO: "skill",
-      GITHUB_SKILLS_BRANCH: "ai/obsolete-draft",
-      DATABASE_URL: "postgres://user:pass@db.test/app",
+      DEEPSEEK_BASE_URL: "https://deepseek.test",
+      DEEPSEEK_THINKING_ENABLED: "false",
+      ASSISTANT_SYSTEM_PROMPT: "Reply helpfully in the user's language.",
       ALLOW_USERS: "4",
-    }))
-      vi.stubEnv(key, value);
-    vi.spyOn(console, "info").mockImplementation(() => undefined);
-    skillQuery.mockReset();
-    skillQuery.mockResolvedValue({ rows: [] });
-    fetchNewsMcpClock.mockReset();
-    fetchNewsMcpClock.mockResolvedValue({
-      ok: true,
-      clock: {
-        isoDate: "2026-10-09",
-        year: 2026,
-        month: 10,
-        day: 9,
-        hour: 14,
-        minute: 41,
-        weekday: "Friday",
-        timeZone: "Asia/Hong_Kong",
-        source: "news_mcp",
-      },
-    });
-  });
-
-  const input = {
-    kind: "text" as const,
-    updateId: "1",
-    messageId: "2",
-    chatId: "3",
-    userId: "4",
-    text: "今天香港天氣怎樣？",
-  };
-
-  it("runs Telegram locally without sandbox configuration or provisioning", async () => {
-    vi.stubEnv("SANDBOX_NAME", "");
-    vi.stubEnv("VERCEL", "1");
-    vi.mocked(ensureSandbox).mockRejectedValueOnce(
-      Object.assign(new Error("SANDBOX_UNAVAILABLE"), { status: 402 }),
-    );
-    await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
-      ok: true,
-    });
-    expect(ensureSandbox).not.toHaveBeenCalled();
-    expect(resetSandbox).not.toHaveBeenCalled();
-    expect(invokeWorker).toHaveBeenCalledOnce();
-    expect(vi.mocked(invokeWorker).mock.calls[0]![0]).toMatchObject({
-      name: "local",
-    });
-  });
-
-  it("loads published skills from PostgreSQL and does not read GitHub", async () => {
-    const shouldHandle = vi
-      .spyOn(SkillAuthoringService.prototype, "shouldHandle")
-      .mockResolvedValue(true);
-    const fetcher = vi.spyOn(globalThis, "fetch");
-    const id = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d0";
-    const versionId = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d9";
-    skillQuery.mockResolvedValue({
-      rows: [
-        {
-          skill_name: "weather",
-          owner_telegram_user_id: "4",
-          visibility: "public",
-          skill_status: "active",
-          current_version_id: versionId,
-          id: versionId,
-          skill_id: id,
-          revision: 1,
-          content_digest: `sha256:${"a".repeat(64)}`,
-          manifest: {
-            schemaVersion: 1,
-            id,
-            name: "weather",
-            description: "Current weather",
-            revision: 1,
-            visibility: "public",
-            ownerTelegramUserIds: ["4"],
-            allowedTelegramUserIds: [],
-            triggers: { phrases: ["天氣"], keywords: [], minimumConfidence: 1 },
-            tools: ["web_search"],
-            prohibitedActions: [],
-            status: "active",
-          },
-          instructions: "Search current weather.",
-          state: "published",
-          created_by: "4",
-        },
-      ],
-    });
-    await dispatchTelegramInput(input);
-    expect(shouldHandle).not.toHaveBeenCalled();
-    expect(fetcher).not.toHaveBeenCalled();
-    const request = vi.mocked(invokeWorker).mock.calls[0]![2];
-    expect(workerRequestSchema.safeParse(request).success).toBe(true);
-    expect(request).toMatchObject({
-      repositoryCommitSha: null,
-      payload: { skillCatalog: { skills: [{ id, versionId }] } },
-    });
-  });
-
-  it("pins news and event answers to the news-mcp clock", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("1999-01-01T00:00:00.000Z"));
-    try {
-      await dispatchTelegramInput(input);
-      expect(fetchNewsMcpClock).toHaveBeenCalled();
-      const request = vi.mocked(invokeWorker).mock.calls[0]![2] as {
-        promptBundle: {
-          trustedRuntimeContext: Array<{ key: string; value: string }>;
-        };
-      };
-      expect(request.promptBundle.trustedRuntimeContext).toEqual(
-        expect.arrayContaining([
-          { key: "current_date", value: "2026-10-09" },
-          { key: "current_year", value: "2026" },
-          { key: "current_month", value: "10" },
-          { key: "current_day", value: "9" },
-          { key: "current_hour", value: "14" },
-          { key: "current_minute", value: "41" },
-          { key: "weekday", value: "Friday" },
-          { key: "timezone", value: "Asia/Hong_Kong" },
-          { key: "clock_source", value: "news_mcp" },
-        ]),
-      );
-      const env = vi.mocked(invokeWorker).mock.calls[0]![3] as Record<
-        string,
-        string
-      >;
-      expect(env).not.toHaveProperty("NEWS_MCP_API_KEY");
-      expect(env).not.toHaveProperty("NEWS-MCP-API-KEY");
-      expect(JSON.stringify(request)).not.toContain("NEWS_MCP_API_KEY");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("uses the Hong Kong clock when news-mcp is unavailable", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-10-13T20:37:00.000Z"));
-    fetchNewsMcpClock.mockResolvedValue({
-      ok: false,
-      code: "NEWS_MCP_UNAVAILABLE",
-    });
-    try {
-      await dispatchTelegramInput(input);
-      const request = vi.mocked(invokeWorker).mock.calls[0]![2] as {
-        promptBundle: {
-          trustedRuntimeContext: Array<{ key: string; value: string }>;
-        };
-      };
-      expect(request.promptBundle.trustedRuntimeContext).toEqual(
-        expect.arrayContaining([
-          { key: "current_date", value: "2026-10-14" },
-          { key: "current_hour", value: "4" },
-          { key: "current_minute", value: "37" },
-          { key: "weekday", value: "Wednesday" },
-          { key: "timezone", value: "Asia/Hong_Kong" },
-          { key: "clock_source", value: "local_fallback" },
-        ]),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("continues to the worker when PostgreSQL is unavailable", async () => {
-    skillQuery.mockRejectedValue(new Error("database unavailable"));
-    await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
-      ok: true,
-    });
-    const request = vi.mocked(invokeWorker).mock.calls[0]![2];
-    expect(workerRequestSchema.safeParse(request).success).toBe(true);
-    expect(request).toMatchObject({
-      repositoryCommitSha: null,
-      payload: {
-        skillCatalog: { catalogToken: EMPTY_SKILL_CATALOG_TOKEN, skills: [] },
-      },
-      degradationNotices: expect.arrayContaining(["repository_unavailable"]),
-    });
-  });
-
-  it("drops skills requiring unavailable capabilities so the worker can fall back", async () => {
-    const id = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d0";
-    const versionId = "018f47a2-4cab-7a31-8f5f-4b6f6f2d62d9";
-    skillQuery.mockResolvedValue({
-      rows: [
-        {
-          skill_name: "weather",
-          owner_telegram_user_id: "4",
-          visibility: "public",
-          skill_status: "active",
-          current_version_id: versionId,
-          id: versionId,
-          skill_id: id,
-          revision: 1,
-          content_digest: `sha256:${"b".repeat(64)}`,
-          manifest: {
-            schemaVersion: 1,
-            id,
-            name: "weather",
-            visibility: "public",
-            ownerTelegramUserIds: ["4"],
-            allowedTelegramUserIds: [],
-            triggers: { phrases: ["天氣"], keywords: [], minimumConfidence: 1 },
-            tools: ["unknown_tool"],
-            prohibitedActions: [],
-            status: "active",
-          },
-          instructions: "Use unknown_tool.",
-          state: "published",
-          created_by: "4",
-        },
-      ],
-    });
-    await dispatchTelegramInput(input);
-    const request = vi.mocked(invokeWorker).mock.calls[0]![2];
-    expect(workerRequestSchema.safeParse(request).success).toBe(true);
-    expect(request).toMatchObject({
-      repositoryCommitSha: null,
-      payload: {
-        skillCatalog: { catalogToken: EMPTY_SKILL_CATALOG_TOKEN, skills: [] },
-      },
-    });
-  });
-
-  it("continues when enabled repository prompts cannot load", async () => {
-    for (const [key, value] of Object.entries({
+      // Even enabled legacy features and invalid storage configuration cannot
+      // capture the direct path or require a database/repository connection.
+      DATABASE_URL: "must-not-be-parsed",
+      AIVEN_PG_CA: "invalid-certificate",
       PROMPT_READS_ENABLED: "true",
-      GITHUB_PROMPTS_OWNER: "alchemy666888",
-      GITHUB_PROMPTS_REPO: "skill",
-      GITHUB_PROMPTS_BRANCH: "ai/obsolete-prompt",
-      GITHUB_PROMPTS_PREFIX: "prompts",
-      PROMPT_OPERATOR_TELEGRAM_IDS: "4",
-      PROMPT_USER_KEY_SECRET: "fixture-secret-with-at-least-32-characters",
+      SKILLS_ENABLED: "true",
+      DEEPSEEK_ROUTING_ENABLED: "true",
+      SANDBOX_NAME: "",
+      NEWS_MCP_API_KEY: "invalid-key",
     }))
       vi.stubEnv(key, value);
-    const load = vi.fn(async () => {
-      throw new Error("prompt missing");
-    });
-    installDispatchPromptServices({
-      resolve: async () => compiledEmergencyBundle("safe base"),
-      repository: {
-        identity: {
-          connector: "github/skills-repo",
-          owner: "alchemy666888",
-          repository: "skill",
-          branch: "main",
-        },
-        store: { load } as unknown as GitHubPromptStore,
-      },
-    });
-    await dispatchTelegramInput(input);
-    expect(load).toHaveBeenCalledWith();
-    const request = vi.mocked(invokeWorker).mock.calls[0]![2];
-    expect(workerRequestSchema.safeParse(request).success).toBe(true);
-    expect(request).toMatchObject({
-      repositoryCommitSha: null,
-      promptBundle: { degradedModeSource: "compiled_emergency" },
-    });
-  });
-
-  afterEach(() => {
-    installDispatchPromptServices(undefined);
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
-  });
-
-  it("forwards normalized worker settings on one line", () => {
-    const certificate =
-      "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----";
-    const prior = { ...process.env };
-    delete process.env.ASSISTANT_TIMEZONE;
-    Object.assign(process.env, {
-      DATABASE_URL: "postgres://user:pass@db.test/app?sslmode=require",
-      AIVEN_PG_CA: certificate,
-      SKILLS_ENABLED: " false ",
-      SKILL_MAX_TOOL_STEPS: " 5 ",
-      SKILL_EXECUTION_TIMEOUT_MS: "",
-    });
-    let env: ReturnType<typeof workerEnvironment>;
-    try {
-      env = workerEnvironment(
-        "telegram-token",
-        readModelConfig({
-          DEEPSEEK_API_KEY: "key",
-          DEEPSEEK_INPUT_PRICE_PER_MILLION: "1",
-          DEEPSEEK_OUTPUT_PRICE_PER_MILLION: "2",
-          DEEPSEEK_THINKING_ENABLED: "",
-          DEEPSEEK_BASE_URL: "",
-          DEEPSEEK_ROUTING_ENABLED: "",
-          DEEPSEEK_ROUTING_MODE: "",
-          DEEPSEEK_ROUTER_TIMEOUT_MS: "",
-          ASSISTANT_SYSTEM_PROMPT: "line one\nline two",
-        }),
-      );
-    } finally {
-      process.env = prior;
-    }
-    expect(env).toMatchObject({
-      TELEGRAM_BOT_TOKEN: "telegram-token",
-      DEEPSEEK_API_KEY: "key",
-      DEEPSEEK_BASE_URL: "https://api.deepseek.com",
-      DEEPSEEK_THINKING_ENABLED: "true",
-      DEEPSEEK_ROUTING_ENABLED: "false",
-      DEEPSEEK_ROUTING_MODE: "shadow",
-      DEEPSEEK_ROUTER_TIMEOUT_MS: "3000",
-      ASSISTANT_SYSTEM_PROMPT: "line one line two",
-      ASSISTANT_TIMEZONE: "Asia/Hong_Kong",
-      SKILLS_ENABLED: "false",
-      SKILL_MAX_TOOL_STEPS: "5",
-    });
-    expect(env.ASSISTANT_SYSTEM_PROMPT).not.toBe(DEFAULT_SYSTEM_PROMPT);
-    expect(env).not.toHaveProperty("SKILL_EXECUTION_TIMEOUT_MS");
-    expect(env).not.toHaveProperty("ALLOW_USERS");
-    expect(Object.values(env).some((value) => /[\r\n]/.test(value))).toBe(
-      false,
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async (url) =>
+      String(url) === "https://deepseek.test/responses"
+        ? Response.json({
+            output_text: "請提供 CPI 數據與 BTC 現價，我可以分析交易條件。",
+          })
+        : Response.json({ ok: true }),
     );
-    expect(readDatabaseConfig(env).AIVEN_PG_CA).toBe(certificate);
-  });
-
-  it("uses the validated catalog when PostgreSQL is available", async () => {
-    const catalog = { catalogToken: EMPTY_SKILL_CATALOG_TOKEN, skills: [] };
-
-    await expect(
-      loadSkillCatalog(async () => catalog, "correlation-id"),
-    ).resolves.toEqual({ catalog, degradationReason: "catalog_missing" });
-  });
-
-  it("continues without skills when PostgreSQL is unavailable", async () => {
-    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
-
-    await expect(
-      loadSkillCatalog(async () => {
-        throw new Error("connector response containing private detail");
-      }, "correlation-id"),
-    ).resolves.toEqual({
-      catalog: { catalogToken: EMPTY_SKILL_CATALOG_TOKEN, skills: [] },
-      degradationReason: "repository_unavailable",
-    });
-
-    expect(log).toHaveBeenCalledOnce();
-    const event = JSON.parse(log.mock.calls[0]![0]);
-    expect(event).toMatchObject({
-      correlationId: "correlation-id",
-      operation: "skill.catalog_load",
-      result: "degraded",
-      code: "SKILL_CATALOG_UNAVAILABLE",
-    });
-    expect(log.mock.calls[0]![0]).not.toContain("private detail");
-  });
-
-  it("does not answer a group chat", async () => {
-    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    expect(databaseAccess).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
 
-    await expect(
-      dispatchTelegramInput({
-        ...input,
-        chatId: "-100123",
-        text: "大家好",
-        chatScope: "group",
-        replyToMessageId: "9",
-      }),
-    ).resolves.toMatchObject({ ok: true, data: { acknowledged: true } });
+  it("sends the current message directly to DeepSeek and delivers its answer", async () => {
+    await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://deepseek.test/responses",
+      "https://api.telegram.org/bottoken/sendMessage",
+    ]);
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+    expect(body).toMatchObject({ model: "deepseek-v4-pro", stream: false });
+    expect(body.input).toEqual([{ role: "user", content: input.text }]);
+    expect(body.instructions).toContain(
+      "Reply helpfully in the user's language.",
+    );
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+    expect(body.instructions).not.toContain("must-not-be-parsed");
+    const reply = JSON.parse(String(fetchMock.mock.calls[1]![1]!.body));
+    expect(reply).toMatchObject({
+      chat_id: "3",
+      text: "請提供 CPI 數據與 BTC 現價，我可以分析交易條件。",
+    });
+  });
 
-    expect(invokeWorker).not.toHaveBeenCalled();
-    expect(skillQuery).not.toHaveBeenCalled();
+  it("does not include another message or user in subsequent model requests", async () => {
+    await dispatchTelegramInput(input);
+    await dispatchTelegramInput({
+      ...input,
+      updateId: "2",
+      text: "第二個問題",
+    });
+    const body = JSON.parse(String(fetchMock.mock.calls[2]![1]!.body));
+    expect(body.input).toEqual([{ role: "user", content: "第二個問題" }]);
+    expect(JSON.stringify(body)).not.toContain(input.text);
+  });
+
+  it("coalesces concurrent and completed retries of the same update in memory", async () => {
+    await Promise.all([
+      dispatchTelegramInput(input),
+      dispatchTelegramInput(input),
+    ]);
+    await dispatchTelegramInput(input);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("expires replay protection instead of retaining updates indefinitely", async () => {
+    vi.useFakeTimers();
+    await dispatchTelegramInput(input);
+    vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
+    await dispatchTelegramInput(input);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("lets a failed update be retried without retrying the provider internally", async () => {
+    fetchMock.mockResolvedValueOnce(
+      Response.json({ error: { message: "Unavailable" } }, { status: 503 }),
+    );
+    await expect(dispatchTelegramInput(input)).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("checks the allowlist before sending any user message to DeepSeek", async () => {
+    await dispatchTelegramInput({ ...input, userId: "5" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]![0])).toContain("api.telegram.org");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body)).text).toBe(
+      TELEGRAM_ACCESS_DENIED_TEXT,
+    );
+  });
+
+  it("ignores group messages and edits without contacting an API", async () => {
+    await dispatchTelegramInput({ ...input, chatScope: "group" });
+    await dispatchTelegramInput({ ...input, chatId: "-100123" });
+    await dispatchTelegramInput({ kind: "ignored", updateId: "3" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("refuses a Telegram account that is not on ALLOW_USERS", async () => {
-    vi.stubEnv("ALLOW_USERS", "luckyvickyforever,another_user");
-    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(
-      dispatchTelegramInput({ ...input, username: "someoneelse" }),
-    ).resolves.toMatchObject({ ok: true });
-
-    expect(invokeWorker).not.toHaveBeenCalled();
-    expect(skillQuery).not.toHaveBeenCalled();
-    const body = JSON.parse(String(fetchMock.mock.calls[0]![1].body));
-    expect(body).toEqual({
-      chat_id: "3",
-      text: TELEGRAM_ACCESS_DENIED_TEXT,
+  it("acknowledges old callback buttons without executing stored actions", async () => {
+    await dispatchTelegramInput({
+      kind: "callback",
+      updateId: "4",
+      messageId: "2",
+      chatId: "3",
+      userId: "4",
+      callbackQueryId: "callback",
+      data: "opaque-capability",
     });
-    expect(fetchMock.mock.calls[0]![0]).toBe(
-      "https://api.telegram.org/bottoken/sendMessage",
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0]![0])).toContain(
+      "answerCallbackQuery",
     );
   });
 
-  it("matches an allowlisted username without @ and ignores case", async () => {
-    vi.stubEnv("ALLOW_USERS", "@LuckyVickyForever");
+  it("answers unsupported media without invoking DeepSeek", async () => {
     await dispatchTelegramInput({
-      ...input,
-      username: "luckyvickyforever",
-    });
-    expect(invokeWorker).toHaveBeenCalledOnce();
-  });
-
-  it("refuses a callback from an account that is not allowlisted", async () => {
-    vi.stubEnv("ALLOW_USERS", "luckyvickyforever");
-    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await dispatchTelegramInput({
-      kind: "callback",
-      updateId: "9",
-      callbackQueryId: "callback-id",
-      messageId: "8",
+      kind: "unsupported",
+      updateId: "5",
       chatId: "3",
       userId: "4",
-      username: "someoneelse",
-      data: "y_abcdefghijklmnopqrstuvwxyz123456",
     });
-
-    expect(invokeWorker).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(String(fetchMock.mock.calls[1]![1].body))).toEqual({
-      callback_query_id: "callback-id",
-    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]!.body)).text).toBe(
+      "Please send a text message.",
+    );
   });
 });

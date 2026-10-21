@@ -5,9 +5,8 @@ import {
   extractTelegramInput,
   type TelegramInput,
 } from "../../../../server/telegram/input";
-import { persistControllerLog } from "../../../../shared/postgres/controller-log";
 import { uuidV7 } from "../../../../shared/ids";
-import { safeError } from "../../../../shared/logger";
+import { logStructured, safeError } from "../../../../shared/logger";
 import {
   failureContext,
   type FailureContext,
@@ -73,10 +72,9 @@ async function privateFailure(
   token: string,
   chatId: string,
   updateId: string,
-  correlationId: string,
   text: string,
 ): Promise<NextResponse> {
-  if (!(await claimWebhookFailure(updateId, correlationId))) return accepted();
+  if (!(await claimWebhookFailure(updateId))) return accepted();
   if (await notifyTurnFailed(token, chatId, text)) return accepted();
   await releaseWebhookFailure(updateId);
   return NextResponse.json({ ok: false }, { status: 503, headers });
@@ -112,7 +110,7 @@ async function finishDispatch(
     const failure = safeError(outcome.error, "INTERNAL_ERROR", "dispatch");
     const context = failureContext(outcome.error);
     const metadata = failureMetadata(failure, context);
-    await persistControllerLog({
+    logStructured({
       correlationId,
       component: "controller",
       operation: "telegramWebhook",
@@ -123,13 +121,7 @@ async function finishDispatch(
       ...(metadata ? { metadata } : {}),
     });
     if (chatId)
-      return privateFailure(
-        token,
-        chatId,
-        input.updateId,
-        correlationId,
-        TURN_FAILED_TEXT,
-      );
+      return privateFailure(token, chatId, input.updateId, TURN_FAILED_TEXT);
     return NextResponse.json({ ok: false }, { status: 503, headers });
   }
   if (!outcome.response.ok) {
@@ -142,7 +134,7 @@ async function finishDispatch(
           ...(reported.trace?.length ? { trace: reported.trace } : {}),
         }
       : undefined;
-    await persistControllerLog({
+    logStructured({
       correlationId,
       component: "controller",
       operation: "telegramWebhook",
@@ -153,19 +145,13 @@ async function finishDispatch(
       ...(metadata && Object.keys(metadata).length ? { metadata } : {}),
     });
     if (chatId)
-      return privateFailure(
-        token,
-        chatId,
-        input.updateId,
-        correlationId,
-        TURN_FAILED_TEXT,
-      );
+      return privateFailure(token, chatId, input.updateId, TURN_FAILED_TEXT);
     return NextResponse.json(
       { ok: false },
       { status: retryable ? 503 : 500, headers },
     );
   }
-  await persistControllerLog({
+  logStructured({
     correlationId,
     component: "controller",
     operation: "telegramWebhook",
