@@ -28,7 +28,7 @@ afterEach(async () => {
 
 describe("skill routing acceptance", () => {
   it.each(["今天香港天氣怎樣？", "CPI數據出來了，BTC有沒有交易機會"])(
-    "answers %s through DeepSeek without native search when routing is disabled",
+    "answers %s through DeepSeek with native search available when routing is disabled",
     async (text) => {
       root = await mkdtemp(join(tmpdir(), "routing-native-fallback-"));
       const fetcher = vi.fn<typeof fetch>(async () =>
@@ -65,10 +65,10 @@ describe("skill routing acceptance", () => {
       const body = JSON.parse(
         String((fetcher.mock.calls[0]![1] as RequestInit).body),
       );
-      expect(body.tools).toBeUndefined();
-      expect(body.tool_choice).toBeUndefined();
+      expect(body.tools).toEqual([{ type: "web_search" }]);
+      expect(body.tool_choice).toBe("auto");
       expect(body.instructions).toContain(
-        "Provider-native web search is disabled",
+        "Provider-native web search is always available",
       );
       expect(body.input.at(-1).content).toBe(text);
       expect(telegram.send).toHaveBeenCalledWith(
@@ -522,11 +522,22 @@ describe("skill routing acceptance", () => {
     expect(records).toHaveLength(2);
     expect(records.map(({ runKind }) => runKind)).toEqual(["router", "answer"]);
     expect(records[0]).toMatchObject({
+      model: "deepseek-flash",
+      thinkingEnabled: false,
+      effort: "none",
+      inputPricePerMillion: "0.30",
+      outputPricePerMillion: "1.20",
+      estimatedCost: "0.000004",
       providerRequestId: "router-request",
       inputCount: 2,
       outputCount: 3,
     });
     expect(records[1]).toMatchObject({
+      model: "deepseek-v4-pro",
+      thinkingEnabled: false,
+      effort: "none",
+      inputPricePerMillion: "1",
+      outputPricePerMillion: "2",
       providerRequestId: "answer-request",
       inputCount: 11,
       outputCount: 12,

@@ -45,6 +45,12 @@ import {
   type CalendarClock,
 } from "../../shared/calendar-clock";
 import { deadline, settleOnAbort } from "../../shared/abort";
+import {
+  DEEPSEEK_ANSWER_MODEL,
+  DEEPSEEK_ROUTER_MODEL,
+  DEEPSEEK_ROUTER_INPUT_PRICE_PER_MILLION,
+  DEEPSEEK_ROUTER_OUTPUT_PRICE_PER_MILLION,
+} from "../../shared/deepseek";
 
 const GENERIC_FAILURE =
   "Sorry, I couldn't complete that request. Please try again later.";
@@ -561,8 +567,8 @@ export class TelegramTurn {
                     decision.kind === "web_search_fallback"
                   ) {
                     if (decision.kind === "web_search_fallback") {
-                      // Accept legacy router decisions without enabling
-                      // provider-native web search.
+                      // Search is always available in the answer provider,
+                      // including for legacy router decisions.
                       routedCapabilities = [];
                       executionMode = "direct";
                       break;
@@ -643,7 +649,7 @@ export class TelegramTurn {
               }
               if (!resolution || resolution.kind === "none") {
                 // Keep authorized function-tool selections. Unmatched requests
-                // use direct generation without provider-native web search.
+                // use generation with provider-native search available.
                 fallbackReason =
                   command?.kind === "fallback"
                     ? command.reason
@@ -746,30 +752,25 @@ export class TelegramTurn {
                 runKind: "router",
                 userId: scopeKey,
                 provider: "deepseek",
-                model: "deepseek-v4-pro",
-                thinkingEnabled: this.accounting.thinkingEnabled,
-                effort: "medium",
+                model: DEEPSEEK_ROUTER_MODEL,
+                thinkingEnabled: false,
+                effort: "none",
                 status: "completed",
                 requestMessageId,
                 responseMessageId: null,
                 providerRequestId: routerRun.requestId ?? null,
                 inputCount: routerRun.usage?.inputTokens ?? null,
                 outputCount: routerRun.usage?.outputTokens ?? null,
-                inputPricePerMillion:
-                  this.accounting.inputPricePerMillion ?? null,
-                outputPricePerMillion:
-                  this.accounting.outputPricePerMillion ?? null,
-                estimatedCost:
-                  routerRun.usage &&
-                  this.accounting.inputPricePerMillion &&
-                  this.accounting.outputPricePerMillion
-                    ? calculateCost(
-                        routerRun.usage.inputTokens,
-                        routerRun.usage.outputTokens,
-                        this.accounting.inputPricePerMillion,
-                        this.accounting.outputPricePerMillion,
-                      ).estimatedCost
-                    : null,
+                inputPricePerMillion: DEEPSEEK_ROUTER_INPUT_PRICE_PER_MILLION,
+                outputPricePerMillion: DEEPSEEK_ROUTER_OUTPUT_PRICE_PER_MILLION,
+                estimatedCost: routerRun.usage
+                  ? calculateCost(
+                      routerRun.usage.inputTokens,
+                      routerRun.usage.outputTokens,
+                      DEEPSEEK_ROUTER_INPUT_PRICE_PER_MILLION,
+                      DEEPSEEK_ROUTER_OUTPUT_PRICE_PER_MILLION,
+                    ).estimatedCost
+                  : null,
                 latencyMs: routerRun.latencyMs,
                 routingOutcome: routerRun.routeKind ?? null,
                 selectedSkillId: routerRun.selectedSkillId ?? null,
@@ -789,9 +790,9 @@ export class TelegramTurn {
               runKind: "answer",
               userId: scopeKey,
               provider: "deepseek",
-              model: "deepseek-v4-pro",
+              model: DEEPSEEK_ANSWER_MODEL,
               thinkingEnabled: this.accounting.thinkingEnabled,
-              effort: "medium",
+              effort: this.accounting.thinkingEnabled ? "medium" : "none",
               status: "completed",
               requestMessageId,
               responseMessageId: assistant.id,

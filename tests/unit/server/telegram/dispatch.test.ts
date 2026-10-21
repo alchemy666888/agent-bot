@@ -83,8 +83,8 @@ describe("stateless Telegram dispatch", () => {
     expect(body.instructions).toContain(
       "Reply helpfully in the user's language.",
     );
-    expect(body.tools).toBeUndefined();
-    expect(body.tool_choice).toBeUndefined();
+    expect(body.tools).toEqual([{ type: "web_search" }]);
+    expect(body.tool_choice).toBe("auto");
     expect(body.instructions).not.toContain("must-not-be-parsed");
     const reply = JSON.parse(String(fetchMock.mock.calls[1]![1]!.body));
     expect(reply).toMatchObject({

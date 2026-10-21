@@ -5,6 +5,7 @@ import {
   type PromptRoutingRequest,
   type PromptRoutingResult,
 } from "../../shared/contracts/prompt";
+import { DEEPSEEK_ROUTER_MODEL } from "../../shared/deepseek";
 
 export const PROMPT_ROUTER_MAX_INPUT_CHARS = 8_192;
 export const PROMPT_ROUTER_MAX_OUTPUT_TOKENS = 128;
@@ -58,7 +59,8 @@ export class PromptMetadataRouter {
             "content-type": "application/json",
           },
           body: JSON.stringify({
-            model: this.config.model ?? "deepseek-chat",
+            model: this.config.model ?? DEEPSEEK_ROUTER_MODEL,
+            reasoning: { effort: "none" },
             max_output_tokens: PROMPT_ROUTER_MAX_OUTPUT_TOKENS,
             input: [
               {

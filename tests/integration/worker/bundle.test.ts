@@ -8,23 +8,25 @@ import { uuidV7 } from "../../../src/shared/ids";
 import { EMPTY_SKILL_CATALOG_TOKEN } from "../../../src/worker/skills/schemas";
 
 const exec = promisify(execFile);
+const workerArtifact = (operation: "build" | "verify") =>
+  exec(process.execPath, ["scripts/worker-artifact.mjs", operation]);
 
 describe("worker bundle", () => {
   it("byte-verifies the release artifact and rejects stale output", async () => {
-    await exec("pnpm", ["worker:build"]);
-    await exec("pnpm", ["worker:verify"]);
+    await workerArtifact("build");
+    await workerArtifact("verify");
     await appendFile("dist/worker.mjs", "\n// stale artifact\n");
     try {
-      await expect(exec("pnpm", ["worker:verify"])).rejects.toMatchObject({
+      await expect(workerArtifact("verify")).rejects.toMatchObject({
         code: 1,
       });
     } finally {
-      await exec("pnpm", ["worker:build"]);
+      await workerArtifact("build");
     }
   }, 15_000);
 
   it("starts as ESM with bundled CommonJS dependencies", async () => {
-    await exec("pnpm", ["worker:build"]);
+    await workerArtifact("build");
     const root = await mkdtemp(join(tmpdir(), "worker-bundle-"));
     const correlationId = uuidV7();
     const requestPath = join(root, "request.json");
@@ -58,7 +60,7 @@ describe("worker bundle", () => {
   });
 
   it("executes a v2 prompt bundle and sends its reviewed layers to the provider", async () => {
-    await exec("pnpm", ["worker:build"]);
+    await workerArtifact("build");
     const root = await mkdtemp(join(tmpdir(), "worker-v2-bundle-"));
     const correlationId = uuidV7();
     const requestPath = join(root, "request.json");
@@ -165,6 +167,9 @@ globalThis.fetch = async (url, init = {}) => {
         ok: true,
       });
       const providerRequest = JSON.parse(await readFile(capturePath, "utf8"));
+      expect(providerRequest.model).toBe("deepseek-v4-pro");
+      expect(providerRequest.tools).toEqual([{ type: "web_search" }]);
+      expect(providerRequest.tool_choice).toBe("auto");
       expect(providerRequest.instructions).toContain(
         "reviewed common contract prompt",
       );
@@ -186,7 +191,7 @@ globalThis.fetch = async (url, init = {}) => {
   }, 15_000);
 
   it("acknowledges ignored updates without model configuration", async () => {
-    await exec("pnpm", ["worker:build"]);
+    await workerArtifact("build");
     const root = await mkdtemp(join(tmpdir(), "worker-ignored-"));
     const correlationId = uuidV7();
     const requestPath = join(root, "request.json");
@@ -234,7 +239,7 @@ globalThis.fetch = async (url, init = {}) => {
   });
 
   it("returns a safe structured response when an operation fails", async () => {
-    await exec("pnpm", ["worker:build"]);
+    await workerArtifact("build");
     const root = await mkdtemp(join(tmpdir(), "worker-bundle-"));
     const correlationId = uuidV7();
     const requestPath = join(root, "request.json");

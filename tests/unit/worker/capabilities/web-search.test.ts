@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCapabilityRegistry } from "../../../../src/worker/capabilities";
 
-describe("disabled legacy web_search capability", () => {
+describe("provider-native web_search compatibility capability", () => {
   it("retains the compatibility identifier for skill authorization", () => {
     const registry = createCapabilityRegistry();
     expect(registry.requests(["web_search"])).toEqual([
@@ -19,7 +19,7 @@ describe("disabled legacy web_search capability", () => {
         ["web_search"],
         audit,
       ),
-    ).rejects.toThrow("WEB_SEARCH_DISABLED");
+    ).rejects.toThrow("WEB_SEARCH_PROVIDER_NATIVE_ONLY");
     expect(audit).toHaveBeenCalledWith(
       expect.objectContaining({
         capabilityId: "web_search",
