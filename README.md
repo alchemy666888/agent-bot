@@ -1,14 +1,12 @@
 # Telegram Agent
 
-Telegram Agent is a public conversational assistant for private Telegram chats. People message the bot in text. The app answers with DeepSeek model `deepseek-v4-pro`, stores application state in PostgreSQL, stores skill definitions in GitHub, and gives the operator a secret-protected read-only dashboard plus a consistent export.
+Telegram Agent answers private Telegram text messages directly with DeepSeek model `deepseek-v4-pro`.
 
-Telegram is the user interface. Next.js on Vercel receives webhooks and runs Telegram turns in the bundled local worker process. Chat requests do not provision a remote Sandbox, so Sandbox billing or availability cannot block a reply. Dashboard and export operations still use the private Sandbox in Singapore (`sin1`). All durable application data and structured logs are stored in PostgreSQL; local and Sandbox filesystems are scratch working copies.
+The chat path is `Telegram webhook → DeepSeek API → Telegram reply` in the Next.js server. It does not query or update PostgreSQL, start a worker or Sandbox, restore files, read conversation history, load skill or prompt repositories, run classifiers, or call News MCP. The system prompt comes from `ASSISTANT_SYSTEM_PROMPT` or the compiled default. Each message is independent; chat does not save messages, create schedules, or execute installed skills.
 
-Each Telegram turn resolves its context and routes once, then generates and delivers the answer. Temporary provider failures retry generation within the same turn deadline. Each provider exchange, including response-body reads and recovery, is capped at 45 seconds. Timeouts do not restart routing. The turn deadline leaves 30 seconds before the 250-second worker hard stop for delivery and cleanup. If a turn still fails, Telegram receives a concise message and diagnostics remain in server logs.
+Webhook authentication and the `ALLOW_USERS` whitelist still apply. Generation and any output recovery share a 45-second budget. The webhook acknowledges long requests after 45 seconds and completes delivery through Next.js `after()`. Failures produce a concise Telegram notice and redacted console diagnostics. Update replay protection and failure acknowledgements use bounded, expiring process memory; they do not survive instance restarts or coordinate across instances.
 
-Supported input includes private text, `/start`, `/help`, `/new`, and the installed-skill commands specified in `specs/telegram-agent/requirements.md`. A skill is drafted through categorized clarification, reviewed, iteratively revised, and installed only after revision-bound explicit approval. User-created skills are private to their Telegram owner; operator-managed global skills are visible to everyone. There is no user sharing or public marketplace. Discovery never implies selection: `/skill use <stable-id>` or an equivalent signed button is required before execution.
-
-PostgreSQL is the source of truth for conversations, messages, updates, logs, and operational skill references. GitHub's protected default branch is the source of truth for skill definitions and immutable versions. The Sandbox is disposable execution infrastructure. Approved skill versions may use only capabilities present in the operator registry and explicitly granted at installation; prompt text and model output cannot grant tools. The bounded tool loop authorizes and audits every call, and non-retry-safe unknown outcomes are not automatically replayed.
+The dashboard, export, and other management workflows retain their existing PostgreSQL and Sandbox infrastructure. Existing stored data is not changed by direct chat, and new chat messages and model runs do not appear in the persisted dashboard history.
 
 Live Preview verification and the final acceptance audit are deferred for this stage. A real `sin1` stop/resume check has not been recorded.
 
@@ -29,7 +27,7 @@ src/components/dashboard/ Read-only dashboard markup
 src/server/config/        Environment validation and defaults
 src/server/auth/          Dashboard session and download guards
 src/server/sandbox/       Private Sandbox controller
-src/server/telegram/      Webhook input minimization and worker dispatch
+src/server/telegram/      Webhook input minimization and direct DeepSeek dispatch
 src/server/dashboard/     Query view models
 src/server/export/        Authenticated ZIP stream
 src/shared/               Contracts, identifiers, and redaction
@@ -61,7 +59,7 @@ Deploy this repository as one Next.js project on the Vercel Hobby plan. The buil
 
 Runtime constraints that this app accepts:
 
-- Telegram runs the trusted bundled worker locally; one named Sandbox serves dashboard and export operations. PostgreSQL remains independently durable.
+- Telegram calls DeepSeek directly in the Next.js server. Dashboard and export operations retain their existing Sandbox and PostgreSQL infrastructure.
 - The controller always requests region `sin1` and a single `/workspace` mount. It opens no public Sandbox port.
 - The Sandbox timeout sent by the controller is 45 minutes, which is the Hobby ceiling used in code.
 - Availability is best-effort. The app adds no rate limit, storage cap, or login lockout of its own. Hobby, PostgreSQL-provider, Telegram, and DeepSeek limits still apply.
@@ -134,9 +132,7 @@ Operator IDs are comma-separated canonical positive numeric strings with no spac
 
 ### Schedules
 
-A user can ask in a private Telegram chat to create, list, stop, or restart a schedule. The original message, schedule metadata, and the user prompt are stored in PostgreSQL. Those commands are answered on the server and do not call DeepSeek. The clock used when a schedule is created or restarted comes from News MCP, with the server clock in `Asia/Hong_Kong` only when News MCP cannot be read.
-
-Examples: `/schedule daily 09:00 <prompt>`, `/schedule hourly <prompt>`, `/schedule every 15m <prompt>`, `/schedules`, `/schedule_stop <id>`, `/schedule_start <id>`. Chinese: `設定排程 每天 09:00 <提示>`, `排程列表`, `停止排程 <id>`, `啟動排程 <id>`.
+Direct Telegram chat does not read, create, stop, or restart stored schedules. Schedule-like messages, including `/schedules` and `/schedule daily …`, are passed to DeepSeek as text. The answering model has no action tools and must not claim it created or changed a schedule. Existing stored schedules and management endpoints are outside the direct chat path.
 
 ### Not production settings
 
@@ -162,19 +158,8 @@ pnpm build
 
 Further operator steps are in `docs/deployment.md`, `docs/operations.md`, and `docs/rollback.md`.
 
-### DeepSeek native search
+### DeepSeek direct chat
 
-DeepSeek provider-native `web_search` is disabled. Requests without a matching
-skill use direct DeepSeek generation; authorized function tools remain available.
-Legacy `web_search_fallback` routing decisions also use direct generation. The
-model must state uncertainty about live data and can analyze figures supplied by
-the user instead of inventing current prices or economic releases.
+Telegram sends only the current user message and the configured or compiled system instructions to DeepSeek's `/responses` endpoint. No native `web_search` or function tools are offered. The model must state uncertainty about live data and can analyze figures supplied by the user instead of inventing current prices or economic releases.
 
-The provider does not continue native-search output or make search-specific
-recovery requests on API errors or timeouts. The legacy `web_search` capability
-identifier remains loadable for stored skills, but cannot be offered or executed.
-
-The worker retains bounded API requests and a delivery reserve within the webhook
-execution limit. Disabling search removes the mandatory native-search path; it
-does not remove Vercel's function execution limits. Long-running jobs beyond that
-window require durable background processing.
+The complete generation, including malformed-output recovery, is capped at 45 seconds. No database or model-classifier setup precedes that request.

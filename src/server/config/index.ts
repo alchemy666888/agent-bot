@@ -334,6 +334,20 @@ export function readModelConfig(
   return modelSchema.parse(env);
 }
 
+/** Direct chat needs no accounting, classifier, storage, or repository settings. */
+export function readDirectModelConfig(
+  env: Record<string, string | undefined> = process.env,
+) {
+  return modelSchema
+    .pick({
+      DEEPSEEK_API_KEY: true,
+      DEEPSEEK_BASE_URL: true,
+      DEEPSEEK_THINKING_ENABLED: true,
+      ASSISTANT_SYSTEM_PROMPT: true,
+    })
+    .parse(env);
+}
+
 export function readTelegramConfig(
   env: Record<string, string | undefined> = process.env,
 ): TelegramConfig {

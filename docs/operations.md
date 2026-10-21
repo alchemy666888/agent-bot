@@ -1,5 +1,7 @@
 # Operations
 
+Private Telegram chat now calls DeepSeek directly without database reads or writes. Its messages, model runs, and controller logs are not added to PostgreSQL or the persisted dashboard history. Inspect redacted server console logs for chat failures. Replay protection is best-effort within a server instance and expires after ten minutes. The database-backed procedures below apply to existing management and stored-data workflows.
+
 ## Schedules
 
 Apply `migrations/20261014_scheduled_tasks.sql` before users create schedules. Users manage only their own rows: `/schedule`, `/schedules`, `/schedule_stop`, and `/schedule_start` (or the Chinese phrases in the README). Those messages are answered on the server and do not call DeepSeek. Each row keeps the source message, the user prompt, and schedule metadata. The clock used when a schedule is created or restarted is News MCP `get_current_datetime` in `Asia/Hong_Kong`, with the server clock in that zone only when News MCP cannot be read.

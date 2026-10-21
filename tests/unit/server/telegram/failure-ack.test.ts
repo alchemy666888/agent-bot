@@ -1,32 +1,30 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   claimWebhookFailure,
   releaseWebhookFailure,
   resetWebhookFailureClaims,
-  webhookFailureAckPath,
   webhookFailureClaimed,
 } from "../../../../src/app/api/telegram/webhook/failure-ack";
 
-describe("webhook failure ack", () => {
-  beforeEach(() => {
-    resetWebhookFailureClaims();
-  });
+describe("in-memory webhook failure acknowledgements", () => {
+  beforeEach(() => resetWebhookFailureClaims());
+  afterEach(() => vi.useRealTimers());
 
-  it("stores the ack beside controller logs so the worker scratch does not sync it", () => {
-    expect(webhookFailureAckPath("15")).toBe(
-      "logs/controller/webhook-ack-15.json",
-    );
-    expect(webhookFailureAckPath("15")).not.toMatch(/^data\/|^logs\/worker\//);
-    expect(webhookFailureAckPath("nope")).toBeUndefined();
-    expect(webhookFailureAckPath("../2")).toBeUndefined();
-  });
-
-  it("lets one caller reserve an update and releases that reservation", async () => {
-    await expect(claimWebhookFailure("4", "corr")).resolves.toBe(true);
+  it("lets only one concurrent caller reserve a failure notice", async () => {
+    expect(
+      await Promise.all([claimWebhookFailure("4"), claimWebhookFailure("4")]),
+    ).toEqual([true, false]);
     await expect(webhookFailureClaimed("4")).resolves.toBe(true);
-    await expect(claimWebhookFailure("4", "corr")).resolves.toBe(false);
     await releaseWebhookFailure("4");
     await expect(webhookFailureClaimed("4")).resolves.toBe(false);
-    await expect(claimWebhookFailure("4", "again")).resolves.toBe(true);
+    await expect(claimWebhookFailure("4")).resolves.toBe(true);
+  });
+
+  it("expires old claims", async () => {
+    vi.useFakeTimers();
+    await claimWebhookFailure("4");
+    vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
+    await expect(webhookFailureClaimed("4")).resolves.toBe(false);
+    await expect(claimWebhookFailure("4")).resolves.toBe(true);
   });
 });
