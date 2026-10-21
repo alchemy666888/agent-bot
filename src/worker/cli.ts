@@ -140,7 +140,6 @@ async function telegramTurn(
           {
             apiKey: requiredEnv("DEEPSEEK_API_KEY"),
             baseUrl: requiredEnv("DEEPSEEK_BASE_URL"),
-            thinking: requiredEnv("DEEPSEEK_THINKING_ENABLED") === "true",
             timeoutMs: routerTimeoutMs,
           },
           fetch,

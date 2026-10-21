@@ -78,9 +78,25 @@ Private text messages call DeepSeek's `/responses` endpoint in the Next.js serve
 
 `ALLOW_USERS` remains the bot access whitelist. Set it in Production and Preview, for example `ALLOW_USERS=luckyvickyforever`. Separate accounts with commas and omit `@` from usernames. `Allow_USERS` is accepted as the same variable. Non-allowlisted accounts receive a fixed refusal without contacting DeepSeek.
 
-The whole generation, including output recovery, has a 45-second budget. Provider-native search and function tools are disabled. The local server clock supplies date/time context, with `Asia/Hong_Kong` as the default timezone. For live facts that cannot be verified, the model states uncertainty and can analyze user-provided data.
+The whole generation, including output recovery, has a 45-second budget. Native `web_search` is always offered with `tool_choice: "auto"`, including during output recovery; DeepSeek uses it when useful. Function tools remain unavailable on direct chat. The local server clock supplies date/time context, with `Asia/Hong_Kong` as the default timezone. For live facts that cannot be verified, the model states uncertainty and can analyze user-provided data.
 
 Controller diagnostics go only to the server console. Duplicate update protection and failure acknowledgements use bounded in-memory caches with a ten-minute expiry, so they do not provide durable or cross-instance deduplication. Chat does not persist history, execute stored skills, or create/change schedules. Dashboard, export, and other management workflows retain their own storage configuration and permissions.
+
+No migration or additional API key is needed for native search. Redeploy the
+Next.js app with the existing `DEEPSEEK_API_KEY`. Answers retain
+`deepseek-v4-pro` because Flash ignores native search. Retained worker and
+management classifiers use `deepseek-flash` without thinking or search; direct
+chat does not run them. Completed native-search results can be reused during
+recovery, which never grants function tools. Provider errors and timeouts retain
+normal bounded handling.
+
+The [pricing page](https://api-docs.deepseek.com/quick_start/pricing/) and
+`.env.example` document conservative peak/cache-miss token estimates. Existing
+worker model-run records distinguish Pro answers and Flash classifiers; their
+estimates exclude Search/Fetch fees and cache/off-peak discounts. Direct chat
+does not persist these records or require accounting settings. Optionally set
+`DEEPSEEK_THINKING_ENABLED=false` to reduce answer reasoning cost. Verify
+current-fact queries and source URLs in Preview before production rollout.
 
 ### Prompt repository rollout
 

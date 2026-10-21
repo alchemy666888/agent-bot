@@ -65,7 +65,12 @@ describe("direct Telegram webhook without persistence", () => {
     fetchMock.mockReset();
     fetchMock.mockImplementation(async (url) =>
       String(url) === "https://deepseek.test/responses"
-        ? Response.json({ output_text: "請提供 CPI 實際值與預期值。" })
+        ? Response.json({
+            output: [
+              { type: "web_search_call", id: "ws", status: "completed" },
+            ],
+            output_text: "請提供 CPI 實際值與預期值。",
+          })
         : Response.json({ ok: true }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -80,6 +85,10 @@ describe("direct Telegram webhook without persistence", () => {
 
   it("authenticates, calls DeepSeek, and replies without storage or other APIs", async () => {
     const response = await POST(request());
+    const modelRequest = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+    expect(modelRequest.model).toBe("deepseek-v4-pro");
+    expect(modelRequest.tools).toEqual([{ type: "web_search" }]);
+    expect(modelRequest.tool_choice).toBe("auto");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([

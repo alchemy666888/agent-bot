@@ -73,6 +73,12 @@ describe("DeepSeek router adapter", () => {
       String((fetcher.mock.calls[0]![1] as RequestInit).body),
     );
     expect(body.input[0].content).not.toContain("instructions");
+    expect(body.model).toBe("deepseek-flash");
+    expect(body.reasoning).toEqual({ effort: "none" });
+    expect(body.tools).toBeUndefined();
+    expect(body.instructions).toContain(
+      "always has native web search available",
+    );
     expect(body.text.format.strict).toBe(true);
     expect(JSON.stringify(body.text.format.schema)).not.toContain(
       "web_search_fallback",

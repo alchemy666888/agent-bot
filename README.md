@@ -158,8 +158,40 @@ pnpm build
 
 Further operator steps are in `docs/deployment.md`, `docs/operations.md`, and `docs/rollback.md`.
 
-### DeepSeek direct chat
+### DeepSeek direct chat and native search
 
-Telegram sends only the current user message and the configured or compiled system instructions to DeepSeek's `/responses` endpoint. No native `web_search` or function tools are offered. The model must state uncertainty about live data and can analyze figures supplied by the user instead of inventing current prices or economic releases.
+Every generated answer offers DeepSeek provider-native `web_search` with
+`tool_choice: "auto"`, including direct Telegram chat, legacy worker skill/tool
+routes, and output recovery. DeepSeek decides when research
+is useful; greetings and other answers do not require a paid search. Direct chat sends only the current message and system
+instructions; no database or classifier setup precedes generation. Search evidence
+cannot grant function tools: those retain the existing capability authorization.
+The legacy `web_search` skill identifier maps to native search availability and
+is never sent or executed as a duplicate function tool.
 
-The complete generation, including malformed-output recovery, is capped at 45 seconds. No database or model-classifier setup precedes that request.
+Answers use `deepseek-v4-pro`, the only model supporting native search in the
+[Responses API](https://api-docs.deepseek.com/guides/responses_api/). Flash silently
+ignores that tool. Retained worker/management classifiers use the cheaper
+`deepseek-flash` without thinking or search; direct chat does not run classifiers. Answer thinking retains its existing configuration;
+set `DEEPSEEK_THINKING_ENABLED=false` to reduce reasoning tokens and latency.
+
+Completed native-search output is accepted with final text or replayed with
+subsequent tool requests. Search-only responses share the existing bounded loop.
+Recovery retains completed research and offers search without function tools;
+failed searches cannot become verified answers. API errors and timeouts retain
+normal bounded handling, with no extra search-specific retry path. Source URLs
+are requested in answers, and unverified live facts must remain qualified.
+
+No migration, new credential, or search toggle is required. Redeploy with the
+existing `DEEPSEEK_API_KEY`. Token price settings apply to Pro answers; classifier
+estimates use conservative Flash peak/cache-miss rates. `.env.example` supplies
+Pro peak/cache-miss estimates. These estimates exclude cache/off-peak discounts
+and Search/Fetch fees. Direct chat does not persist model-run records. As of October 21, 2026, search is listed at $0.75 per 1,000
+successful requests; the documented server-side free period ends November 1,
+2026 at 00:00 Hong Kong time. Check the
+[current pricing and billing rules](https://api-docs.deepseek.com/quick_start/pricing/)
+before setting budgets.
+
+Direct chat generation, including recovery, shares a 45-second total budget.
+Legacy worker requests retain their existing turn deadline and delivery reserve. Search adds provider latency and may incur fees when
+used. Jobs beyond the webhook execution window need durable background processing.

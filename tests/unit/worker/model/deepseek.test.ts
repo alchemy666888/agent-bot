@@ -48,14 +48,14 @@ describe("model adapter", () => {
     "selected_tools",
     "selected_skill",
   ] as const)(
-    "never enables provider-native search in %s mode",
+    "always offers provider-native search without forcing it in %s mode",
     async (executionMode) => {
       const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
         const body = JSON.parse(String(init?.body));
-        expect(body.tools ?? []).not.toContainEqual({ type: "web_search" });
-        expect(body.tool_choice).not.toEqual({ type: "web_search" });
+        expect(body.tools).toEqual([{ type: "web_search" }]);
+        expect(body.tool_choice).toBe("auto");
         expect(body.instructions).toContain(
-          "Provider-native web search is disabled",
+          "Provider-native web search is always available",
         );
         return Response.json({
           output_text:
@@ -145,13 +145,13 @@ describe("model adapter", () => {
     expect(body.instructions).toContain("be helpful");
     expect(body.instructions).toContain("Never invent");
     expect(body.instructions).toContain(
-      "Provider-native web search is disabled",
+      "Provider-native web search is always available",
     );
-    expect(body.tools).toBeUndefined();
-    expect(body.tool_choice).toBeUndefined();
+    expect(body.tools).toEqual([{ type: "web_search" }]);
+    expect(body.tool_choice).toBe("auto");
   });
-  it.each(["completed", "failed"])(
-    "rejects unsolicited %s search output without continuing a search loop",
+  it.each(["failed", "in_progress"])(
+    "recovers from %s search output without replaying unusable results",
     async (status) => {
       const fetcher = vi
         .fn()
@@ -186,8 +186,8 @@ describe("model adapter", () => {
       expect(fetcher).toHaveBeenCalledTimes(2);
       for (const [, init] of fetcher.mock.calls) {
         const body = JSON.parse(String(init?.body));
-        expect(body.tools).toBeUndefined();
-        expect(body.tool_choice).toBeUndefined();
+        expect(body.tools).toEqual([{ type: "web_search" }]);
+        expect(body.tool_choice).toBe("auto");
         expect(JSON.stringify(body.input)).not.toContain("web_search_call");
       }
     },
@@ -224,7 +224,157 @@ describe("model adapter", () => {
     },
   );
 
-  it("corrects a draft about another place without enabling native search", async () => {
+  it("delivers completed search text and source URLs without another request", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      Response.json({
+        id: "searched",
+        output: [
+          { type: "web_search_call", id: "ws1", status: "completed" },
+          {
+            type: "reasoning",
+            content: [{ type: "reasoning_text", text: "private" }],
+          },
+          {
+            type: "message",
+            content: [
+              {
+                type: "output_text",
+                text: "Source: https://example.org/report",
+              },
+            ],
+          },
+        ],
+        usage: { input_tokens: 10, output_tokens: 20 },
+      }),
+    );
+    const result = await new DeepSeekProvider(
+      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
+      fetcher,
+    ).generate({
+      executionMode: "direct",
+      messages: [{ role: "user", content: "latest report" }],
+    });
+    expect(result).toEqual({
+      content: "Source: https://example.org/report",
+      requestId: "searched",
+      usage: { inputTokens: 10, outputTokens: 20 },
+    });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("replays search-only results and accumulates usage within the existing loop", async () => {
+    const search = {
+      type: "web_search_call",
+      id: "ws1",
+      status: "completed",
+      action: { query: "report" },
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          output: [search],
+          usage: { input_tokens: 10, output_tokens: 2 },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          output_text: "Verified report.",
+          usage: { input_tokens: 15, output_tokens: 3 },
+        }),
+      );
+    const result = await new DeepSeekProvider(
+      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
+      fetcher,
+    ).generate({
+      executionMode: "direct",
+      messages: [{ role: "user", content: "latest report" }],
+    });
+    expect(result).toMatchObject({
+      content: "Verified report.",
+      usage: { inputTokens: 25, outputTokens: 5 },
+    });
+    expect(result.outputRecovery).toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const continuation = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
+    expect(continuation.input).toContainEqual(search);
+    expect(continuation.tools).toEqual([{ type: "web_search" }]);
+    expect(continuation.tool_choice).toBe("auto");
+  });
+
+  it("reuses completed research during recovery and keeps search available", async () => {
+    const search = { type: "web_search_call", id: "ws1", status: "completed" };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          output: [
+            search,
+            {
+              type: "message",
+              role: "assistant",
+              content: '<tool_calls><invoke name="lookup"',
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          output: [{ type: "web_search_call", id: "ws2", status: "completed" }],
+          output_text: "Verified answer.",
+        }),
+      );
+    const result = await new DeepSeekProvider(
+      { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
+      fetcher,
+    ).generate({
+      executionMode: "selected_tools",
+      generalCapabilities: [
+        {
+          id: "lookup",
+          description: "Lookup",
+          inputSchema: { type: "object" },
+        },
+      ],
+      messages: [{ role: "user", content: "latest report" }],
+    });
+    expect(result).toMatchObject({
+      content: "Verified answer.",
+      outputRecovery: { triggered: true, succeeded: true },
+    });
+    const recovery = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
+    expect(recovery.input).toContainEqual(search);
+    expect(JSON.stringify(recovery.input)).not.toContain("<tool_calls>");
+    expect(recovery.tools).toEqual([{ type: "web_search" }]);
+    expect(recovery.tool_choice).toBe("auto");
+  });
+
+  it("bounds search-only continuations and rejects search-only recovery", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () =>
+      Response.json({
+        output: [{ type: "web_search_call", id: "ws", status: "completed" }],
+      }),
+    );
+    const result = await new DeepSeekProvider(
+      {
+        apiKey: "fixture",
+        baseUrl: "https://example.test",
+        thinking: false,
+        maxToolCalls: 1,
+      },
+      fetcher,
+    ).generate({
+      executionMode: "direct",
+      messages: [{ role: "user", content: "latest report" }],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({
+      content: SAFE_OUTPUT_FALLBACK,
+      outputRecovery: { triggered: true, succeeded: false },
+    });
+  });
+
+  it("corrects a draft about another place with native search available", async () => {
     const request = "今天香港有什麼新聞";
     const malaysia =
       "今日（10月12日）馬來西亞主要新聞如下：吉隆坡綜合指數上升。";
@@ -237,10 +387,10 @@ describe("model adapter", () => {
       };
       if (fetcher.mock.calls.length === 1) {
         expect(body.instructions).toContain("Hong Kong");
-        expect(body.tool_choice).toBeUndefined();
+        expect(body.tool_choice).toBe("auto");
         return Response.json({ output_text: malaysia });
       }
-      expect(body.tool_choice).toBeUndefined();
+      expect(body.tool_choice).toBe("auto");
       expect(body.input.at(-1)?.content).toContain("Hong Kong");
       return Response.json({ output_text: hongKong });
     });
@@ -293,7 +443,7 @@ describe("model adapter", () => {
     });
   });
 
-  it("corrects a stale calendar without enabling native search", async () => {
+  it("corrects a stale calendar with native search available", async () => {
     const request = "下個星期有什麼會議或者事件需要交易者注意的嗎？";
     const stale =
       "週一（10/13）\n美聯儲主席鮑威爾在 NABE 年會發表演說，談經濟展望與貨幣政策，是利率預期的關鍵";
@@ -306,10 +456,10 @@ describe("model adapter", () => {
       };
       if (fetcher.mock.calls.length === 1) {
         expect(body.instructions).toContain("current_year: 2026");
-        expect(body.tool_choice).toBeUndefined();
+        expect(body.tool_choice).toBe("auto");
         return Response.json({ output_text: stale });
       }
-      expect(body.tool_choice).toBeUndefined();
+      expect(body.tool_choice).toBe("auto");
       expect(body.input.at(-1)?.content).toContain("2026");
       return Response.json({ output_text: current });
     });
@@ -369,7 +519,7 @@ describe("model adapter", () => {
     });
   });
 
-  it("omits native search and the legacy web_search compatibility tool", async () => {
+  it("offers native search without duplicating the legacy search function", async () => {
     const fetcher = vi.fn(
       async () =>
         new Response(
@@ -409,6 +559,7 @@ describe("model adapter", () => {
         String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
       ).tools,
     ).toEqual([
+      { type: "web_search" },
       {
         type: "function",
         name: "lookup",
@@ -468,11 +619,13 @@ describe("model adapter", () => {
       capabilityAudit: [{ capabilityId: "web_search", outcome: "denied" }],
     });
     for (const [, init] of fetcher.mock.calls) {
-      expect(JSON.parse(String(init?.body)).tools).toBeUndefined();
+      expect(JSON.parse(String(init?.body)).tools).toEqual([
+        { type: "web_search" },
+      ]);
     }
   });
 
-  it("offers only authorized function tools for a selected skill", async () => {
+  it("offers native search alongside authorized function tools for a selected skill", async () => {
     const fetcher = vi.fn(
       async () =>
         new Response(
@@ -506,6 +659,7 @@ describe("model adapter", () => {
       String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
     ) as { tools: { type: string }[]; instructions: string };
     expect(body.tools).toEqual([
+      { type: "web_search" },
       {
         type: "function",
         name: "lookup",
@@ -571,7 +725,7 @@ describe("model adapter", () => {
     });
   });
 
-  it("denies undeclared tool calls and recovers without tools", async () => {
+  it("denies undeclared tool calls and recovers without function tools", async () => {
     let calls = 0;
     const fetcher = vi.fn(async () => {
       calls++;
@@ -607,7 +761,7 @@ describe("model adapter", () => {
     const recoveryBody = JSON.parse(
       String((fetcher.mock.calls[1]?.[1] as RequestInit | undefined)?.body),
     );
-    expect(recoveryBody.tools).toBeUndefined();
+    expect(recoveryBody.tools).toEqual([{ type: "web_search" }]);
   });
 
   it("uses a safe general capability and returns the tool-informed answer", async () => {
@@ -629,6 +783,7 @@ describe("model adapter", () => {
         ? new Response(
             JSON.stringify({
               output: [
+                { type: "web_search_call", id: "ws", status: "completed" },
                 {
                   type: "function_call",
                   name: "lookup",
@@ -658,6 +813,7 @@ describe("model adapter", () => {
       String((fetcher.mock.calls[0]![1] as RequestInit).body),
     );
     expect(initialBody.tools).toEqual([
+      { type: "web_search" },
       {
         type: "function",
         name: "lookup",
@@ -666,6 +822,19 @@ describe("model adapter", () => {
       },
     ]);
     expect(initialBody.tool_choice).toBe("auto");
+    const continuation = JSON.parse(
+      String((fetcher.mock.calls[1]![1] as RequestInit).body),
+    );
+    expect(continuation.input).toContainEqual({
+      type: "web_search_call",
+      id: "ws",
+      status: "completed",
+    });
+    expect(continuation.input).toContainEqual({
+      type: "function_call_output",
+      call_id: "1",
+      output: JSON.stringify({ temperature: 28 }),
+    });
   });
 
   it("retries once when final text leaks raw tool protocol", async () => {
@@ -728,7 +897,7 @@ describe("model adapter", () => {
     expect(result.content).not.toContain("hidden rationale");
   });
 
-  it("uses tool-free recovery for empty output", async () => {
+  it("uses recovery without function tools for empty output", async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(Response.json({ output: [] }))
@@ -744,7 +913,7 @@ describe("model adapter", () => {
     expect(result.outputRecovery).toEqual({ triggered: true, succeeded: true });
     expect(fetcher).toHaveBeenCalledTimes(2);
     const recovery = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
-    expect(recovery.tools).toBeUndefined();
+    expect(recovery.tools).toEqual([{ type: "web_search" }]);
   });
 
   it("records model progress before the provider request", async () => {
@@ -872,7 +1041,7 @@ describe("model adapter", () => {
     },
   );
 
-  it("returns safe text when tool-free recovery times out", async () => {
+  it("returns safe text when recovery without function tools times out", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ output: [] }))
@@ -970,7 +1139,7 @@ describe("model adapter", () => {
         tool_choice?: unknown;
       };
       expect(body.tool_choice).not.toEqual({ type: "web_search" });
-      expect(body.tools).toBeUndefined();
+      expect(body.tools).toEqual([{ type: "web_search" }]);
       expect(body.instructions).toContain(CLOCK_ONLY_GUIDANCE);
       expect(body.instructions).not.toContain("Answer from the search results");
       return Response.json({ output_text: "現在是香港時間18:48。" });

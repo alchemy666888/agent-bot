@@ -6,6 +6,9 @@ describe("PromptMetadataRouter", () => {
     const requestId = "019a3c57-b3bd-7000-8000-000000000000";
     const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
       const sent = JSON.parse(String(init?.body));
+      expect(sent.model).toBe("deepseek-flash");
+      expect(sent.reasoning).toEqual({ effort: "none" });
+      expect(sent.tools).toBeUndefined();
       const catalog = JSON.parse(sent.input[1].content);
       expect(catalog.candidates[0]).toEqual({
         id: "research",
