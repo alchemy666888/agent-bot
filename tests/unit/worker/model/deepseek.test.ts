@@ -821,6 +821,29 @@ describe("model adapter", () => {
     releaseHung?.();
   });
 
+  it("bounds recovery when both search and the recovery request hang", async () => {
+    const signals: AbortSignal[] = [];
+    const fetcher = vi.fn((_url: unknown, init?: RequestInit) => {
+      signals.push(init!.signal!);
+      return new Promise<Response>(() => undefined);
+    });
+    const pending = new DeepSeekProvider(
+      {
+        apiKey: "x",
+        baseUrl: "https://example.test",
+        thinking: false,
+        requestTimeoutMs: 10,
+      },
+      fetcher as typeof fetch,
+    ).generate({
+      executionMode: "forced_web_search",
+      messages: [{ role: "user", content: "CPI BTC" }],
+    });
+    await expect(pending).rejects.toThrow("PROVIDER_REQUEST_TIMEOUT");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
   it("stops reading a web-search body that never arrives", async () => {
     let releaseHung: (() => void) | undefined;
     const fetcher = vi.fn(() => {
