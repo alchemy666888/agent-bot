@@ -157,18 +157,6 @@ export class TelegramTurn {
   private checkpoint(userId: string, state: UpdateState) {
     return this.locks.withMutation(() => this.updates.save(state), userId);
   }
-  private async noteFailure(input: {
-    stage: string;
-    error: unknown;
-    updateId: string;
-    userId: string;
-  }): Promise<void> {
-    try {
-      await this.observability?.recordFailure(input);
-    } catch {
-      return;
-    }
-  }
   private async note(progress: {
     stage: string;
     attempt?: number;
@@ -180,6 +168,24 @@ export class TelegramTurn {
       await this.observability?.noteProgress?.(progress);
     } catch {
       return;
+    }
+  }
+  private async noteFailure(input: {
+    stage: string;
+    error: unknown;
+    updateId: string;
+    userId: string;
+  }): Promise<void> {
+    const cap = deadline(CLEANUP_TIMEOUT_MS);
+    try {
+      await settleOnAbort(
+        Promise.resolve(this.observability?.recordFailure(input)),
+        cap.signal,
+      );
+    } catch {
+      // Diagnostics must not block retries or Telegram delivery.
+    } finally {
+      cap.cancel();
     }
   }
   private async validateFinalAnswer(
