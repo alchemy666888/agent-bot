@@ -107,7 +107,7 @@ These have no default. An empty value is invalid.
 | `AIVEN_PG_CA`                    | Unset; PostgreSQL uses the SSL options from `DATABASE_URL`                    | Aiven PostgreSQL CA certificate                                                                                                                                                                       | Paste the complete PEM certificate as a multiline Vercel environment variable                                                                                                   |
 | `SKILLS_ENABLED`                 | `false`                                                                       | Emergency release gate for installed-skill execution; migration and smoke tests occur while false                                                                                                     | Set to `true` only after acceptance and restore evidence is approved                                                                                                            |
 | `SKILL_MAX_TOOL_STEPS`           | `5`                                                                           | Maximum capability proposals in one skill execution                                                                                                                                                   | Keep within the operator-approved bound                                                                                                                                         |
-| `SKILL_EXECUTION_TIMEOUT_MS`     | `220000`                                                                      | Wall-clock deadline for one private-chat answer, including web search. It must stay below the worker command timeout so the process can still send a reply                                            | Tune only after timeout/recovery acceptance tests                                                                                                                               |
+| `SKILL_EXECUTION_TIMEOUT_MS`     | `220000`                                                                      | Wall-clock deadline for one private-chat answer, including routing and DeepSeek generation. It must stay below the worker command timeout so the process can still send a reply                       | Tune only after timeout/recovery acceptance tests                                                                                                                               |
 | `CAPABILITY_POLICY_PATH`         | Unset                                                                         | Optional deployed, operator-controlled capability policy                                                                                                                                              | Point to a server-side policy artifact; user prompts cannot modify it                                                                                                           |
 | `ASSISTANT_SYSTEM_PROMPT`        | Compiled safe fallback                                                        | Emergency prompt used when prompt hierarchy is disabled or unavailable; it is not normal editable prompt content                                                                                      | Prefer the compiled default; runtime security policy always remains in code                                                                                                     |
 | `DEEPSEEK_THINKING_ENABLED`      | `true`                                                                        | Turns DeepSeek thinking on or off. The only accepted values are `true` and `false`                                                                                                                    | Leave it unset, or set `true` or `false`                                                                                                                                        |
@@ -159,3 +159,16 @@ pnpm build
 `pnpm dev` starts Next.js locally. Sandbox calls from a machine that is not Vercel need `VERCEL_OIDC_TOKEN` from `vercel env pull`, plus the required variables above.
 
 Further operator steps are in `docs/deployment.md`, `docs/operations.md`, and `docs/rollback.md`.
+
+### DeepSeek native search
+
+DeepSeek provider-native `web_search` is disabled. Requests without a matching
+skill use direct DeepSeek generation; authorized function tools remain available.
+Legacy `web_search_fallback` routing decisions also use direct generation. The
+model must state uncertainty about live data and can analyze figures supplied by
+the user instead of inventing current prices or economic releases.
+
+The worker retains bounded API requests and a delivery reserve within the webhook
+execution limit. Disabling search removes the mandatory native-search path; it
+does not remove Vercel's function execution limits. Long-running jobs beyond that
+window require durable background processing.

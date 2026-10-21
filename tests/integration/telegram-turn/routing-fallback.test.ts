@@ -27,46 +27,56 @@ afterEach(async () => {
 });
 
 describe("skill routing acceptance", () => {
-  it("answers a weather question through forced Responses web search with routing disabled", async () => {
-    root = await mkdtemp(join(tmpdir(), "routing-native-fallback-"));
-    const fetcher = vi.fn<typeof fetch>(async () =>
-      Response.json({
-        output: [{ type: "web_search_call", id: "ws", status: "completed" }],
-        output_text: "香港目前晴朗。來源：https://weather.example/hong-kong",
-      }),
-    );
-    const telegram = {
-      typing: vi.fn(async () => {}),
-      send: vi.fn(async () => {}),
-    };
-    await new TelegramTurn(
-      new LockCoordinator(root),
-      new UpdateRepository(root),
-      new ConversationService(),
-      new DeepSeekProvider(
-        { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
-        fetcher as typeof fetch,
-      ),
-      telegram,
-      "Be helpful.",
-      undefined,
-      undefined,
-      new SkillResolver(new CapabilityRegistry(), []),
-    ).handle({ ...input("27"), text: "今天香港天氣怎樣？" });
-    expect(fetcher).toHaveBeenCalledOnce();
-    expect(String(fetcher.mock.calls[0]![0])).toBe(
-      "https://example.test/responses",
-    );
-    const body = JSON.parse(
-      String((fetcher.mock.calls[0]![1] as RequestInit).body),
-    );
-    expect(body).toMatchObject({
-      tools: [{ type: "web_search" }],
-      tool_choice: { type: "web_search" },
-    });
-    expect(body.input.at(-1).content).toBe("今天香港天氣怎樣？");
-    expect(telegram.send).toHaveBeenCalledWith("3", "香港目前晴朗。");
-  });
+  it.each(["今天香港天氣怎樣？", "CPI數據出來了，BTC有沒有交易機會"])(
+    "answers %s through DeepSeek without native search when routing is disabled",
+    async (text) => {
+      root = await mkdtemp(join(tmpdir(), "routing-native-fallback-"));
+      const fetcher = vi.fn<typeof fetch>(async () =>
+        Response.json({
+          output_text: "香港天氣或BTC走勢需要最新數據，我可以據此分析。",
+        }),
+      );
+      const telegram = {
+        typing: vi.fn(async () => {}),
+        send: vi.fn(async () => {}),
+      };
+      await new TelegramTurn(
+        new LockCoordinator(root),
+        new UpdateRepository(root),
+        new ConversationService(),
+        new DeepSeekProvider(
+          {
+            apiKey: "fixture",
+            baseUrl: "https://example.test",
+            thinking: false,
+          },
+          fetcher as typeof fetch,
+        ),
+        telegram,
+        "Be helpful.",
+        undefined,
+        undefined,
+        new SkillResolver(new CapabilityRegistry(), []),
+      ).handle({ ...input("27"), text });
+      expect(fetcher).toHaveBeenCalledOnce();
+      expect(String(fetcher.mock.calls[0]![0])).toBe(
+        "https://example.test/responses",
+      );
+      const body = JSON.parse(
+        String((fetcher.mock.calls[0]![1] as RequestInit).body),
+      );
+      expect(body.tools).toBeUndefined();
+      expect(body.tool_choice).toBeUndefined();
+      expect(body.instructions).toContain(
+        "Provider-native web search is disabled",
+      );
+      expect(body.input.at(-1).content).toBe(text);
+      expect(telegram.send).toHaveBeenCalledWith(
+        "3",
+        "香港天氣或BTC走勢需要最新數據，我可以據此分析。",
+      );
+    },
+  );
 
   it("loads a catalog, invokes its capability, and sends only final text", async () => {
     root = await mkdtemp(join(tmpdir(), "routing-"));
@@ -183,17 +193,17 @@ describe("skill routing acceptance", () => {
         confidence: 1,
         rationale: "tool",
       },
-      "forced_web_search",
+      "selected_tools",
     ],
     [
-      "forced native web search",
+      "legacy search decision falls back to direct",
       { kind: "web_search_fallback", confidence: 1, rationale: "fresh" },
-      "forced_web_search",
+      "direct",
     ],
     [
-      "search fallback for a direct classification",
+      "direct classification",
       { kind: "direct", confidence: 1, rationale: "general" },
-      "forced_web_search",
+      "direct",
     ],
   ] as const)(
     "runs a full turn for %s",
@@ -282,7 +292,7 @@ describe("skill routing acceptance", () => {
     );
   });
 
-  it("forces native web search when routing fails", async () => {
+  it("answers directly when routing fails", async () => {
     root = await mkdtemp(join(tmpdir(), "routing-failure-"));
     const model = {
       generate: vi.fn(async (request: ModelRequest) => ({
@@ -299,10 +309,7 @@ describe("skill routing acceptance", () => {
       },
     }).handle(input("23"));
     expect(model.generate).toHaveBeenCalledTimes(1);
-    expect(telegram.send).toHaveBeenCalledWith(
-      "3",
-      "Fallback forced_web_search",
-    );
+    expect(telegram.send).toHaveBeenCalledWith("3", "Fallback direct");
   });
 
   it("rejects an unknown model-selected ID and permits only one bounded reroute", async () => {
@@ -341,13 +348,10 @@ describe("skill routing acceptance", () => {
     ).handle(input("231"));
     expect(router.route).toHaveBeenCalledTimes(2);
     expect(model.generate).toHaveBeenCalledWith(
-      expect.objectContaining({ executionMode: "forced_web_search" }),
+      expect.objectContaining({ executionMode: "direct" }),
     );
     expect(model.generate.mock.calls[0]![0]).not.toHaveProperty("skill");
-    expect(telegram.send).toHaveBeenCalledWith(
-      "3",
-      "Safe forced_web_search answer",
-    );
+    expect(telegram.send).toHaveBeenCalledWith("3", "Safe direct answer");
   });
 
   it("turns no useful native-search results into final text only", async () => {
@@ -443,12 +447,9 @@ describe("skill routing acceptance", () => {
     await subject.handle(input("25"));
     expect(router.routeWithMetadata).toHaveBeenCalledOnce();
     expect(model.generate).toHaveBeenCalledWith(
-      expect.objectContaining({ executionMode: "forced_web_search" }),
+      expect.objectContaining({ executionMode: "direct" }),
     );
-    expect(telegram.send).toHaveBeenCalledWith(
-      "3",
-      "Executed forced_web_search",
-    );
+    expect(telegram.send).toHaveBeenCalledWith("3", "Executed direct");
   });
 
   it("accounts for correlated routing and answer usage and does not redeliver a completed retry", async () => {

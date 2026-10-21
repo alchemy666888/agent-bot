@@ -107,9 +107,9 @@ async function run(text: string) {
 }
 
 describe("trusted authorized skill catalog", () => {
-  it("includes the complete filtered, version-pinned catalog on search fallback requests", async () => {
+  it("includes the complete filtered, version-pinned catalog on direct fallback requests", async () => {
     const [request] = await run("hello there");
-    expect(request.executionMode).toBe("forced_web_search");
+    expect(request.executionMode).toBe("direct");
     expect(request.authorizedSkillCatalog?.catalogToken).toBe(catalogToken);
     expect(request.authorizedSkillCatalog?.skills.map(({ id }) => id)).toEqual([
       reports.id,

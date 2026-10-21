@@ -589,8 +589,8 @@ export class TelegramTurn {
                         (error as Error)?.message === "ROUTER_OUTPUT_INVALID"
                       )
                         continue;
-                      // Provider failures and timeouts fall back to native
-                      // web search; the sanitized failed run is still recorded.
+                      // Provider failures fall back to direct generation;
+                      // the sanitized failed run is still recorded.
                       break;
                     }
 
@@ -615,10 +615,10 @@ export class TelegramTurn {
                       decision.kind === "web_search_fallback"
                     ) {
                       if (decision.kind === "web_search_fallback") {
-                        // Provider-native search stays in this answer request;
-                        // it is not routed through the function registry.
+                        // Accept legacy router decisions without enabling
+                        // provider-native web search.
                         routedCapabilities = [];
-                        executionMode = "forced_web_search";
+                        executionMode = "direct";
                         break;
                       }
                       const selectedId = decision.selectedToolId;
@@ -669,8 +669,8 @@ export class TelegramTurn {
                     if (decision.kind === "unavailable")
                       answer =
                         "I can’t perform that action because no authorized capability is available, and web search cannot perform it.";
-                    // Direct classifications and invalid selections use the
-                    // mandatory search fallback below.
+                    // Direct classifications and invalid selections use
+                    // direct generation below.
                     break;
                   }
                 } else {
@@ -696,10 +696,8 @@ export class TelegramTurn {
                     run.disagreement = shadowRouteKind !== existingRoute;
                 }
                 if (!resolution || resolution.kind === "none") {
-                  // Search is the mandatory answer fallback in every router mode.
-                  // A classifier cannot turn a missing skill into an unsearched answer.
-                  executionMode = "forced_web_search";
-                  routedCapabilities = [];
+                  // Keep authorized function-tool selections. Unmatched requests
+                  // use direct generation without provider-native web search.
                   fallbackReason =
                     command?.kind === "fallback"
                       ? command.reason
@@ -766,7 +764,11 @@ export class TelegramTurn {
                 updateId: input.updateId,
                 userId: scopeKey,
               });
-              if (requestAttempt === requestAttempts - 1) {
+              if (
+                requestAttempt === requestAttempts - 1 ||
+                turnController.signal.aborted ||
+                Date.now() >= deadline
+              ) {
                 await retryTransient(
                   () => deliver(GENERIC_FAILURE),
                   isTransient,
