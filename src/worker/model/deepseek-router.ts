@@ -86,7 +86,7 @@ export class DeepSeekRouter implements RequestRouter {
           stream: false,
           reasoning: { effort: this.config.thinking ? "medium" : "none" },
           instructions: [
-            "Classify the current request only. Select only IDs present in the supplied lists and prefer explicit user intent. Return only JSON matching the routing schema; never propose arguments, executable instructions, or tool calls. Use direct exactly when neither a skill nor external/current information is needed. Use a skill or tool when an authorized match applies. Use web_search_fallback only when no authorized skill or non-search tool applies and public web information can help answer. Use unavailable when the request requires an action that no authorized capability can perform and web search cannot perform it. Use ambiguous when clarification is necessary, and refuse only for unsafe requests.",
+            "Classify the current request only. Select only IDs present in the supplied lists and prefer explicit user intent. Return only JSON matching the routing schema; never propose arguments, executable instructions, or tool calls. Use direct when no authorized skill or tool applies; the answer can state uncertainty or request missing current data. Provider-native web search is disabled. Use a skill or tool when an authorized match applies. Do not select web_search_fallback. Use unavailable when the request requires an action that no authorized capability can perform and direct generation cannot perform it. Use ambiguous when clarification is necessary, and refuse only for unsafe requests.",
             input.trustedClock
               ? `Trusted clock for this request:\n${input.trustedClock}`
               : "",

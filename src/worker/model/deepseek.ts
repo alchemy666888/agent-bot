@@ -38,9 +38,8 @@ type Output = {
   arguments?: string;
   content?: string | { type?: string; text?: string }[];
 };
-const DEEPSEEK_WEB_SEARCH = { type: "web_search" } as const;
-export const WEB_SEARCH_GUIDANCE =
-  "For questions that depend on current or local facts, such as weather, news, prices, schedules, or upcoming events, use web search before answering. By default, resolve today, this week, next week, and this year from the trusted news-mcp clock and include that year, month, day, hour, and minute in the search. If the user specifies a historical or future date or time, search that specified value instead of the current clock. Use only results for the chosen date. Do not carry over a prior year's event because the month and day match. Answer from the search results without appending source names or links. Say that a search returned nothing only when the tool result is actually empty. A non-empty result about a different place from the one the user named is not an answer. Do not summarize that other place. Do not tell the user the news is 已確認 or confirmed.";
+export const CURRENT_INFORMATION_GUIDANCE =
+  "Provider-native web search is disabled. Answer directly using the conversation, user-provided data, general knowledge, and authorized function tools when available. Never claim to have used provider-native search. For current prices, news, economic releases, or other live facts, do not invent data or claim verification. If no authorized tool can verify them, state the limitation briefly, ask for the relevant figures when needed, and provide useful conditional analysis.";
 type ResponsesBody = {
   id?: string;
   output_text?: string;
@@ -174,17 +173,14 @@ export class DeepSeekProvider implements ModelProvider {
     const permitted = activeCapabilities.map((item) => item.id);
     const tools = clockOnly
       ? []
-      : [
-          ...activeCapabilities
-            .filter((item) => item.id !== "web_search")
-            .map((item) => ({
-              type: "function",
-              name: item.id,
-              description: item.description,
-              parameters: item.inputSchema,
-            })),
-          DEEPSEEK_WEB_SEARCH,
-        ];
+      : activeCapabilities
+          .filter((item) => item.id !== "web_search")
+          .map((item) => ({
+            type: "function",
+            name: item.id,
+            description: item.description,
+            parameters: item.inputSchema,
+          }));
     const clockUnavailable = /(?:^|\n)clock_source:\s*unavailable\b/.test(
       instructions,
     );
@@ -210,7 +206,7 @@ export class DeepSeekProvider implements ModelProvider {
         ? calendarYearRule(clock, userRequest)
         : unavailableClockRule(userRequest),
       placeSearchRule(userRequest),
-      clockOnly ? CLOCK_ONLY_GUIDANCE : WEB_SEARCH_GUIDANCE,
+      clockOnly ? CLOCK_ONLY_GUIDANCE : CURRENT_INFORMATION_GUIDANCE,
       REPLY_STYLE_GUIDANCE,
     ]
       .filter(Boolean)
@@ -223,20 +219,18 @@ export class DeepSeekProvider implements ModelProvider {
     let requestId: string | undefined;
     let calendarRetried = false;
     let placeRetried = false;
-    let requireFreshSearch = false;
     const toolLimit = this.config.maxToolCalls ?? 4;
     for (let iteration = 0; iteration <= toolLimit; iteration++) {
       if (input.signal?.aborted) throw abortError(input.signal);
       const started = Date.now();
-      const forcedSearch =
-        requireFreshSearch ||
-        (input.executionMode === "forced_web_search" && iteration === 0);
       if (this.note)
         await this.report({
           stage: "model",
           iteration,
-          executionMode: input.executionMode,
-          ...(forcedSearch ? { tool: "web_search" } : {}),
+          executionMode:
+            input.executionMode === "forced_web_search"
+              ? "direct"
+              : input.executionMode,
         });
       let posted: ProviderExchange;
       try {
@@ -247,7 +241,7 @@ export class DeepSeekProvider implements ModelProvider {
           ...(tools.length
             ? {
                 tools,
-                tool_choice: forcedSearch ? { type: "web_search" } : "auto",
+                tool_choice: "auto",
               }
             : {}),
           ...(instructions ? { instructions } : {}),
@@ -265,7 +259,6 @@ export class DeepSeekProvider implements ModelProvider {
           );
         throw error;
       }
-      requireFreshSearch = false;
       if (!posted.ok && input.executionMode === "forced_web_search")
         return this.recover(
           input,
@@ -355,7 +348,6 @@ export class DeepSeekProvider implements ModelProvider {
           if ((retryCalendar || retryPlace) && iteration < toolLimit) {
             if (retryCalendar) calendarRetried = true;
             if (retryPlace) placeRetried = true;
-            requireFreshSearch = true;
             conversation.push(...output);
             conversation.push({
               role: "user",
@@ -417,7 +409,10 @@ export class DeepSeekProvider implements ModelProvider {
             await this.report({
               stage: "tool",
               iteration,
-              executionMode: input.executionMode,
+              executionMode:
+                input.executionMode === "forced_web_search"
+                  ? "direct"
+                  : input.executionMode,
               ...(/^[a-z][a-z0-9_-]{0,63}$/.test(call.data.name)
                 ? { tool: call.data.name }
                 : {}),
@@ -550,14 +545,16 @@ export class DeepSeekProvider implements ModelProvider {
     audit: CapabilityAuditRecord[],
     searchLimitation = false,
   ): Promise<ModelResponse> {
-    // Recovery is the one deliberate exception to generate's always-available
-    // native search tool. It is a bounded, tool-free safety escape hatch after
+    // Recovery is a bounded, tool-free safety escape hatch after
     // malformed protocol, denied calls, failed search, or exhausted tool turns.
     if (this.note)
       await this.report({
         stage: "recovery",
         iteration: 0,
-        executionMode: input.executionMode,
+        executionMode:
+          input.executionMode === "forced_web_search"
+            ? "direct"
+            : input.executionMode,
       });
     const posted = await this.postResponses(input, {
       model: "deepseek-v4-pro",

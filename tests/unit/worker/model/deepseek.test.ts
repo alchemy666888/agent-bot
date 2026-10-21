@@ -42,6 +42,39 @@ describe("model adapter", () => {
     expect(fetcher).toHaveBeenCalledOnce();
   });
   it.each([
+    "direct",
+    "forced_web_search",
+    "selected_tools",
+    "selected_skill",
+  ] as const)(
+    "never enables provider-native search in %s mode",
+    async (executionMode) => {
+      const fetcher = vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.tools ?? []).not.toContainEqual({ type: "web_search" });
+        expect(body.tool_choice).not.toEqual({ type: "web_search" });
+        expect(body.instructions).toContain(
+          "Provider-native web search is disabled",
+        );
+        return Response.json({
+          output_text:
+            "Please share the CPI figures and BTC price for a conditional analysis.",
+        });
+      });
+      await new DeepSeekProvider(
+        { apiKey: "fixture", baseUrl: "https://example.test", thinking: false },
+        fetcher as typeof fetch,
+      ).generate({
+        executionMode,
+        messages: [
+          { role: "user", content: "CPI數據出來了，BTC有沒有交易機會" },
+        ],
+      });
+      expect(fetcher).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([
     '<tool_calls><invoke name="Search"></invoke></tool_calls>',
     '<invoke name="Search">',
     '{"type":"function_call","name":"Search","arguments":"{}"}',
@@ -106,15 +139,17 @@ describe("model adapter", () => {
       model: "deepseek-v4-pro",
       stream: false,
       reasoning: { effort: "medium" },
-      tools: [{ type: "web_search" }],
-      tool_choice: "auto",
       input: [{ role: "user", content: "hi" }],
     });
     expect(body.instructions).toContain("be helpful");
     expect(body.instructions).toContain("Never invent");
-    expect(body.instructions).toContain("use web search before answering");
+    expect(body.instructions).toContain(
+      "Provider-native web search is disabled",
+    );
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
   });
-  it("continues after a server-side web_search_call until the answer arrives", async () => {
+  it("handles an unexpected legacy web_search_call without enabling search", async () => {
     const searchCall = {
       type: "web_search_call",
       id: "ws1",
@@ -133,10 +168,8 @@ describe("model adapter", () => {
         { role: "user", content: "weather" },
         searchCall,
       ]);
-      expect(body).toMatchObject({
-        tools: [{ type: "web_search" }],
-        tool_choice: "auto",
-      });
+      expect(body.tools).toBeUndefined();
+      expect(body.tool_choice).toBeUndefined();
       return new Response(
         JSON.stringify({
           id: "r2",
@@ -155,7 +188,7 @@ describe("model adapter", () => {
     const initial = JSON.parse(
       String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
     );
-    expect(initial.tool_choice).toEqual({ type: "web_search" });
+    expect(initial.tool_choice).toBeUndefined();
     expect(result.content).toBe("Hong Kong is sunny.");
     expect(result.capabilityAudit).toEqual([
       {
@@ -201,10 +234,8 @@ describe("model adapter", () => {
     const initialBody = JSON.parse(
       String((fetcher.mock.calls[0]?.[1] as RequestInit | undefined)?.body),
     );
-    expect(initialBody).toMatchObject({
-      tools: [{ type: "web_search" }],
-      tool_choice: { type: "web_search" },
-    });
+    expect(initialBody.tools).toBeUndefined();
+    expect(initialBody.tool_choice).toBeUndefined();
     expect(recoveryBody.tools).toBeUndefined();
     expect(recoveryBody.instructions).toContain(REPLY_STYLE_GUIDANCE);
     expect(recoveryBody.instructions).toContain(
@@ -234,7 +265,7 @@ describe("model adapter", () => {
     expect(result.outputRecovery).toMatchObject({ triggered: true });
   });
 
-  it("searches the named place again when the draft answers another place", async () => {
+  it("corrects a draft about another place without enabling native search", async () => {
     const request = "今天香港有什麼新聞";
     const malaysia =
       "今日（10月12日）馬來西亞主要新聞如下：吉隆坡綜合指數上升。";
@@ -247,10 +278,10 @@ describe("model adapter", () => {
       };
       if (fetcher.mock.calls.length === 1) {
         expect(body.instructions).toContain("Hong Kong");
-        expect(body.tool_choice).toBe("auto");
+        expect(body.tool_choice).toBeUndefined();
         return Response.json({ output_text: malaysia });
       }
-      expect(body.tool_choice).toEqual({ type: "web_search" });
+      expect(body.tool_choice).toBeUndefined();
       expect(body.input.at(-1)?.content).toContain("Hong Kong");
       return Response.json({ output_text: hongKong });
     });
@@ -303,7 +334,7 @@ describe("model adapter", () => {
     });
   });
 
-  it("searches the current year again when a calendar repeats a prior year", async () => {
+  it("corrects a stale calendar without enabling native search", async () => {
     const request = "下個星期有什麼會議或者事件需要交易者注意的嗎？";
     const stale =
       "週一（10/13）\n美聯儲主席鮑威爾在 NABE 年會發表演說，談經濟展望與貨幣政策，是利率預期的關鍵";
@@ -316,10 +347,10 @@ describe("model adapter", () => {
       };
       if (fetcher.mock.calls.length === 1) {
         expect(body.instructions).toContain("current_year: 2026");
-        expect(body.tool_choice).toBe("auto");
+        expect(body.tool_choice).toBeUndefined();
         return Response.json({ output_text: stale });
       }
-      expect(body.tool_choice).toEqual({ type: "web_search" });
+      expect(body.tool_choice).toBeUndefined();
       expect(body.input.at(-1)?.content).toContain("2026");
       return Response.json({ output_text: current });
     });
@@ -379,7 +410,7 @@ describe("model adapter", () => {
     });
   });
 
-  it("uses DeepSeek web_search instead of a client function with the same name", async () => {
+  it("omits native search and the legacy web_search compatibility tool", async () => {
     const fetcher = vi.fn(
       async () =>
         new Response(
@@ -425,10 +456,9 @@ describe("model adapter", () => {
         description: "Lookup",
         parameters: { type: "object" },
       },
-      { type: "web_search" },
     ]);
   });
-  it("always offers web search when the selected skill does not authorize its compatibility id", async () => {
+  it("offers only authorized function tools for a selected skill", async () => {
     const fetcher = vi.fn(
       async () =>
         new Response(
@@ -468,7 +498,6 @@ describe("model adapter", () => {
         description: "Lookup",
         parameters: { type: "object" },
       },
-      { type: "web_search" },
     ]);
     expect(body.tool_choice).toBe("auto");
     expect(body.instructions).toMatch(/web search/);
@@ -621,7 +650,6 @@ describe("model adapter", () => {
         description: "Lookup",
         parameters: { type: "object" },
       },
-      { type: "web_search" },
     ]);
     expect(initialBody.tool_choice).toBe("auto");
   });
@@ -734,7 +762,7 @@ describe("model adapter", () => {
     const first = JSON.parse(
       String((fetcher.mock.calls[0]![1] as RequestInit).body),
     );
-    expect(first.tool_choice).toEqual({ type: "web_search" });
+    expect(first.tool_choice).toBeUndefined();
     const recovery = JSON.parse(
       String((fetcher.mock.calls[2]![1] as RequestInit).body),
     );
@@ -757,7 +785,7 @@ describe("model adapter", () => {
       executionMode: "forced_web_search",
       messages: [{ role: "user", content: "CPI" }],
     });
-    expect(notes).toEqual(["model:web_search"]);
+    expect(notes).toEqual(["model:"]);
     expect(fetcher).toHaveBeenCalledOnce();
   });
 
@@ -790,7 +818,7 @@ describe("model adapter", () => {
     const fetcher = vi.fn((_url: unknown, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { tools?: unknown };
       if (fetcher.mock.calls.length === 1) {
-        expect(body.tools).toBeDefined();
+        expect(body.tools).toBeUndefined();
         return new Promise<Response>((resolve) => {
           releaseHung = () =>
             resolve(Response.json({ output_text: "too late" }));

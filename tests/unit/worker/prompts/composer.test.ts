@@ -5,7 +5,7 @@ import { REPLY_STYLE_GUIDANCE } from "../../../../src/worker/model/reply-style";
 import {
   DeepSeekProvider,
   GENERAL_ASSISTANT_GUIDANCE,
-  WEB_SEARCH_GUIDANCE,
+  CURRENT_INFORMATION_GUIDANCE,
 } from "../../../../src/worker/model/deepseek";
 import {
   calendarClock,
@@ -79,7 +79,7 @@ describe("prompt composer", () => {
             .map(({ key, value }) => `${key}: ${value}`)
             .join("\n"),
           calendarYearRule(clock),
-          WEB_SEARCH_GUIDANCE,
+          CURRENT_INFORMATION_GUIDANCE,
           REPLY_STYLE_GUIDANCE,
         ].join("\n\n"),
       );
