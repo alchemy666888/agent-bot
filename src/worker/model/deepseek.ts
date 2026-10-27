@@ -1,3 +1,4 @@
+import { logException } from "../../shared/logger";
 import { z } from "zod";
 import { REPLY_STYLE_GUIDANCE } from "./reply-style";
 import {
@@ -406,7 +407,7 @@ export class DeepSeekProvider implements ModelProvider {
     const failed = (error: unknown): Error => {
       if (input.signal?.aborted) return abortError(input.signal);
       if (signal.aborted || cap.signal.aborted || isAbortLike(error))
-        return new Error("PROVIDER_REQUEST_TIMEOUT");
+        return new Error("PROVIDER_REQUEST_TIMEOUT", { cause: error });
       return error instanceof Error
         ? error
         : new Error("PROVIDER_REQUEST_TIMEOUT");
@@ -504,6 +505,12 @@ export class DeepSeekProvider implements ModelProvider {
       );
     } catch (error) {
       if (!isProviderTimeout(error)) throw error;
+      logException(error, {
+        correlationId: requestId ?? "model-recovery",
+        component: "worker",
+        operation: "model.recovery",
+        stage: "recovery",
+      });
       return modelResponseSchema.parse({
         content: SAFE_OUTPUT_FALLBACK,
         requestId,

@@ -1,5 +1,5 @@
 import { uuidV7 } from "../../shared/ids";
-import { safeError } from "../../shared/logger";
+import { logException, safeError } from "../../shared/logger";
 import { LockCoordinator } from "../locks/coordinator";
 import { EventStore } from "../persistence/event-store";
 import { projectEvent } from "../persistence/projector";
@@ -23,6 +23,12 @@ export class DurableErrorService {
     userId?: string;
     occurredAt?: string;
   }): Promise<string> {
+    logException(input.error, {
+      correlationId: input.correlationId,
+      component: "worker",
+      operation: "worker.failure",
+      stage: input.stage,
+    });
     const id = uuidV7();
     const occurredAt = input.occurredAt ?? new Date().toISOString();
     const event: DurableEvent = {

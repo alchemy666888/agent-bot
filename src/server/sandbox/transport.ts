@@ -2,11 +2,13 @@ import "server-only";
 
 import { randomUUID, createHash } from "node:crypto";
 import {
+  safeErrorSchema,
   workerRequestSchema,
   workerResponseSchema,
   type WorkerRequest,
   type WorkerResponse,
 } from "../../shared/contracts";
+import { logException, logStructured } from "../../shared/logger";
 import { sanitizeProgress } from "../../shared/worker-progress";
 import type { SandboxHandle } from "./sdk-adapter";
 import { WORKER_COMMAND_TIMEOUT_MS } from "../../shared/worker-budget";
@@ -98,8 +100,18 @@ export async function invokeWorker(
       env: { ...env, WORKER_PROGRESS_FILE: progressPath },
       timeoutMs: WORKER_COMMAND_TIMEOUT_MS,
     });
+    const stderr = await result.stderr().catch((error: unknown) => {
+      logException(error, {
+        correlationId: valid.correlationId,
+        component: "controller",
+        operation: valid.operation,
+        stage: "worker-diagnostics",
+      });
+      return "";
+    });
+    forwardWorkerDiagnostics(stderr, valid);
     if (result.exitCode !== 0) {
-      const code = await commandFailureCode(result);
+      const code = await commandFailureCode({ stderr: async () => stderr });
       const progress = await readCommandProgress(sandbox, progressPath);
       throw Object.assign(new Error(code), {
         operation: valid.operation,
@@ -111,14 +123,34 @@ export async function invokeWorker(
     }
     const response = await sandbox.readFileToBuffer({ path: responsePath });
     if (!response) throw new Error("WORKER_RESPONSE_MISSING");
-    return workerResponseSchema.parse(JSON.parse(response.toString("utf8")));
+    const parsed = workerResponseSchema.parse(
+      JSON.parse(response.toString("utf8")),
+    );
+    if (!parsed.ok)
+      logStructured({
+        correlationId: valid.correlationId,
+        component: "worker",
+        operation: valid.operation,
+        stage: "worker-response",
+        result: "failure",
+        code: parsed.error?.code ?? "WORKER_FAILED",
+        metadata: { error: parsed.error },
+      });
+    return parsed;
   } finally {
     // Cleanup runs after the worker result is known. A dead session throws a
     // plain Error here and would otherwise replace that result, which the
     // controller logs as SANDBOX_UNAVAILABLE and runs the turn again locally.
     await sandbox
       .runCommand("rm", ["-f", requestPath, responsePath, progressPath])
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        logException(error, {
+          correlationId: valid.correlationId,
+          component: "controller",
+          operation: valid.operation,
+          stage: "worker-cleanup",
+        });
+      });
   }
 }
 
@@ -142,4 +174,36 @@ export async function streamSandboxFile(
   const stream = await sandbox.readFile({ path });
   if (!stream) throw new Error("SANDBOX_FILE_MISSING");
   return stream;
+}
+
+/** Subprocess console output is not a Vercel Function log. Forward only validated error envelopes. */
+function forwardWorkerDiagnostics(
+  stderr: string,
+  request: WorkerRequest,
+): void {
+  for (const line of stderr.slice(-32_768).split("\n").slice(-16)) {
+    let entry: {
+      component?: unknown;
+      result?: unknown;
+      metadata?: { error?: unknown };
+    };
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!entry || entry.component !== "worker" || entry.result !== "failure")
+      continue;
+    const parsed = safeErrorSchema.safeParse(entry.metadata?.error);
+    if (!parsed.success) continue;
+    logStructured({
+      correlationId: request.correlationId,
+      component: "worker",
+      operation: request.operation,
+      stage: "worker-diagnostic",
+      result: "failure",
+      code: parsed.data.code,
+      metadata: { error: parsed.data },
+    });
+  }
 }

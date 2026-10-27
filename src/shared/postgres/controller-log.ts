@@ -1,4 +1,4 @@
-import { logStructured, type LogRecord } from "../logger";
+import { logException, logStructured, type LogRecord } from "../logger";
 import { createPostgresStore } from "./client";
 import { readDatabaseConfig } from "./config";
 import { retryPersistence } from "./retry";
@@ -29,13 +29,20 @@ export async function persistControllerLog(
   store?: PersistenceStore,
 ): Promise<void> {
   const line = logStructured(record);
-  const target = store ?? (process.env.VITEST ? null : openPersistenceStore());
-  if (!target) return;
   try {
+    const target =
+      store ?? (process.env.VITEST ? null : openPersistenceStore());
+    if (!target) return;
     await retryPersistence(() =>
       target.upload(controllerLogPath(record), Buffer.from(line)),
     );
   } catch (error) {
+    logException(error, {
+      correlationId: record.correlationId,
+      component: "controller",
+      operation: "controllerLog.persist",
+      stage: "persistence",
+    });
     if (store) throw error;
   }
 }

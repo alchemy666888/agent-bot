@@ -6,7 +6,11 @@ import {
   type TelegramInput,
 } from "../../../../server/telegram/input";
 import { uuidV7 } from "../../../../shared/ids";
-import { logStructured, safeError } from "../../../../shared/logger";
+import {
+  logException,
+  logStructured,
+  safeError,
+} from "../../../../shared/logger";
 import {
   failureContext,
   type FailureContext,
@@ -40,8 +44,16 @@ function privateChatId(input: TelegramInput): string | undefined {
   return input.chatId;
 }
 
-function continueTurn(task: () => Promise<void>): void {
-  const guarded = () => task().catch(() => undefined);
+function continueTurn(task: () => Promise<void>, correlationId: string): void {
+  const guarded = () =>
+    task().catch((error: unknown) => {
+      logException(error, {
+        correlationId,
+        component: "controller",
+        operation: "telegramWebhook",
+        stage: "background",
+      });
+    });
   try {
     after(guarded);
   } catch {
@@ -53,13 +65,20 @@ async function notifyTurnFailed(
   token: string,
   chatId: string,
   text: string,
+  correlationId: string,
 ): Promise<boolean> {
   try {
     await new TelegramClient(token).send(chatId, text, undefined, undefined, {
       plain: true,
     });
     return true;
-  } catch {
+  } catch (error) {
+    logException(error, {
+      correlationId,
+      component: "controller",
+      operation: "telegramWebhook",
+      stage: "failure-notification",
+    });
     return false;
   }
 }
@@ -73,9 +92,11 @@ async function privateFailure(
   chatId: string,
   updateId: string,
   text: string,
+  correlationId: string,
 ): Promise<NextResponse> {
   if (!(await claimWebhookFailure(updateId))) return accepted();
-  if (await notifyTurnFailed(token, chatId, text)) return accepted();
+  if (await notifyTurnFailed(token, chatId, text, correlationId))
+    return accepted();
   await releaseWebhookFailure(updateId);
   return NextResponse.json({ ok: false }, { status: 503, headers });
 }
@@ -85,6 +106,7 @@ function failureMetadata(
   context?: FailureContext,
 ): Record<string, unknown> | undefined {
   const metadata = {
+    error: failure,
     ...(failure.diagnostic ?? {}),
     ...(context?.operation ? { operation: context.operation } : {}),
     ...(context?.timeoutLimitMs === undefined
@@ -110,18 +132,23 @@ async function finishDispatch(
     const failure = safeError(outcome.error, "INTERNAL_ERROR", "dispatch");
     const context = failureContext(outcome.error);
     const metadata = failureMetadata(failure, context);
-    logStructured({
+    logException(outcome.error, {
       correlationId,
       component: "controller",
       operation: "telegramWebhook",
       stage: "dispatch",
-      result: "failure",
       durationMs,
       code: failure.code,
       ...(metadata ? { metadata } : {}),
     });
     if (chatId)
-      return privateFailure(token, chatId, input.updateId, TURN_FAILED_TEXT);
+      return privateFailure(
+        token,
+        chatId,
+        input.updateId,
+        TURN_FAILED_TEXT,
+        correlationId,
+      );
     return NextResponse.json({ ok: false }, { status: 503, headers });
   }
   if (!outcome.response.ok) {
@@ -129,6 +156,7 @@ async function finishDispatch(
     const reported = outcome.response.error;
     const metadata = reported
       ? {
+          error: reported,
           ...(reported.diagnostic ?? {}),
           ...(reported.detail ? { detail: reported.detail } : {}),
           ...(reported.trace?.length ? { trace: reported.trace } : {}),
@@ -145,7 +173,13 @@ async function finishDispatch(
       ...(metadata && Object.keys(metadata).length ? { metadata } : {}),
     });
     if (chatId)
-      return privateFailure(token, chatId, input.updateId, TURN_FAILED_TEXT);
+      return privateFailure(
+        token,
+        chatId,
+        input.updateId,
+        TURN_FAILED_TEXT,
+        correlationId,
+      );
     return NextResponse.json(
       { ok: false },
       { status: retryable ? 503 : 500, headers },
@@ -203,7 +237,7 @@ export async function POST(request: Request) {
         started,
         config.TELEGRAM_BOT_TOKEN,
       );
-    });
+    }, correlationId);
     return accepted();
   }
   return finishDispatch(

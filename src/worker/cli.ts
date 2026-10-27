@@ -17,7 +17,7 @@ import { exportData } from "./export/service";
 import { DurableErrorService } from "./errors/service";
 import { QueryService } from "./queries/service";
 import { openPersistenceStore } from "../shared/postgres/controller-log";
-import { safeError } from "../shared/logger";
+import { logException, safeError } from "../shared/logger";
 import { bindPersistenceSession } from "./persistence/database-sync";
 import { writeWorkerLog } from "./observability/worker-log";
 import { writeWorkerProgress } from "./observability/progress";
@@ -376,5 +376,13 @@ async function main() {
 // the response file is written. The sandbox treats a live process as a timeout.
 void main().then(
   () => process.exit(0),
-  () => process.exit(1),
+  (error: unknown) => {
+    logException(error, {
+      correlationId: "worker-bootstrap",
+      component: "worker",
+      operation: "worker.main",
+      stage: "bootstrap",
+    });
+    process.stderr.write("", () => process.exit(1));
+  },
 );

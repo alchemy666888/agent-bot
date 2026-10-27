@@ -156,7 +156,7 @@ describe("sandbox lifecycle", () => {
     const sdk: SandboxSdk = {
       getOrCreateSandbox: vi.fn(async () => stale),
     };
-    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     try {
       await expect(ensureSandbox(config, sdk, "correlation-id")).resolves.toBe(

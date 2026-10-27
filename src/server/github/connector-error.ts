@@ -16,18 +16,18 @@ export function translateConnectorError(error: unknown): unknown {
   const code = (error as { code?: unknown }).code;
   const message = error instanceof Error ? error.message : "";
   if (status === 404 && code === "not_found")
-    return new Error("GITHUB_CONNECTOR_NOT_FOUND");
+    return new Error("GITHUB_CONNECTOR_NOT_FOUND", { cause: error });
   if (
     status === 403 &&
     code === "forbidden" &&
     /connector is not linked to this project/i.test(message)
   )
-    return new Error("GITHUB_CONNECTOR_NOT_FOUND");
+    return new Error("GITHUB_CONNECTOR_NOT_FOUND", { cause: error });
   if (
     name === "ConnectorInstallationRequiredError" ||
     code === "connector_installation_required" ||
     code === "client_installation_required"
   )
-    return new Error("GITHUB_CONNECTOR_NOT_INSTALLED");
-  return new Error("GITHUB_AUTHENTICATION_FAILED");
+    return new Error("GITHUB_CONNECTOR_NOT_INSTALLED", { cause: error });
+  return new Error("GITHUB_AUTHENTICATION_FAILED", { cause: error });
 }

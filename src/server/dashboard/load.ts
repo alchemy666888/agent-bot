@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { databaseProcessEnv } from "../../shared/postgres/config";
 import { uuidV7 } from "../../shared/ids";
+import { logException } from "../../shared/logger";
 import { readSandboxConfig } from "../config";
 import { ensureSandbox } from "../sandbox/controller";
 import { installWorker, invokeWorker } from "../sandbox/transport";
@@ -12,6 +13,26 @@ import { dashboardQuerySchema, type DashboardQuery } from "./view-models";
 const workerSourcePath = join(process.cwd(), "dist", "worker.mjs");
 
 export async function loadDashboard(
+  view: string,
+  query: DashboardQuery,
+  id?: string,
+): Promise<Record<string, unknown>> {
+  const correlationId = uuidV7();
+  try {
+    return await queryDashboard(correlationId, view, query, id);
+  } catch (error) {
+    logException(error, {
+      correlationId,
+      component: "controller",
+      operation: "dashboard.query",
+      stage: "query",
+    });
+    throw error;
+  }
+}
+
+async function queryDashboard(
+  correlationId: string,
   view: string,
   query: DashboardQuery,
   id?: string,
@@ -27,7 +48,7 @@ export async function loadDashboard(
     workerPath,
     {
       contractVersion: 1,
-      correlationId: uuidV7(),
+      correlationId,
       operation: "query",
       payload: { view, ...payload, ...(id ? { id } : {}) },
     },
