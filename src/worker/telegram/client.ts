@@ -183,7 +183,8 @@ export class TelegramClient {
         cap.signal,
       );
     } catch (error) {
-      if (cap.signal.aborted) throw new Error("TELEGRAM_DELIVERY_FAILED", { cause: error });
+      if (cap.signal.aborted)
+        throw new Error("TELEGRAM_DELIVERY_FAILED", { cause: error });
       throw error;
     } finally {
       cap.cancel();

@@ -26,7 +26,12 @@ export async function POST(request: Request) {
   try {
     config = readDashboardConfig();
   } catch (error) {
-    logException(error, { correlationId: uuidV7(), component: "controller", operation: "login", stage: "configuration" });
+    logException(error, {
+      correlationId: uuidV7(),
+      component: "controller",
+      operation: "login",
+      stage: "configuration",
+    });
     return new NextResponse(null, { status: 503 });
   }
   const accepted =

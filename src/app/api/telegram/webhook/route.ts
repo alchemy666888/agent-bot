@@ -6,7 +6,11 @@ import {
   type TelegramInput,
 } from "../../../../server/telegram/input";
 import { uuidV7 } from "../../../../shared/ids";
-import { logException, logStructured, safeError } from "../../../../shared/logger";
+import {
+  logException,
+  logStructured,
+  safeError,
+} from "../../../../shared/logger";
 import {
   failureContext,
   type FailureContext,
@@ -41,9 +45,15 @@ function privateChatId(input: TelegramInput): string | undefined {
 }
 
 function continueTurn(task: () => Promise<void>, correlationId: string): void {
-  const guarded = () => task().catch((error: unknown) => {
-    logException(error, { correlationId, component: "controller", operation: "telegramWebhook", stage: "background" });
-  });
+  const guarded = () =>
+    task().catch((error: unknown) => {
+      logException(error, {
+        correlationId,
+        component: "controller",
+        operation: "telegramWebhook",
+        stage: "background",
+      });
+    });
   try {
     after(guarded);
   } catch {
@@ -63,7 +73,12 @@ async function notifyTurnFailed(
     });
     return true;
   } catch (error) {
-    logException(error, { correlationId, component: "controller", operation: "telegramWebhook", stage: "failure-notification" });
+    logException(error, {
+      correlationId,
+      component: "controller",
+      operation: "telegramWebhook",
+      stage: "failure-notification",
+    });
     return false;
   }
 }
@@ -80,7 +95,8 @@ async function privateFailure(
   correlationId: string,
 ): Promise<NextResponse> {
   if (!(await claimWebhookFailure(updateId))) return accepted();
-  if (await notifyTurnFailed(token, chatId, text, correlationId)) return accepted();
+  if (await notifyTurnFailed(token, chatId, text, correlationId))
+    return accepted();
   await releaseWebhookFailure(updateId);
   return NextResponse.json({ ok: false }, { status: 503, headers });
 }
@@ -126,7 +142,13 @@ async function finishDispatch(
       ...(metadata ? { metadata } : {}),
     });
     if (chatId)
-      return privateFailure(token, chatId, input.updateId, TURN_FAILED_TEXT, correlationId);
+      return privateFailure(
+        token,
+        chatId,
+        input.updateId,
+        TURN_FAILED_TEXT,
+        correlationId,
+      );
     return NextResponse.json({ ok: false }, { status: 503, headers });
   }
   if (!outcome.response.ok) {
@@ -151,7 +173,13 @@ async function finishDispatch(
       ...(metadata && Object.keys(metadata).length ? { metadata } : {}),
     });
     if (chatId)
-      return privateFailure(token, chatId, input.updateId, TURN_FAILED_TEXT, correlationId);
+      return privateFailure(
+        token,
+        chatId,
+        input.updateId,
+        TURN_FAILED_TEXT,
+        correlationId,
+      );
     return NextResponse.json(
       { ok: false },
       { status: retryable ? 503 : 500, headers },

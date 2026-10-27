@@ -24,7 +24,12 @@ export async function GET(request: Request): Promise<Response> {
   try {
     config = readDashboardConfig();
   } catch (error) {
-    logException(error, { correlationId, component: "controller", operation: "download", stage: "configuration" });
+    logException(error, {
+      correlationId,
+      component: "controller",
+      operation: "download",
+      stage: "configuration",
+    });
     return Response.json(
       { error: "Service unavailable" },
       { status: 503, headers: privateHeaders },

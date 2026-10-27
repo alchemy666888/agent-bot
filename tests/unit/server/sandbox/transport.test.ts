@@ -210,23 +210,49 @@ describe("private worker transport", () => {
 describe("Vercel worker error forwarding", () => {
   it("forwards validated worker errors on successful commands and discards raw stderr", async () => {
     const correlationId = uuidV7();
-    const target = sandbox({ contractVersion: 1, correlationId, ok: true, data: {} }, 0, [
-      "raw stderr contains private-fixture",
-      JSON.stringify({ component: "worker", result: "failure", metadata: { error: {
-        code: "PROVIDER_REQUEST_TIMEOUT", classification: "transient", message: "Temporary operation failure",
-        detail: "socket timeout", trace: ["at connect (socket.ts:7:3)"],
-      } } }),
-      JSON.stringify({ component: "worker", result: "failure", metadata: { error: { rawBody: "private-fixture" } } }),
-    ].join("\n"));
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const target = sandbox(
+      { contractVersion: 1, correlationId, ok: true, data: {} },
+      0,
+      [
+        "raw stderr contains private-fixture",
+        JSON.stringify({
+          component: "worker",
+          result: "failure",
+          metadata: {
+            error: {
+              code: "PROVIDER_REQUEST_TIMEOUT",
+              classification: "transient",
+              message: "Temporary operation failure",
+              detail: "socket timeout",
+              trace: ["at connect (socket.ts:7:3)"],
+            },
+          },
+        }),
+        JSON.stringify({
+          component: "worker",
+          result: "failure",
+          metadata: { error: { rawBody: "private-fixture" } },
+        }),
+      ].join("\n"),
+    );
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     try {
-      await expect(invokeWorker(target, "/tmp/worker.mjs", {
-        contractVersion: 1, correlationId, operation: "health", payload: {},
-      })).resolves.toMatchObject({ ok: true });
+      await expect(
+        invokeWorker(target, "/tmp/worker.mjs", {
+          contractVersion: 1,
+          correlationId,
+          operation: "health",
+          payload: {},
+        }),
+      ).resolves.toMatchObject({ ok: true });
       expect(error).toHaveBeenCalledTimes(1);
       const line = error.mock.calls[0]![0] as string;
       expect(JSON.parse(line)).toMatchObject({
-        correlationId, level: "error", stage: "worker-diagnostic",
+        correlationId,
+        level: "error",
+        stage: "worker-diagnostic",
         metadata: { error: { detail: "socket timeout" } },
       });
       expect(line).not.toContain("private-fixture");

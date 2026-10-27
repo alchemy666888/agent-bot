@@ -19,7 +19,10 @@ export function containsLikelySecret(value: string): boolean {
 /** Bounded text with credentials, tokens, and URL userinfo removed. */
 export function redactText(value: string, max = 500): string {
   return value
-    .replace(/(?:https:\/\/api\.telegram\.org)?\/bot\d{5,}:[A-Za-z0-9_-]+/gi, "[REDACTED]")
+    .replace(
+      /(?:https:\/\/api\.telegram\.org)?\/bot\d{5,}:[A-Za-z0-9_-]+/gi,
+      "[REDACTED]",
+    )
     .replace(credentialUrl, "[REDACTED]")
     .replace(secretText, "[REDACTED]")
     .replace(likelySecretText, "[REDACTED]")
@@ -54,8 +57,7 @@ export function isSensitivePreference(value: string): boolean {
 
 export function redact(value: unknown, depth = 0): unknown {
   if (depth > 8) return "[TRUNCATED]";
-  if (typeof value === "string")
-    return redactText(value, 1024);
+  if (typeof value === "string") return redactText(value, 1024);
   if (Array.isArray(value))
     return value.slice(0, 100).map((item) => redact(item, depth + 1));
   if (value && typeof value === "object")

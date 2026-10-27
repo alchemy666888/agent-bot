@@ -28,7 +28,7 @@ const answered: WorkerResponse = {
 describe("executeWorker", () => {
   beforeEach(() => {
     vi.mocked(invokeWorker).mockReset();
-    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
 
   it("returns the sandbox worker result", async () => {
@@ -70,7 +70,7 @@ describe("executeWorker", () => {
       TELEGRAM_BOT_TOKEN: "token",
     });
     const event = JSON.parse(
-      String(vi.mocked(console.info).mock.calls.at(-1)?.[0]),
+      String(vi.mocked(console.warn).mock.calls.at(-1)?.[0]),
     );
     expect(event).toMatchObject({
       operation: "sandbox.local_fallback",
@@ -190,7 +190,7 @@ describe("executeWorker", () => {
     ).resolves.toBe(answered);
     expect(openLocal).toHaveBeenCalledOnce();
     const event = JSON.parse(
-      String(vi.mocked(console.info).mock.calls.at(-1)?.[0]),
+      String(vi.mocked(console.warn).mock.calls.at(-1)?.[0]),
     );
     expect(event).toMatchObject({
       operation: "sandbox.local_fallback",

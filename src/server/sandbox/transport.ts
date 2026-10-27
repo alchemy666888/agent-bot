@@ -101,7 +101,12 @@ export async function invokeWorker(
       timeoutMs: WORKER_COMMAND_TIMEOUT_MS,
     });
     const stderr = await result.stderr().catch((error: unknown) => {
-      logException(error, { correlationId: valid.correlationId, component: "controller", operation: valid.operation, stage: "worker-diagnostics" });
+      logException(error, {
+        correlationId: valid.correlationId,
+        component: "controller",
+        operation: valid.operation,
+        stage: "worker-diagnostics",
+      });
       return "";
     });
     forwardWorkerDiagnostics(stderr, valid);
@@ -118,16 +123,19 @@ export async function invokeWorker(
     }
     const response = await sandbox.readFileToBuffer({ path: responsePath });
     if (!response) throw new Error("WORKER_RESPONSE_MISSING");
-    const parsed = workerResponseSchema.parse(JSON.parse(response.toString("utf8")));
-    if (!parsed.ok) logStructured({
-      correlationId: valid.correlationId,
-      component: "worker",
-      operation: valid.operation,
-      stage: "worker-response",
-      result: "failure",
-      code: parsed.error?.code ?? "WORKER_FAILED",
-      metadata: { error: parsed.error },
-    });
+    const parsed = workerResponseSchema.parse(
+      JSON.parse(response.toString("utf8")),
+    );
+    if (!parsed.ok)
+      logStructured({
+        correlationId: valid.correlationId,
+        component: "worker",
+        operation: valid.operation,
+        stage: "worker-response",
+        result: "failure",
+        code: parsed.error?.code ?? "WORKER_FAILED",
+        metadata: { error: parsed.error },
+      });
     return parsed;
   } finally {
     // Cleanup runs after the worker result is known. A dead session throws a
@@ -136,7 +144,12 @@ export async function invokeWorker(
     await sandbox
       .runCommand("rm", ["-f", requestPath, responsePath, progressPath])
       .catch((error: unknown) => {
-        logException(error, { correlationId: valid.correlationId, component: "controller", operation: valid.operation, stage: "worker-cleanup" });
+        logException(error, {
+          correlationId: valid.correlationId,
+          component: "controller",
+          operation: valid.operation,
+          stage: "worker-cleanup",
+        });
       });
   }
 }
@@ -164,15 +177,23 @@ export async function streamSandboxFile(
 }
 
 /** Subprocess console output is not a Vercel Function log. Forward only validated error envelopes. */
-function forwardWorkerDiagnostics(stderr: string, request: WorkerRequest): void {
+function forwardWorkerDiagnostics(
+  stderr: string,
+  request: WorkerRequest,
+): void {
   for (const line of stderr.slice(-32_768).split("\n").slice(-16)) {
-    let entry: { component?: unknown; result?: unknown; metadata?: { error?: unknown } };
+    let entry: {
+      component?: unknown;
+      result?: unknown;
+      metadata?: { error?: unknown };
+    };
     try {
       entry = JSON.parse(line);
     } catch {
       continue;
     }
-    if (!entry || entry.component !== "worker" || entry.result !== "failure") continue;
+    if (!entry || entry.component !== "worker" || entry.result !== "failure")
+      continue;
     const parsed = safeErrorSchema.safeParse(entry.metadata?.error);
     if (!parsed.success) continue;
     logStructured({

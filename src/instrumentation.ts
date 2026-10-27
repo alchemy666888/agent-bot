@@ -1,18 +1,22 @@
 import type { Instrumentation } from "next";
-import { uuidV7 } from "./shared/ids";
 import { logException } from "./shared/logger";
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { registerRuntimeErrorLogging } = await import("./server/observability/runtime");
+    const { registerRuntimeErrorLogging } =
+      await import("./server/observability/runtime");
     registerRuntimeErrorLogging();
   }
 }
 
 /** Next.js reports server rendering, route and Server Action exceptions here. */
-export const onRequestError: Instrumentation.onRequestError = (error, request, context) => {
+export const onRequestError: Instrumentation.onRequestError = (
+  error,
+  request,
+  context,
+) => {
   logException(error, {
-    correlationId: uuidV7(),
+    correlationId: crypto.randomUUID(),
     component: "controller",
     operation: "next.request",
     stage: "request",

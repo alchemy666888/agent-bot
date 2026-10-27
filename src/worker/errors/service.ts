@@ -23,7 +23,12 @@ export class DurableErrorService {
     userId?: string;
     occurredAt?: string;
   }): Promise<string> {
-    logException(input.error, { correlationId: input.correlationId, component: "worker", operation: "worker.failure", stage: input.stage });
+    logException(input.error, {
+      correlationId: input.correlationId,
+      component: "worker",
+      operation: "worker.failure",
+      stage: input.stage,
+    });
     const id = uuidV7();
     const occurredAt = input.occurredAt ?? new Date().toISOString();
     const event: DurableEvent = {

@@ -138,7 +138,7 @@ describe("Telegram webhook", () => {
   });
 
   it("keeps timeout diagnostics in logs and sends a concise private message", async () => {
-    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     dispatchTelegramInput.mockRejectedValueOnce(
       Object.assign(new Error("WORKER_COMMAND_TIMEOUT"), {
         operation: "telegramTurn",
@@ -295,6 +295,7 @@ describe("Telegram webhook", () => {
 
   it("sends the failure notice on the next delivery when Telegram rejects it", async () => {
     dispatchTelegramInput.mockRejectedValue(new Error("SANDBOX_UNAVAILABLE"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("{}", { status: 500 }))
@@ -306,7 +307,21 @@ describe("Telegram webhook", () => {
       expect(first.status).toBe(503);
       expect(second.status).toBe(200);
       expect(fetchMock).toHaveBeenCalledTimes(2);
+      const records = log.mock.calls.map(([line]) => JSON.parse(String(line)));
+      expect(records).toContainEqual(
+        expect.objectContaining({
+          level: "error",
+          stage: "failure-notification",
+          code: "TELEGRAM_DELIVERY_FAILED",
+          metadata: expect.objectContaining({
+            error: expect.objectContaining({
+              diagnostic: expect.objectContaining({ status: 500 }),
+            }),
+          }),
+        }),
+      );
     } finally {
+      log.mockRestore();
       vi.unstubAllGlobals();
     }
   });
@@ -390,7 +405,7 @@ describe("Telegram webhook", () => {
       failure = error;
     }
     dispatchTelegramInput.mockRejectedValueOnce(failure);
-    const log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const response = await POST(request({ update_id: 2, edited_message: {} }));
 

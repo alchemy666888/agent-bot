@@ -30,13 +30,19 @@ export async function persistControllerLog(
 ): Promise<void> {
   const line = logStructured(record);
   try {
-    const target = store ?? (process.env.VITEST ? null : openPersistenceStore());
+    const target =
+      store ?? (process.env.VITEST ? null : openPersistenceStore());
     if (!target) return;
     await retryPersistence(() =>
       target.upload(controllerLogPath(record), Buffer.from(line)),
     );
   } catch (error) {
-    logException(error, { correlationId: record.correlationId, component: "controller", operation: "controllerLog.persist", stage: "persistence" });
+    logException(error, {
+      correlationId: record.correlationId,
+      component: "controller",
+      operation: "controllerLog.persist",
+      stage: "persistence",
+    });
     if (store) throw error;
   }
 }

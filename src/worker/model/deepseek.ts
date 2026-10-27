@@ -505,7 +505,12 @@ export class DeepSeekProvider implements ModelProvider {
       );
     } catch (error) {
       if (!isProviderTimeout(error)) throw error;
-      logException(error, { correlationId: requestId ?? "model-recovery", component: "worker", operation: "model.recovery", stage: "recovery" });
+      logException(error, {
+        correlationId: requestId ?? "model-recovery",
+        component: "worker",
+        operation: "model.recovery",
+        stage: "recovery",
+      });
       return modelResponseSchema.parse({
         content: SAFE_OUTPUT_FALLBACK,
         requestId,

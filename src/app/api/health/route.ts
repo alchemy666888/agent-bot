@@ -56,5 +56,11 @@ function valid(reader: () => unknown, component: string): "ready" | "degraded" {
 }
 
 function logHealthFailure(error: unknown, component: string): void {
-  logException(error, { correlationId: uuidV7(), component: "controller", operation: "health", stage: "configuration", metadata: { service: component } });
+  logException(error, {
+    correlationId: uuidV7(),
+    component: "controller",
+    operation: "health",
+    stage: "configuration",
+    metadata: { service: component },
+  });
 }

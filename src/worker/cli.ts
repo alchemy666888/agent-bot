@@ -377,7 +377,12 @@ async function main() {
 void main().then(
   () => process.exit(0),
   (error: unknown) => {
-    logException(error, { correlationId: "worker-bootstrap", component: "worker", operation: "worker.main", stage: "bootstrap" });
+    logException(error, {
+      correlationId: "worker-bootstrap",
+      component: "worker",
+      operation: "worker.main",
+      stage: "bootstrap",
+    });
     process.stderr.write("", () => process.exit(1));
   },
 );

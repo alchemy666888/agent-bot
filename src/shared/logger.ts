@@ -65,12 +65,22 @@ export function logStructured(
   record: LogRecord,
   sink?: (line: string) => void,
 ): string {
-  const level = record.result === "failure" ? "error"
-    : record.result === "retry" || record.result === "degraded" ? "warning" : "info";
+  const level =
+    record.result === "failure"
+      ? "error"
+      : record.result === "retry" || record.result === "degraded"
+        ? "warning"
+        : "info";
   const line = JSON.stringify(
     redact({ timestamp: new Date().toISOString(), ...record, level }),
   );
-  const output = sink ?? (level === "error" ? console.error : level === "warning" ? console.warn : console.info);
+  const output =
+    sink ??
+    (level === "error"
+      ? console.error
+      : level === "warning"
+        ? console.warn
+        : console.info);
   output(line);
   return line;
 }
@@ -81,13 +91,24 @@ export function logException(
   context: Omit<LogRecord, "result">,
   sink?: (line: string) => void,
 ): string {
-  const failure = safeError(error, context.code ?? "INTERNAL_ERROR", context.stage);
-  return logStructured({
-    ...context,
-    result: "failure",
-    code: failure.code,
-    metadata: { ...context.metadata, error: failure, causes: exceptionCauses(error) },
-  }, sink);
+  const failure = safeError(
+    error,
+    context.code ?? "INTERNAL_ERROR",
+    context.stage,
+  );
+  return logStructured(
+    {
+      ...context,
+      result: "failure",
+      code: failure.code,
+      metadata: {
+        ...context.metadata,
+        error: failure,
+        causes: exceptionCauses(error),
+      },
+    },
+    sink,
+  );
 }
 
 /** Only diagnostic fields are copied; request bodies and arbitrary Error properties are excluded. */
@@ -95,15 +116,25 @@ function exceptionCauses(error: unknown): Record<string, unknown>[] {
   const seen = new Set<unknown>();
   const nodes: Record<string, unknown>[] = [];
   const visit = (value: unknown, path: string, depth: number) => {
-    if (value == null || seen.has(value) || depth > 8 || nodes.length >= 8) return;
+    if (value == null || seen.has(value) || depth > 8 || nodes.length >= 8)
+      return;
     seen.add(value);
-    const record = typeof value === "object" ? value as Record<string, unknown> : undefined;
-    const message = value instanceof ZodError ? "validation failed"
-      : value instanceof Error ? value.message
-      : typeof value === "string" ? value : "Non-Error exception";
+    const record =
+      typeof value === "object"
+        ? (value as Record<string, unknown>)
+        : undefined;
+    const message =
+      value instanceof ZodError
+        ? "validation failed"
+        : value instanceof Error
+          ? value.message
+          : typeof value === "string"
+            ? value
+            : "Non-Error exception";
     nodes.push({
       path,
-      kind: value instanceof Error ? redactText(value.name, 64) : "UnknownError",
+      kind:
+        value instanceof Error ? redactText(value.name, 64) : "UnknownError",
       message: redactText(message, 400),
       ...(record ? { annotations: errorAnnotations(record) } : {}),
       trace: ownErrorTrace(value).slice(0, 3),
@@ -111,7 +142,11 @@ function exceptionCauses(error: unknown): Record<string, unknown>[] {
     if (record) {
       visit(record.cause, `${path}.cause`, depth + 1);
       if (Array.isArray(record.errors))
-        record.errors.slice(0, 3).forEach((item, index) => visit(item, `${path}.errors[${index}]`, depth + 1));
+        record.errors
+          .slice(0, 3)
+          .forEach((item, index) =>
+            visit(item, `${path}.errors[${index}]`, depth + 1),
+          );
     }
   };
   visit(error, "error", 0);
@@ -267,7 +302,10 @@ function errorChain(error: unknown, depth = 0): string[] {
 
 function errorDetail(error: unknown): string | undefined {
   const chain = errorChain(error);
-  const lines = chain.length > 1 ? [`Root cause: ${chain.at(-1)}`, "Error chain:", ...chain] : chain;
+  const lines =
+    chain.length > 1
+      ? [`Root cause: ${chain.at(-1)}`, "Error chain:", ...chain]
+      : chain;
   const detail = lines.join("\n").slice(0, DETAIL_LIMIT);
   return detail || undefined;
 }
@@ -277,8 +315,12 @@ function errorTrace(error: unknown): string[] {
   const collect = (value: unknown, depth: number): string[] => {
     if (!value || seen.has(value) || depth > 8) return [];
     seen.add(value);
-    const record = typeof value === "object" ? value as Record<string, unknown> : undefined;
-    const nested = record && Array.isArray(record.errors) ? record.errors.slice(0, 3) : [];
+    const record =
+      typeof value === "object"
+        ? (value as Record<string, unknown>)
+        : undefined;
+    const nested =
+      record && Array.isArray(record.errors) ? record.errors.slice(0, 3) : [];
     return [
       ...(record ? collect(record.cause, depth + 1) : []),
       ...nested.flatMap((item) => collect(item, depth + 1)),
