@@ -74,10 +74,11 @@ describe("stateless Telegram dispatch", () => {
       ok: true,
     });
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://api.telegram.org/bottoken/sendChatAction",
       "https://deepseek.test/responses",
       "https://api.telegram.org/bottoken/sendMessage",
     ]);
-    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+    const body = JSON.parse(String(fetchMock.mock.calls[1]![1]!.body));
     expect(body).toMatchObject({ model: "deepseek-v4-pro", stream: false });
     expect(body.input).toEqual([{ role: "user", content: input.text }]);
     expect(body.instructions).toContain(
@@ -86,7 +87,7 @@ describe("stateless Telegram dispatch", () => {
     expect(body.tools).toEqual([{ type: "web_search" }]);
     expect(body.tool_choice).toBe("auto");
     expect(body.instructions).not.toContain("must-not-be-parsed");
-    const reply = JSON.parse(String(fetchMock.mock.calls[1]![1]!.body));
+    const reply = JSON.parse(String(fetchMock.mock.calls[2]![1]!.body));
     expect(reply).toMatchObject({
       chat_id: "3",
       text: "請提供 CPI 數據與 BTC 現價，我可以分析交易條件。",
@@ -100,10 +101,88 @@ describe("stateless Telegram dispatch", () => {
       updateId: "2",
       text: "第二個問題",
     });
-    const body = JSON.parse(String(fetchMock.mock.calls[2]![1]!.body));
+    const body = JSON.parse(String(fetchMock.mock.calls[4]![1]!.body));
     expect(body.input).toEqual([{ role: "user", content: "第二個問題" }]);
     expect(JSON.stringify(body)).not.toContain(input.text);
   });
+
+  it("refreshes typing during generation and delivery, then stops", async () => {
+    vi.useFakeTimers();
+    const generation = Promise.withResolvers<Response>();
+    const delivery = Promise.withResolvers<Response>();
+    fetchMock.mockImplementation(async (url) => {
+      if (String(url).includes("deepseek.test")) return generation.promise;
+      if (String(url).endsWith("/sendMessage")) return delivery.promise;
+      return Response.json({ ok: true });
+    });
+    const typingCalls = () =>
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).endsWith("/sendChatAction"),
+      );
+
+    const pending = dispatchTelegramInput(input);
+    expect(typingCalls()).toHaveLength(1);
+    expect(JSON.parse(String(typingCalls()[0]![1]!.body))).toEqual({
+      chat_id: input.chatId,
+      action: "typing",
+    });
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(typingCalls()).toHaveLength(3);
+    generation.resolve(Response.json({ output_text: "Answer" }));
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(typingCalls()).toHaveLength(4);
+    delivery.resolve(Response.json({ ok: true }));
+    await pending;
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(typingCalls()).toHaveLength(4);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["generation", "delivery"])(
+    "stops typing when %s fails",
+    async (stage) => {
+      vi.useFakeTimers();
+      fetchMock.mockImplementation(async (url) => {
+        if (String(url).includes("deepseek.test"))
+          return stage === "generation"
+            ? Response.json(
+                { error: { message: "Unavailable" } },
+                { status: 503 },
+              )
+            : Response.json({ output_text: "Answer" });
+        if (String(url).endsWith("/sendMessage"))
+          throw new Error("Delivery unavailable");
+        return Response.json({ ok: true });
+      });
+      await expect(dispatchTelegramInput(input)).rejects.toThrow();
+      const calls = fetchMock.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(fetchMock).toHaveBeenCalledTimes(calls);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each(["failed", "stalled"])(
+    "delivers the answer even when typing requests are %s",
+    async (state) => {
+      vi.useFakeTimers();
+      const originalFetch = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (url, options) => {
+        if (String(url).endsWith("/sendChatAction")) {
+          if (state === "failed") throw new Error("Typing unavailable");
+          return new Promise<Response>(() => undefined);
+        }
+        return originalFetch(url, options);
+      });
+      await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
+        ok: true,
+      });
+      expect(String(fetchMock.mock.calls.at(-1)![0])).toContain("/sendMessage");
+      await vi.advanceTimersByTimeAsync(12_000);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it("coalesces concurrent and completed retries of the same update in memory", async () => {
     await Promise.all([
@@ -111,7 +190,7 @@ describe("stateless Telegram dispatch", () => {
       dispatchTelegramInput(input),
     ]);
     await dispatchTelegramInput(input);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("expires replay protection instead of retaining updates indefinitely", async () => {
@@ -119,21 +198,22 @@ describe("stateless Telegram dispatch", () => {
     await dispatchTelegramInput(input);
     vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
     await dispatchTelegramInput(input);
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
   it("lets a failed update be retried without retrying the provider internally", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ ok: true }));
     fetchMock.mockResolvedValueOnce(
       Response.json({ error: { message: "Unavailable" } }, { status: 503 }),
     );
     await expect(dispatchTelegramInput(input)).rejects.toMatchObject({
       status: 503,
     });
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     await expect(dispatchTelegramInput(input)).resolves.toMatchObject({
       ok: true,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it("checks the allowlist before sending any user message to DeepSeek", async () => {

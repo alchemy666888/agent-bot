@@ -85,50 +85,58 @@ describe("direct Telegram webhook without persistence", () => {
 
   it("authenticates, calls DeepSeek, and replies without storage or other APIs", async () => {
     const response = await POST(request());
-    const modelRequest = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+    const modelRequest = JSON.parse(String(fetchMock.mock.calls[1]![1]!.body));
     expect(modelRequest.model).toBe("deepseek-v4-pro");
     expect(modelRequest.tools).toEqual([{ type: "web_search" }]);
     expect(modelRequest.tool_choice).toBe("auto");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true });
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://api.telegram.org/bottoken/sendChatAction",
       "https://deepseek.test/responses",
       "https://api.telegram.org/bottoken/sendMessage",
     ]);
-    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]!.body))).toMatchObject(
+    expect(JSON.parse(String(fetchMock.mock.calls[2]![1]!.body))).toMatchObject(
       {
         chat_id: "42",
         text: "請提供 CPI 實際值與預期值。",
       },
     );
     await POST(request());
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("reports a provider failure once, including replay, without database logs or claims", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ ok: true }));
     fetchMock.mockResolvedValueOnce(
       Response.json({ error: { message: "Unavailable" } }, { status: 503 }),
     );
     const response = await POST(request());
     expect(response.status).toBe(200);
-    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]!.body)).text).toBe(
+    expect(JSON.parse(String(fetchMock.mock.calls[2]![1]!.body)).text).toBe(
       "這次回覆沒有完成，請再傳一次。",
     );
     await POST(request());
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("bounds a stalled provider and sends the failure notice after the early acknowledgement", async () => {
     vi.useFakeTimers();
-    fetchMock.mockImplementationOnce(() => new Promise(() => undefined));
+    fetchMock.mockImplementation(async (url) =>
+      String(url) === "https://deepseek.test/responses"
+        ? new Promise<Response>(() => undefined)
+        : Response.json({ ok: true }),
+    );
     const pending = POST(request());
     await vi.advanceTimersByTimeAsync(
       Math.max(WEBHOOK_ACK_MS, PROVIDER_REQUEST_TIMEOUT_MS) + 1,
     );
     expect((await pending).status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0]![1]!.signal!.aborted).toBe(true);
-    expect(JSON.parse(String(fetchMock.mock.calls[1]![1]!.body)).text).toBe(
+    const modelCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("deepseek.test"),
+    );
+    expect(modelCall![1]!.signal!.aborted).toBe(true);
+    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)![1]!.body)).text).toBe(
       "這次回覆沒有完成，請再傳一次。",
     );
   });
