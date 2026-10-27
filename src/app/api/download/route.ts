@@ -7,7 +7,7 @@ import {
 import { prepareExport } from "../../../server/export/service";
 import { persistControllerLog } from "../../../shared/postgres/controller-log";
 import { uuidV7 } from "../../../shared/ids";
-import { safeError } from "../../../shared/logger";
+import { logException, safeError } from "../../../shared/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +23,8 @@ export async function GET(request: Request): Promise<Response> {
   let config;
   try {
     config = readDashboardConfig();
-  } catch {
+  } catch (error) {
+    logException(error, { correlationId, component: "controller", operation: "download", stage: "configuration" });
     return Response.json(
       { error: "Service unavailable" },
       { status: 503, headers: privateHeaders },
@@ -71,6 +72,7 @@ export async function GET(request: Request): Promise<Response> {
       result: "failure",
       durationMs: Date.now() - started,
       code: safeError(error).code,
+      metadata: { error: safeError(error, "INTERNAL_ERROR", "archive") },
     });
     return Response.json(
       { error: "Archive unavailable" },

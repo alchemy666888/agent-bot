@@ -33,7 +33,7 @@ export function logSecurityAudit(
     code?: string;
     metadata?: Record<string, unknown>;
   },
-  sink: (line: string) => void = console.info,
+  sink?: (line: string) => void,
 ): string {
   return logStructured(
     {
@@ -63,13 +63,59 @@ export function logSecurityAudit(
 /** Emits one bounded, redacted JSON object. Callers must never pass raw bodies. */
 export function logStructured(
   record: LogRecord,
-  sink: (line: string) => void = console.info,
+  sink?: (line: string) => void,
 ): string {
+  const level = record.result === "failure" ? "error"
+    : record.result === "retry" || record.result === "degraded" ? "warning" : "info";
   const line = JSON.stringify(
-    redact({ timestamp: new Date().toISOString(), ...record }),
+    redact({ timestamp: new Date().toISOString(), ...record, level }),
   );
-  sink(line);
+  const output = sink ?? (level === "error" ? console.error : level === "warning" ? console.warn : console.info);
+  output(line);
   return line;
+}
+
+/** Log at the boundary before recovering or returning a safe response. */
+export function logException(
+  error: unknown,
+  context: Omit<LogRecord, "result">,
+  sink?: (line: string) => void,
+): string {
+  const failure = safeError(error, context.code ?? "INTERNAL_ERROR", context.stage);
+  return logStructured({
+    ...context,
+    result: "failure",
+    code: failure.code,
+    metadata: { ...context.metadata, error: failure, causes: exceptionCauses(error) },
+  }, sink);
+}
+
+/** Only diagnostic fields are copied; request bodies and arbitrary Error properties are excluded. */
+function exceptionCauses(error: unknown): Record<string, unknown>[] {
+  const seen = new Set<unknown>();
+  const nodes: Record<string, unknown>[] = [];
+  const visit = (value: unknown, path: string, depth: number) => {
+    if (value == null || seen.has(value) || depth > 8 || nodes.length >= 8) return;
+    seen.add(value);
+    const record = typeof value === "object" ? value as Record<string, unknown> : undefined;
+    const message = value instanceof ZodError ? "validation failed"
+      : value instanceof Error ? value.message
+      : typeof value === "string" ? value : "Non-Error exception";
+    nodes.push({
+      path,
+      kind: value instanceof Error ? redactText(value.name, 64) : "UnknownError",
+      message: redactText(message, 400),
+      ...(record ? { annotations: errorAnnotations(record) } : {}),
+      trace: ownErrorTrace(value).slice(0, 3),
+    });
+    if (record) {
+      visit(record.cause, `${path}.cause`, depth + 1);
+      if (Array.isArray(record.errors))
+        record.errors.slice(0, 3).forEach((item, index) => visit(item, `${path}.errors[${index}]`, depth + 1));
+    }
+  };
+  visit(error, "error", 0);
+  return nodes;
 }
 
 /** Field paths and parser codes only. Values are never copied from the error. */
@@ -220,12 +266,30 @@ function errorChain(error: unknown, depth = 0): string[] {
 }
 
 function errorDetail(error: unknown): string | undefined {
-  const detail = errorChain(error).join("\n").slice(0, DETAIL_LIMIT);
+  const chain = errorChain(error);
+  const lines = chain.length > 1 ? [`Root cause: ${chain.at(-1)}`, "Error chain:", ...chain] : chain;
+  const detail = lines.join("\n").slice(0, DETAIL_LIMIT);
   return detail || undefined;
 }
 
-/** File names and line numbers only. Absolute paths can contain home directories. */
 function errorTrace(error: unknown): string[] {
+  const seen = new Set<unknown>();
+  const collect = (value: unknown, depth: number): string[] => {
+    if (!value || seen.has(value) || depth > 8) return [];
+    seen.add(value);
+    const record = typeof value === "object" ? value as Record<string, unknown> : undefined;
+    const nested = record && Array.isArray(record.errors) ? record.errors.slice(0, 3) : [];
+    return [
+      ...(record ? collect(record.cause, depth + 1) : []),
+      ...nested.flatMap((item) => collect(item, depth + 1)),
+      ...ownErrorTrace(value),
+    ].slice(0, TRACE_LIMIT);
+  };
+  return collect(error, 0);
+}
+
+/** File names and line numbers only. Absolute paths can contain home directories. */
+function ownErrorTrace(error: unknown): string[] {
   if (!(error instanceof Error) || typeof error.stack !== "string") return [];
   const frames: string[] = [];
   for (const raw of error.stack.split("\n")) {

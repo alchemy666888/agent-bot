@@ -11,6 +11,9 @@ import {
 } from "../../../server/auth/session";
 import { readDashboardConfig } from "../../../server/config";
 
+import { uuidV7 } from "../../../shared/ids";
+import { logException } from "../../../shared/logger";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -22,7 +25,8 @@ export async function POST(request: Request) {
   let config;
   try {
     config = readDashboardConfig();
-  } catch {
+  } catch (error) {
+    logException(error, { correlationId: uuidV7(), component: "controller", operation: "login", stage: "configuration" });
     return new NextResponse(null, { status: 503 });
   }
   const accepted =

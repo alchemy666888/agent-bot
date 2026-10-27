@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   formatFailureDebug,
+  logException,
   logStructured,
   safeError,
 } from "../../../src/shared/logger";
@@ -183,5 +184,54 @@ describe("sanitized observability", () => {
     expect(text).toContain("executionMode: forced_web_search");
     expect(text).toContain("tool: web_search");
     expect(text).not.toContain("CPI");
+  });
+});
+
+describe("Vercel runtime logging", () => {
+  it("routes failure logs to Error, degraded logs to Warning, and success to Info", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      const context = { correlationId: uuidV7(), component: "controller" as const, operation: "test", stage: "dispatch" };
+      logStructured({ ...context, result: "failure" });
+      logStructured({ ...context, result: "degraded" });
+      logStructured({ ...context, result: "success" });
+      expect(JSON.parse(error.mock.calls[0]![0] as string).level).toBe("error");
+      expect(JSON.parse(warning.mock.calls[0]![0] as string).level).toBe("warning");
+      expect(JSON.parse(info.mock.calls[0]![0] as string).level).toBe("info");
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(warning).toHaveBeenCalledTimes(1);
+      expect(info).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("keeps root causes and their frames when the outer error is long", () => {
+    const cause = Object.assign(new Error("socket failed"), { code: "ECONNRESET" });
+    cause.stack = "Error: socket failed\n    at connect (/private/server/socket.ts:7:3)";
+    const error = new Error("outer ".repeat(500), { cause });
+    const line = logException(error, { correlationId: uuidV7(), component: "controller" as const, operation: "test", stage: "dispatch" }, () => undefined);
+    const record = JSON.parse(line);
+    expect(record.metadata.error.detail).toContain("Root cause: Error (code=ECONNRESET): socket failed");
+    expect(record.metadata.error.trace[0]).toContain("socket.ts:7:3");
+    expect(record.metadata.causes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "error.cause", message: "socket failed", annotations: "code=ECONNRESET" }),
+    ]));
+    expect(line).not.toContain("/private/server");
+  });
+
+  it("bounds cyclic aggregate exceptions and removes URL credentials and Telegram tokens", () => {
+    const error = new AggregateError([
+      new Error("https://api.telegram.org/bot123456789:AA_fixture_secret_value/sendMessage"),
+      new Error("postgres://user:fixturepass@db.example/app"),
+    ], "request failed");
+    Object.assign(error, { cause: error });
+    const line = logException(error, { correlationId: uuidV7(), component: "controller" as const, operation: "test", stage: "dispatch" }, () => undefined);
+    const record = JSON.parse(line);
+    expect(record.metadata.causes.length).toBeLessThanOrEqual(8);
+    expect(record.metadata.error.detail.length).toBeLessThanOrEqual(1800);
+    expect(line).not.toMatch(/AA_fixture_secret_value|fixturepass|123456789:/);
   });
 });
