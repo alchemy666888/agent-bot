@@ -88,7 +88,12 @@ export async function dispatchTelegramInput(
     });
     // The whole generation, including any output recovery, shares one cap.
     const cap = deadline(PROVIDER_REQUEST_TIMEOUT_MS);
-    let answer: string;
+    // Telegram expires chat actions after five seconds. Keep refreshing while
+    // working, but never let this best-effort UI delay or fail the reply.
+    const typing = () =>
+      void client.typing(input.chatId).catch(() => undefined);
+    typing();
+    const typingRefresh = setInterval(typing, 4_000);
     try {
       const generated = await settleOnAbort(
         provider.generate({
@@ -104,12 +109,18 @@ export async function dispatchTelegramInput(
         }),
         cap.signal,
       );
-      answer = cleanReplyBoilerplate(generated.content);
+      const answer = cleanReplyBoilerplate(generated.content);
       if (!answer.trim()) throw new Error("ASSISTANT_RESPONSE_MISSING");
+      await client.send(
+        input.chatId,
+        answer,
+        undefined,
+        input.replyToMessageId,
+      );
+      return accepted;
     } finally {
+      clearInterval(typingRefresh);
       cap.cancel();
     }
-    await client.send(input.chatId, answer, undefined, input.replyToMessageId);
-    return accepted;
   });
 }
