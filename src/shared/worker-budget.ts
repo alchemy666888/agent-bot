@@ -14,6 +14,9 @@ export const MAX_TURN_TIMEOUT_MS =
 /** One DeepSeek `/responses` call, including provider-native web search. */
 export const PROVIDER_REQUEST_TIMEOUT_MS = 45_000;
 
+/** Direct Telegram generation and recovery share this budget, below the 300s function limit. */
+export const DIRECT_GENERATION_TIMEOUT_MS = 120_000;
+
 /** Values at or above the command budget minus the delivery reserve are clamped. */
 export function clampTurnTimeout(configured?: number): number {
   if (configured === undefined) return MAX_TURN_TIMEOUT_MS;

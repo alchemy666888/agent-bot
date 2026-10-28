@@ -4,7 +4,7 @@ Telegram Agent answers private Telegram text messages directly with DeepSeek mod
 
 The chat path is `Telegram webhook → DeepSeek API → Telegram reply` in the Next.js server. It does not query or update PostgreSQL, start a worker or Sandbox, restore files, read conversation history, load skill or prompt repositories, run classifiers, or call News MCP. The system prompt comes from `ASSISTANT_SYSTEM_PROMPT` or the compiled default. Each message is independent; chat does not save messages, create schedules, or execute installed skills.
 
-Webhook authentication and the `ALLOW_USERS` whitelist still apply. Generation and any output recovery share a 45-second budget. The webhook acknowledges long requests after 45 seconds and completes delivery through Next.js `after()`. Failures produce a concise Telegram notice and redacted console diagnostics. Update replay protection and failure acknowledgements use bounded, expiring process memory; they do not survive instance restarts or coordinate across instances.
+Webhook authentication and the `ALLOW_USERS` whitelist still apply. Generation and any output recovery share a 120-second budget. Each provider exchange is also capped at 120 seconds and cannot outlive the shared generation budget. The webhook acknowledges pending requests within one second and completes delivery through Next.js `after()`, within the function's 300-second limit. Telegram delivery retains its separate eight-second timeout per API call. Failures produce a concise Telegram notice and redacted console diagnostics. Provider diagnostics include model, elapsed time, timeout source, header/body timing, and a bounded provider request ID when available; they exclude message text and provider payloads. Provider timeouts are classified as transient, without automatic retries. Update replay protection and failure acknowledgements use bounded, expiring process memory; they do not survive instance restarts or coordinate across instances.
 
 The dashboard, export, and other management workflows retain their existing PostgreSQL and Sandbox infrastructure. Existing stored data is not changed by direct chat, and new chat messages and model runs do not appear in the persisted dashboard history.
 
@@ -192,6 +192,6 @@ successful requests; the documented server-side free period ends November 1,
 [current pricing and billing rules](https://api-docs.deepseek.com/quick_start/pricing/)
 before setting budgets.
 
-Direct chat generation, including recovery, shares a 45-second total budget.
+Direct chat generation, including recovery, shares a 120-second total budget; pending webhooks acknowledge within one second and continue through `after()`.
 Legacy worker requests retain their existing turn deadline and delivery reserve. Search adds provider latency and may incur fees when
 used. Jobs beyond the webhook execution window need durable background processing.

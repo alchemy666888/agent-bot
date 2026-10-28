@@ -221,6 +221,7 @@ export function safeError(
       "TELEGRAM_DELIVERY_FAILED",
       "DEEPSEEK_REQUEST_FAILED",
       "WORKER_COMMAND_TIMEOUT",
+      "PROVIDER_REQUEST_TIMEOUT",
     ].includes(code);
   const detail = errorDetail(error);
   const trace = errorTrace(error);

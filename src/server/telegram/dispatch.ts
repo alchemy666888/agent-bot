@@ -4,7 +4,7 @@ import { readDirectModelConfig, readTelegramConfig } from "../config";
 import { uuidV7 } from "../../shared/ids";
 import type { WorkerResponse } from "../../shared/contracts/worker";
 import { deadline, settleOnAbort } from "../../shared/abort";
-import { PROVIDER_REQUEST_TIMEOUT_MS } from "../../shared/worker-budget";
+import { DIRECT_GENERATION_TIMEOUT_MS } from "../../shared/worker-budget";
 import { assistantTimeZone } from "../../shared/calendar-clock";
 import { DeepSeekProvider } from "../../worker/model/deepseek";
 import { cleanReplyBoilerplate } from "../../worker/model/reply-style";
@@ -85,9 +85,11 @@ export async function dispatchTelegramInput(
       thinking: model.DEEPSEEK_THINKING_ENABLED,
       maxToolCalls: 0,
       timeZone: assistantTimeZone(),
+      requestTimeoutMs: DIRECT_GENERATION_TIMEOUT_MS,
+      correlationId,
     });
     // The whole generation, including any output recovery, shares one cap.
-    const cap = deadline(PROVIDER_REQUEST_TIMEOUT_MS);
+    const cap = deadline(DIRECT_GENERATION_TIMEOUT_MS);
     // Telegram expires chat actions after five seconds. Keep refreshing while
     // working, but never let this best-effort UI delay or fail the reply.
     const typing = () =>

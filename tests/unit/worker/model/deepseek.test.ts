@@ -11,6 +11,63 @@ import { REPLY_STYLE_GUIDANCE } from "../../../../src/worker/model/reply-style";
 import { calculateCost } from "../../../../src/worker/model/usage";
 import { CapabilityRegistry } from "../../../../src/worker/capabilities/registry";
 describe("model adapter", () => {
+  it.each(["response-headers", "response-body"] as const)(
+    "records bounded timeout diagnostics while waiting for %s",
+    async (stage) => {
+      const log = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => undefined);
+      const fetcher = vi.fn<typeof fetch>(() =>
+        stage === "response-headers"
+          ? new Promise<Response>(() => undefined)
+          : Promise.resolve(
+              new Response(new ReadableStream(), {
+                headers: { "x-request-id": "req-diagnostic" },
+              }),
+            ),
+      );
+      try {
+        await expect(
+          new DeepSeekProvider(
+            {
+              apiKey: "private-key",
+              baseUrl: "https://example.test",
+              thinking: true,
+              requestTimeoutMs: 10,
+              correlationId: "diagnostic-test",
+            },
+            fetcher,
+          ).generate({
+            executionMode: "direct",
+            messages: [{ role: "user", content: "private question" }],
+          }),
+        ).rejects.toThrow("PROVIDER_REQUEST_TIMEOUT");
+        const record = JSON.parse(String(log.mock.calls[0]![0]));
+        expect(record).toMatchObject({
+          correlationId: "diagnostic-test",
+          operation: "deepseek.responses",
+          stage,
+          result: "failure",
+          code: "PROVIDER_REQUEST_TIMEOUT",
+          metadata: {
+            model: "deepseek-v4-pro",
+            timeoutLimitMs: 10,
+            timeoutSource: "provider-request",
+          },
+        });
+        expect(record.metadata.bodyCompleteMs).toBeUndefined();
+        if (stage === "response-body") {
+          expect(record.metadata.headersMs).toBeTypeOf("number");
+          expect(record.metadata.providerRequestId).toBe("req-diagnostic");
+        }
+        expect(JSON.stringify(record)).not.toMatch(
+          /private-key|private question|authorization/,
+        );
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
   it.each([
     "direct",
     "forced_web_search",
