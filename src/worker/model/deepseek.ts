@@ -1,4 +1,4 @@
-import { logException } from "../../shared/logger";
+import { logException, logStructured } from "../../shared/logger";
 import { z } from "zod";
 import { REPLY_STYLE_GUIDANCE } from "./reply-style";
 import {
@@ -112,6 +112,8 @@ export class DeepSeekProvider implements ModelProvider {
       now?: () => Date;
       timeZone?: string;
       requestTimeoutMs?: number;
+      /** Enables bounded request diagnostics for the direct Telegram path. */
+      correlationId?: string;
     },
     private request: typeof fetch = fetch,
     private capabilities = new CapabilityRegistry(),
@@ -401,6 +403,16 @@ export class DeepSeekProvider implements ModelProvider {
     const timeoutMs =
       this.config.requestTimeoutMs ?? PROVIDER_REQUEST_TIMEOUT_MS;
     const cap = deadline(timeoutMs);
+    const started = Date.now();
+    let headersMs: number | undefined;
+    let bodyCompleteMs: number | undefined;
+    let status: number | undefined;
+    let providerRequestId: string | undefined;
+    let completed = false;
+    const diagnosticId = (value: unknown): string | undefined =>
+      typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value)
+        ? value
+        : undefined;
     const signal = input.signal
       ? AbortSignal.any([input.signal, cap.signal])
       : cap.signal;
@@ -427,6 +439,9 @@ export class DeepSeekProvider implements ModelProvider {
       ).catch((error: unknown) => {
         throw failed(error);
       });
+      headersMs = Date.now() - started;
+      status = response.status;
+      providerRequestId = diagnosticId(response.headers?.get("x-request-id"));
       if (!response.ok) {
         if (signal.aborted) {
           void cancelBody(response);
@@ -439,6 +454,7 @@ export class DeepSeekProvider implements ModelProvider {
           void cancelBody(response);
           throw failed(error);
         });
+        bodyCompleteMs = Date.now() - started;
         return { ok: false, error };
       }
       const body = await settleOnAbort(
@@ -452,9 +468,42 @@ export class DeepSeekProvider implements ModelProvider {
         void cancelBody(response);
         throw new Error("PROVIDER_REQUEST_TIMEOUT");
       }
+      bodyCompleteMs = Date.now() - started;
+      providerRequestId ??= diagnosticId(body.id);
+      completed = true;
       return { ok: true, body };
     } finally {
       cap.cancel();
+      if (this.config.correlationId) {
+        logStructured({
+          correlationId: this.config.correlationId,
+          component: "controller",
+          operation: "deepseek.responses",
+          stage: headersMs === undefined ? "response-headers" : "response-body",
+          result: completed ? "success" : "failure",
+          durationMs: Date.now() - started,
+          ...(!completed
+            ? {
+                code: signal.aborted ? "PROVIDER_REQUEST_TIMEOUT" : failureCode,
+              }
+            : {}),
+          metadata: {
+            model: DEEPSEEK_ANSWER_MODEL,
+            timeoutLimitMs: timeoutMs,
+            ...(signal.aborted
+              ? {
+                  timeoutSource: input.signal?.aborted
+                    ? "generation"
+                    : "provider-request",
+                }
+              : {}),
+            ...(headersMs === undefined ? {} : { headersMs }),
+            ...(bodyCompleteMs === undefined ? {} : { bodyCompleteMs }),
+            ...(status === undefined ? {} : { status }),
+            ...(providerRequestId ? { providerRequestId } : {}),
+          },
+        });
+      }
     }
   }
 

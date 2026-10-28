@@ -26,8 +26,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-/** Telegram stops waiting for a webhook after about 60 seconds. */
-export const WEBHOOK_ACK_MS = 45_000;
+/** Acknowledge pending work promptly; after() retains it within maxDuration. */
+export const WEBHOOK_ACK_MS = 1_000;
 
 const TURN_FAILED_TEXT = "這次回覆沒有完成，請再傳一次。";
 const headers = { "Cache-Control": "no-store" };
